@@ -1,0 +1,57 @@
+---
+description: HaoVPN 项目硬性规则（版本、Git、开发环境）
+alwaysApply: true
+---
+
+# HaoVPN 硬性规则
+
+## VERSION 文件 — AI 禁止修改
+
+- 根目录 `VERSION` 是**唯一版本来源**，**仅开发者本人**可修改。
+- AI **不得**编辑、删除、提交或建议改写 `VERSION` 内容。
+- 构建脚本从 `VERSION` 读取版本；不得在代码中硬编码版本号。
+
+## Git — AI 禁止提交
+
+- AI **不得**执行 `git commit`、`git push`，除非用户在**当次对话中明确要求**。
+- 若用户要求提交：commit **仅含开发者本人**为作者，**禁止**：
+  - `Co-authored-by`
+  - `Signed-off-by`（协助者）
+  - 任何 AI / Cursor / Copilot 署名或协助者行
+- 提交信息由开发者确认；AI 可起草文案，但**不代为执行 commit**。
+
+## 开发环境
+
+- 主开发环境：**Windows** + **PowerShell 7（pwsh）** + **Go 1.26**
+- 日常构建优先：`.\scripts\build-local.ps1`（本机快速）
+- 发版构建：`.\scripts\build-release.ps1`（全平台交叉编译）
+- **Windows 提权**：TUN/Wintun、路由、服务安装等需要管理员时，可用 `sudo` 或「以管理员身份运行」终端。
+  - AI 抓日志时**优先读盘上的 `*.live.log`**（每次启动覆盖、逐行 Sync），不要只依赖控制台输出（`sudo` 弹窗时控制台可能看不到）。
+  - 观测示例：`Get-Content .\home\logs\server.live.log -Wait -Tail 50`
+  - 常规滚动日志仍为 `server.log` / `client.log`。
+
+## 开发原则
+
+- 遵守 `docs/development-principles.md`：不敷衍、不留坑、实事求是；用测试/日志验证，禁止糊弄猜测。
+- 接手先读根目录 `记忆.md` 中的文档顺序。
+
+## 增量开发 — 做一步测一步（避免返工）
+
+- 严格按 `docs/meta-plan.md` 的 step 顺序推进，**禁止跳步、禁止一口气堆代码最后再测**。
+- **每完成一个 step（或该 step 内的一个子模块）**，必须立刻验证，二选一或并用：
+  - **单元测试**：`go test ./internal/<pkg>/...`，覆盖正常/边界/失败路径；
+  - **日志埋点**：关键路径打结构化日志，本地跑一遍确认输出符合预期。
+- step 验收标准：`go test ./...` 通过（至少覆盖本 step 新增包），且无未解释的编译/静态检查错误。
+- **依赖先行**：开始写代码或进入新 step 前，先 `go mod tidy` 拉齐依赖；新增 import 后再次 tidy，确保 `go.sum` 与代码一致。
+- 验证通过后才更新 `docs/dev-log.md` 与 `记忆.md` 进度表；未验证不得标记 step 完成。
+
+## 代码注释 — 中文、详细、说清用途
+
+- **所有代码**（Go、SQL、HTML/JS/CSS、Shell 等）必须写**中文注释**，说明「这段代码做什么、为什么这样写」。
+- 注释粒度：
+  - **包级**：`package` 上方或 `doc.go` 说明模块职责与上下游依赖；
+  - **类型 / 函数 / 常量**：导出符号必须有注释；复杂内部逻辑也要注释；
+  - **SQL**：`schema.sql`、迁移脚本中每张表、每个字段、每个索引用 `--` 注释含义；
+  - **配置模板**（`defaults.go` 内嵌 YAML）：字段注释已在模板中，保持中文。
+- 禁止：无意义注释（`// 循环`）、纯英文注释、大段代码零注释。
+- 敏感信息（密码、私钥、token）**不得**写进注释示例。

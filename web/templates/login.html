@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · HaoVPN</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="logo">VPN</div>
+      <h1>HaoVPN 管理控制台</h1>
+      <p>安全隧道 · 工控远程接入</p>
+    </div>
+
+    <div id="loginAlert" class="alert alert-warn hidden">首次登录须修改密码</div>
+    <div id="loginError" class="alert alert-error hidden"></div>
+
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="username">用户名</label>
+        <input id="username" name="username" required autocomplete="username" placeholder="admin">
+      </div>
+      <div class="form-group">
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" required autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">登录</button>
+    </form>
+
+    <div id="changeBox" class="hidden" style="margin-top:1.5rem;padding-top:1.5rem;border-top:1px solid var(--border)">
+      <h2 style="margin:0 0 1rem;font-size:1.1rem">设置新密码</h2>
+      <form id="changeForm">
+        <div class="form-group">
+          <label for="new_password">新密码（至少 8 位）</label>
+          <input id="new_password" name="new_password" type="password" required minlength="8" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">保存并进入控制台</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script>
+    if (location.search.includes('change=1')) {
+      document.getElementById('loginAlert').classList.remove('hidden');
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var errEl = document.getElementById('loginError');
+      errEl.classList.add('hidden');
+      var fd = new FormData(e.target);
+      try {
+        var r = await fetch('/api/v1/login', { method: 'POST', body: fd });
+        var j = await r.json();
+        if (!j.ok) {
+          errEl.textContent = j.error || '登录失败';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        HaoVPN.setCSRF(j.csrf_token || '');
+        if (j.must_change_password) {
+          document.getElementById('loginForm').classList.add('hidden');
+          document.getElementById('changeBox').classList.remove('hidden');
+        } else {
+          location.href = '/';
+        }
+      } catch (ex) {
+        errEl.textContent = ex.message || '网络错误';
+        errEl.classList.remove('hidden');
+      }
+    });
+
+    document.getElementById('changeForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var fd = new FormData(e.target);
+      try {
+        var j = await HaoVPN.api('/api/v1/password', { method: 'POST', body: fd });
+        if (j.ok) location.href = '/';
+        else HaoVPN.toast(j.error || '修改失败', 'error');
+      } catch (ex) {
+        HaoVPN.toast(ex.message, 'error');
+      }
+    });
+  </script>
+</body>
+</html>

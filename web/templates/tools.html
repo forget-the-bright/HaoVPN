@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>维护 · HaoVPN</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="logo-sm"><span class="logo-icon">VPN</span> HaoVPN</div>
+        <div class="sub">管理控制台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <a class="nav-item" data-page="dashboard" href="/"><span class="icon">◉</span> 总览</a>
+        <a class="nav-item" data-page="users" href="/users"><span class="icon">👤</span> 账号</a>
+        <a class="nav-item" data-page="connections" href="/connections"><span class="icon">📡</span> 连接</a>
+        <a class="nav-item" data-page="audit" href="/audit"><span class="icon">📋</span> 审计</a>
+        <a class="nav-item active" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
+      </nav>
+      <div class="sidebar-footer">
+        <button type="button" class="btn btn-ghost btn-block btn-sm" onclick="HaoVPN.logout()">退出登录</button>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      <header class="topbar"><h1>维护</h1></header>
+      <main class="content">
+        <div class="card">
+          <h2 class="card-title">数据库备份</h2>
+          <p class="text-muted">下载当前 SQLite 数据库文件（含账号与审计）。</p>
+          <button type="button" class="btn btn-primary" id="backupBtn">下载备份</button>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">服务端日志</h2>
+          <div class="toolbar">
+            <div class="form-group">
+              <label>来源</label>
+              <select id="logSource">
+                <option value="live" selected>实时 (live)</option>
+                <option value="file">滚动文件</option>
+                <option value="history">历史库 (logs.db)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>行数</label>
+              <select id="logTail">
+                <option value="200">200</option>
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+                <option value="2000">2000</option>
+              </select>
+            </div>
+            <div class="form-group" id="levelGroup" style="display:none">
+              <label>级别</label>
+              <select id="logLevel">
+                <option value="">全部</option>
+                <option value="ERROR">ERROR</option>
+                <option value="WARN">WARN</option>
+                <option value="INFO">INFO</option>
+                <option value="DEBUG">DEBUG</option>
+              </select>
+            </div>
+            <div class="form-group" id="kwGroup" style="display:none">
+              <label>关键字</label>
+              <input id="logQ" placeholder="搜索内容">
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" onclick="loadLogs()">刷新</button>
+          </div>
+          <p class="text-muted" id="logMeta">加载中…</p>
+          <pre class="pre-box" id="logLines">加载中…</pre>
+          <div class="pager" id="logPager"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script>
+    HaoVPN.setActiveNav('tools');
+    var logOffset = 0;
+
+    document.getElementById('backupBtn').onclick = async function () {
+      try {
+        await HaoVPN.refreshCSRF();
+        var r = await fetch('/api/v1/backup', { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('备份失败 ' + r.status);
+        var blob = await r.blob();
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'HaoVPN-backup.db';
+        a.click();
+        HaoVPN.toast('备份已开始下载', 'ok');
+      } catch (ex) {
+        HaoVPN.toast(ex.message, 'error');
+      }
+    };
+
+    document.getElementById('logSource').onchange = function () {
+      var hist = this.value === 'history';
+      document.getElementById('levelGroup').style.display = hist ? '' : 'none';
+      document.getElementById('kwGroup').style.display = hist ? '' : 'none';
+      logOffset = 0;
+      loadLogs();
+    };
+
+    async function loadLogs(off) {
+      if (off !== undefined) logOffset = off;
+      try {
+        await HaoVPN.refreshCSRF();
+        var src = document.getElementById('logSource').value;
+        var tail = document.getElementById('logTail').value;
+        var params = { source: src, tail: tail };
+        if (src === 'history') {
+          params.offset = logOffset;
+          params.level = document.getElementById('logLevel').value;
+          params.q = document.getElementById('logQ').value.trim();
+        }
+        var data = await HaoVPN.api('/api/v1/logs' + HaoVPN.buildQuery(params));
+        var lines = data.lines || [];
+        document.getElementById('logLines').textContent = lines.join('\n') || '(空)';
+        var meta = (data.file || '') + (data.truncated ? ' · 仅显示尾部' : '');
+        if (src === 'history') meta = (data.file || 'logs.db') + ' · 共 ' + (data.total || 0) + ' 条';
+        document.getElementById('logMeta').textContent = meta;
+        if (src === 'history') {
+          HaoVPN.renderPager(document.getElementById('logPager'), data.total, parseInt(tail, 10), logOffset, loadLogs);
+        } else {
+          document.getElementById('logPager').innerHTML = '';
+        }
+      } catch (ex) {
+        HaoVPN.toast(ex.message, 'error');
+      }
+    }
+
+    document.getElementById('logQ').oninput = HaoVPN.debounce(function () {
+      if (document.getElementById('logSource').value === 'history') {
+        logOffset = 0;
+        loadLogs();
+      }
+    }, 400);
+
+    loadLogs();
+  </script>
+</body>
+</html>

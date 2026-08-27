@@ -1,0 +1,41 @@
+# 构建产物
+/bin/
+/dist/
+
+# 本地配置与数据（运行时生成）
+/server.yaml
+/client.yaml
+/cookies.txt
+/data/
+/logs/
+/certs/
+
+# 本地 home 验收环境（配置+数据+日志+证书）
+/home/
+
+# 嵌套日志（bin 旁误产生）
+/bin/logs/
+
+# live 观测日志（运行时覆盖写）
+*.live.log
+
+# Cursor 会话附件（非源码）
+/assets/
+
+# 本地运行时日志
+**/logs/*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Go 测试缓存
+*.test.exe
+
+# 结构化历史日志库（运行时）
+**/logs.db

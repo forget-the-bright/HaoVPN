@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VPN 账号 · HaoVPN</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="logo-sm"><span class="logo-icon">VPN</span> HaoVPN</div>
+        <div class="sub">管理控制台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <a class="nav-item" data-page="dashboard" href="/"><span class="icon">◉</span> 总览</a>
+        <a class="nav-item active" data-page="users" href="/users"><span class="icon">👤</span> 账号</a>
+        <a class="nav-item" data-page="connections" href="/connections"><span class="icon">📡</span> 连接</a>
+        <a class="nav-item" data-page="audit" href="/audit"><span class="icon">📋</span> 审计</a>
+        <a class="nav-item" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
+      </nav>
+      <div class="sidebar-footer">
+        <button type="button" class="btn btn-ghost btn-block btn-sm" onclick="HaoVPN.logout()">退出登录</button>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      <header class="topbar"><h1>VPN 账号管理</h1></header>
+      <main class="content">
+        <div class="card">
+          <h2 class="card-title">新建账号</h2>
+          <p class="text-muted" style="margin-bottom:12px">
+            fixed：可选手动 VPN IP（留空自动分配）。dynamic_*：连接时分配，不可指定固定 IP。策略由握手下发。
+          </p>
+          <form id="create" class="form-row">
+            <div class="form-group">
+              <label>用户名</label>
+              <input name="username" required placeholder="engineer1">
+            </div>
+            <div class="form-group">
+              <label>密码</label>
+              <input name="password" type="password" required minlength="8">
+            </div>
+            <div class="form-group">
+              <label>IP 模式</label>
+              <select name="ip_mode" id="ip_mode">
+                <option value="fixed" selected>固定 (fixed)</option>
+                <option value="dynamic_session">会话动态 (dynamic_session)</option>
+                <option value="dynamic_lease">租约动态 (dynamic_lease)</option>
+              </select>
+            </div>
+            <div class="form-group" id="vpn_ip_group">
+              <label>VPN IP（可选）</label>
+              <input name="vpn_ip" id="create_vpn_ip" placeholder="留空则自动分配，如 10.88.0.50">
+            </div>
+            <div class="form-group" id="lease_group" style="display:none">
+              <label>租约秒数</label>
+              <input name="ip_lease_sec" type="number" value="86400" min="60">
+            </div>
+            <button type="submit" class="btn btn-primary">创建账号</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">账号列表</h2>
+          <div class="toolbar">
+            <div class="form-group">
+              <label>搜索</label>
+              <input id="fQ" placeholder="用户名">
+            </div>
+            <div class="form-group">
+              <label>状态</label>
+              <select id="fEnabled">
+                <option value="">全部</option>
+                <option value="1">启用</option>
+                <option value="0">禁用</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>每页</label>
+              <select id="fLimit">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th><th>用户名</th><th>VPN IP</th><th>IP 模式</th>
+                  <th>策略版本</th><th>在线</th><th>状态</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="list"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="pager"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="policyModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+    <div class="card" style="width:min(480px,92vw);margin:auto">
+      <h2 class="card-title">编辑 VPN 策略</h2>
+      <p class="text-muted" id="policyHint"></p>
+      <form id="policyForm">
+        <input type="hidden" id="policyUserId">
+        <div class="form-group">
+          <label>AllowedIPs（每行一个 CIDR；空=用服务端默认）</label>
+          <textarea id="policyAllowed" rows="4" placeholder="192.168.31.0/24"></textarea>
+        </div>
+        <div class="form-group">
+          <label>IP 模式</label>
+          <select id="policyIPMode">
+            <option value="fixed">fixed</option>
+            <option value="dynamic_session">dynamic_session</option>
+            <option value="dynamic_lease">dynamic_lease</option>
+          </select>
+        </div>
+        <div class="form-group" id="policyVpnIpGroup">
+          <label>VPN IP（仅 fixed）</label>
+          <input id="policyVpnIp" placeholder="10.88.0.50">
+        </div>
+        <div class="form-group" id="policyLeaseGroup">
+          <label>租约秒数</label>
+          <input id="policyLease" type="number" value="86400" min="60">
+        </div>
+        <div class="form-row" style="margin-top:12px">
+          <button type="submit" class="btn btn-primary">保存并踢线重连</button>
+          <button type="button" class="btn btn-ghost" onclick="closePolicy()">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script>
+    HaoVPN.setActiveNav('users');
+    var accountCache = {};
+    var listOffset = 0;
+
+    function syncCreateModeUI() {
+      var mode = document.getElementById('ip_mode').value;
+      document.getElementById('vpn_ip_group').style.display = mode === 'fixed' ? '' : 'none';
+      document.getElementById('lease_group').style.display = mode === 'dynamic_lease' ? '' : 'none';
+      if (mode !== 'fixed') document.getElementById('create_vpn_ip').value = '';
+    }
+    function syncPolicyModeUI() {
+      var mode = document.getElementById('policyIPMode').value;
+      var fixed = mode === 'fixed';
+      document.getElementById('policyVpnIpGroup').style.display = fixed ? '' : 'none';
+      document.getElementById('policyLeaseGroup').style.display = mode === 'dynamic_lease' ? '' : 'none';
+      document.getElementById('policyVpnIp').disabled = !fixed;
+    }
+    document.getElementById('ip_mode').addEventListener('change', syncCreateModeUI);
+    document.getElementById('policyIPMode').addEventListener('change', syncPolicyModeUI);
+
+    async function load(off) {
+      if (off !== undefined) listOffset = off;
+      await HaoVPN.refreshCSRF();
+      var limit = parseInt(document.getElementById('fLimit').value, 10) || 50;
+      var q = HaoVPN.buildQuery({
+        q: document.getElementById('fQ').value.trim(),
+        enabled: document.getElementById('fEnabled').value,
+        limit: limit,
+        offset: listOffset
+      });
+      var resp = await HaoVPN.api('/api/v1/users' + q);
+      var users = resp.items || [];
+      var tb = document.getElementById('list');
+      tb.innerHTML = '';
+      accountCache = {};
+      if (!users.length) {
+        tb.innerHTML = '<tr><td colspan="8" class="text-muted">无匹配账号</td></tr>';
+      }
+      users.forEach(function (u) {
+        accountCache[u.id] = u;
+        var tr = document.createElement('tr');
+        var ops = '';
+        if (u.has_vpn) {
+          ops +=
+            '<a class="btn btn-ghost btn-sm" href="/api/v1/users/' + u.id + '/export.zip">ZIP</a>' +
+            '<a class="btn btn-ghost btn-sm" href="/api/v1/users/' + u.id + '/export">YAML</a>' +
+            '<button class="btn btn-ghost btn-sm" onclick="openPolicy(' + u.id + ')">策略</button>' +
+            '<button class="btn btn-ghost btn-sm" onclick="kick(' + u.id + ')">踢线</button>';
+        }
+        ops +=
+          '<button class="btn btn-ghost btn-sm" onclick="toggle(' + u.id + ',' + (u.enabled ? 'true' : 'false') + ')">' +
+          (u.enabled ? '禁用' : '启用') + '</button>' +
+          '<button class="btn btn-danger btn-sm" onclick="delUser(' + u.id + ')">删除</button>';
+        tr.innerHTML =
+          '<td class="text-mono">' + u.id + '</td>' +
+          '<td>' + u.username + '</td>' +
+          '<td class="text-mono">' + (u.vpn_ip || (u.has_vpn ? '动态' : '—')) + '</td>' +
+          '<td class="text-mono">' + (u.ip_mode || '—') + '</td>' +
+          '<td class="text-mono">' + (u.policy_ver || '—') + '</td>' +
+          '<td>' + (u.online ? HaoVPN.statusBadge(true, '在线', '') : '<span class="badge badge-warn">离线</span>') + '</td>' +
+          '<td>' + (u.enabled ? HaoVPN.statusBadge(true, '启用', '') : HaoVPN.statusBadge(false, '', '禁用')) + '</td>' +
+          '<td class="actions-cell">' + ops + '</td>';
+        tb.appendChild(tr);
+      });
+      HaoVPN.renderPager(document.getElementById('pager'), resp.total, limit, listOffset, load);
+    }
+
+    document.getElementById('fQ').oninput = HaoVPN.debounce(function () { load(0); }, 400);
+    document.getElementById('fEnabled').onchange = function () { load(0); };
+    document.getElementById('fLimit').onchange = function () { load(0); };
+
+    document.getElementById('create').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var mode = e.target.ip_mode.value;
+      if (mode !== 'fixed' && !confirm('动态 IP 可能影响现场 PLC 白名单，确认使用 ' + mode + '？')) return;
+      try {
+        var res = await HaoVPN.api('/api/v1/users', { method: 'POST', body: new FormData(e.target) });
+        HaoVPN.toast('账号已创建' + (res.vpn_ip ? ' IP=' + res.vpn_ip : ''), 'success');
+        e.target.reset();
+        syncCreateModeUI();
+        load();
+      } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
+    });
+
+    function openPolicy(id) {
+      var u = accountCache[id];
+      if (!u) return;
+      document.getElementById('policyUserId').value = id;
+      document.getElementById('policyHint').textContent = u.username + ' · 当前 policy_ver=' + (u.policy_ver || 1) +
+        ' · fixed 可改 VPN IP；dynamic 由握手分配';
+      document.getElementById('policyAllowed').value = (u.allowed_ips || []).join('\n');
+      document.getElementById('policyIPMode').value = u.ip_mode || 'fixed';
+      document.getElementById('policyVpnIp').value = u.vpn_ip || '';
+      document.getElementById('policyLease').value = 86400;
+      syncPolicyModeUI();
+      document.getElementById('policyModal').style.display = 'flex';
+    }
+    function closePolicy() {
+      document.getElementById('policyModal').style.display = 'none';
+    }
+
+    document.getElementById('policyForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var id = document.getElementById('policyUserId').value;
+      var mode = document.getElementById('policyIPMode').value;
+      var lines = document.getElementById('policyAllowed').value.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
+      var body = {
+        allowed_ips: lines,
+        ip_mode: mode,
+        ip_lease_sec: parseInt(document.getElementById('policyLease').value, 10) || 86400
+      };
+      if (mode === 'fixed') {
+        body.vpn_ip = document.getElementById('policyVpnIp').value.trim();
+        if (!body.vpn_ip) {
+          HaoVPN.toast('fixed 模式请填写 VPN IP', 'error');
+          return;
+        }
+      } else {
+        body.vpn_ip = '';
+      }
+      try {
+        await HaoVPN.refreshCSRF();
+        await HaoVPN.api('/api/v1/users/' + id + '/vpn', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        HaoVPN.toast('策略已更新，在线会话已踢线', 'success');
+        closePolicy();
+        load();
+      } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
+    });
+
+    async function kick(id) {
+      try {
+        await HaoVPN.api('/api/v1/users/' + id + '/kick', { method: 'POST' });
+        HaoVPN.toast('已踢线', 'success');
+        load();
+      } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
+    }
+
+    async function toggle(id, en) {
+      var fd = new FormData();
+      fd.append('action', en ? 'disable' : 'enable');
+      try {
+        await HaoVPN.api('/api/v1/users/' + id, { method: 'POST', body: fd });
+        load();
+      } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
+    }
+
+    async function delUser(id) {
+      if (!confirm('确定删除该账号？隧道密钥与 IP 将一并释放。')) return;
+      try {
+        await HaoVPN.api('/api/v1/users/' + id, { method: 'DELETE' });
+        HaoVPN.toast('已删除', 'success');
+        load();
+      } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
+    }
+
+    syncCreateModeUI();
+    load(0);
+  </script>
+</body>
+</html>

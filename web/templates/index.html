@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>总览 · HaoVPN</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="logo-sm"><span class="logo-icon">VPN</span> HaoVPN</div>
+        <div class="sub">管理控制台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <a class="nav-item active" data-page="dashboard" href="/"><span class="icon">◉</span> 总览</a>
+        <a class="nav-item" data-page="users" href="/users"><span class="icon">👤</span> 账号</a>
+        <a class="nav-item" data-page="connections" href="/connections"><span class="icon">📡</span> 连接</a>
+        <a class="nav-item" data-page="audit" href="/audit"><span class="icon">📋</span> 审计</a>
+        <a class="nav-item" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
+      </nav>
+      <div class="sidebar-footer">
+        <button type="button" class="btn btn-ghost btn-block btn-sm" onclick="HaoVPN.logout()">退出登录</button>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      <header class="topbar">
+        <h1>系统总览</h1>
+        <div class="topbar-actions">
+          <span class="text-muted" id="refreshHint">自动刷新 8s</span>
+        </div>
+      </header>
+
+      <main class="content">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">在线账号</div>
+            <div class="stat-value" id="online">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">运行时间</div>
+            <div class="stat-value" id="uptime">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">数据库</div>
+            <div class="stat-value" id="db">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">TUN</div>
+            <div class="stat-value" id="tun">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">NAT</div>
+            <div class="stat-value" id="nat">—</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">最近错误摘要</h2>
+          <pre class="pre-box" id="errors">加载中…</pre>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">在线账号</h2>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>账号 ID</th>
+                  <th>用户名</th>
+                  <th>VPN IP</th>
+                  <th>重连次数</th>
+                  <th>AllowedIPs</th>
+                  <th>流量 RX / TX</th>
+                  <th>远端地址</th>
+                </tr>
+              </thead>
+              <tbody id="accounts"></tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script>
+    HaoVPN.setActiveNav('dashboard');
+
+    async function loadDashboard() {
+      try {
+        await HaoVPN.refreshCSRF();
+        var h = await HaoVPN.api('/api/v1/dashboard');
+        document.getElementById('online').textContent = h.online_accounts ?? h.online_peers ?? '0';
+        document.getElementById('uptime').textContent = HaoVPN.formatUptime(h.uptime_sec);
+        document.getElementById('db').innerHTML = HaoVPN.statusBadge(h.db_ok);
+        document.getElementById('tun').innerHTML = HaoVPN.statusBadge(h.tun_ok);
+        document.getElementById('nat').innerHTML = HaoVPN.statusBadge(h.nat_ok);
+
+        var errs = h.recent_errors || [];
+        document.getElementById('errors').textContent = errs.length ? errs.slice(-12).join('\n') : '(无)';
+
+        var mon = await HaoVPN.api('/api/v1/monitor/online');
+        var tbody = document.getElementById('accounts');
+        tbody.innerHTML = '';
+        var items = mon.items || [];
+        if (!items.length) {
+          tbody.innerHTML = '<tr><td colspan="7" class="text-muted">暂无在线账号</td></tr>';
+        } else {
+          items.forEach(function (p) {
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td class="text-mono">' + (p.user_id || '') + '</td>' +
+              '<td>' + (p.username || '—') + '</td>' +
+              '<td class="text-mono">' + (p.vpn_ip || '') + '</td>' +
+              '<td class="text-mono">' + (p.reconnect_count != null ? p.reconnect_count : '—') + '</td>' +
+              '<td class="text-mono">' + ((p.allowed_ips || []).join(', ') || '—') + '</td>' +
+              '<td class="text-mono">' + HaoVPN.formatBytes(p.rx_bytes) + ' / ' + HaoVPN.formatBytes(p.tx_bytes) + '</td>' +
+              '<td class="text-mono">' + (p.remote_addr || '—') + '</td>';
+            tbody.appendChild(tr);
+          });
+        }
+      } catch (ex) {
+        HaoVPN.toast(ex.message, 'error');
+      }
+    }
+
+    loadDashboard();
+    setInterval(loadDashboard, 8000);
+  </script>
+</body>
+</html>

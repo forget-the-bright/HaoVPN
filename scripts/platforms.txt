@@ -1,0 +1,8 @@
+# 交叉编译目标平台（每行: GOOS/GOARCH）
+# 空行与 # 开头行忽略
+linux/amd64
+linux/arm64
+windows/amd64
+windows/arm64
+darwin/amd64
+darwin/arm64

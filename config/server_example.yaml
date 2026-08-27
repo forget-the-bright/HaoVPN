@@ -1,0 +1,51 @@
+# 服务端配置参考示例（运行时由首次启动自动生成 server.yaml）
+# 详见 docs/meta-plan.md 与 docs/deploy.md
+
+server:
+  listen: "0.0.0.0:8443"
+  tls:
+    cert_file: "./certs/server.crt"
+    key_file: "./certs/server.key"
+    auto_generate: true
+
+vpn:
+  subnet: "10.88.0.0/24"
+  gateway_ip: "10.88.0.1"
+  mtu: 1420
+  heartbeat_interval_sec: 15
+  heartbeat_timeout_sec: 90
+
+nat:
+  enabled: true
+  allowed_lan_cidrs:
+    - "192.168.1.0/24"
+
+database:
+  path: "./data/haovpn.db"
+  audit_retention_days: 90
+  connection_events_retention_days: 90
+
+api:
+  listen_hosts: ["127.0.0.1"]
+  port: 8080
+  allow_public_bind: false
+  login_max_attempts: 5
+  login_lockout_sec: 900
+  session_ttl_sec: 28800
+
+security:
+  tunnel_allowed_source_ips: []
+  enforce_split_tunnel: true
+
+admin:
+  username: "admin"
+  password: "changeme"
+
+log:
+  level: "info"
+  file: "./logs/server.log"
+  max_size_mb: 100
+  max_backups: 7
+  history_retention_days: 90
+  # history_db: "./data/logs.db"   # 留空则与 database 同目录
+  # history_retention_days: -1   # 关闭结构化历史库

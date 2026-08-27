@@ -1,0 +1,31 @@
+# frp 反向隧道参考配置
+# 文档: docs/deploy.md §4.5
+#
+# 原则: 只映射 VPN 隧道端口 8443，不要映射管理口 8080
+
+# ── frps（公网 VPS）────────────────────────────────────────
+# 保存为 frps.toml，运行: frps -c frps.toml
+
+# bindPort = 7000
+
+# ── frpc（项目现场）────────────────────────────────────────
+# 保存为 frpc.toml，运行: frpc -c frpc.toml
+
+serverAddr = "your-vps-ip"
+serverPort = 7000
+
+# auth.token = "your-secret-token"
+
+[[proxies]]
+name = "HaoVPN-tunnel"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8443
+remotePort = 8443
+
+# 工程师连接: haovpn-client 中 server.address = "your-vps-ip:8443"
+
+# ── 切勿添加以下配置 ────────────────────────────────────────
+# [[proxies]]
+# name = "HaoVPN-admin"   # 禁止将管理口暴露到公网
+# localPort = 8080

@@ -1,0 +1,29 @@
+# 客户端配置参考示例（运行时由首次启动自动生成 client.yaml，或由服务端导出 zip 覆盖）
+
+server:
+  address: "vpn.example.com:8443"
+  tls:
+    ca_file: "./certs/ca.crt"
+    insecure_skip_verify: false
+
+tun:
+  name: "haovpn0"
+  mtu: 1420
+
+peer:
+  private_key: ""
+  public_key: ""
+  server_public_key: ""
+  vpn_ip: "10.88.0.2"
+  allowed_ips:
+    - "192.168.1.0/24"
+
+reconnect:
+  initial_sec: 1
+  max_sec: 8
+
+log:
+  level: "info"
+  file: "./logs/client.log"
+  max_size_mb: 50
+  max_backups: 3
