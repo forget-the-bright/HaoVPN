@@ -18,7 +18,6 @@ New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
 Copy-Item -Force (Join-Path $Root "bin\haovpn-server.exe") $BinDir
 Copy-Item -Force (Join-Path $Root "bin\haovpn-client.exe") $BinDir
-Copy-Item -Force (Join-Path $Root "bin\wintun.dll") $BinDir
 
 # 同步 home 配置模板（不覆盖现场已改数据库）
 $homeTpl = Join-Path $OutDir "home"

@@ -16,6 +16,7 @@ import (
 	"haovpn/internal/brand"
 	"haovpn/internal/logger"
 	"haovpn/internal/platform"
+	"haovpn/internal/tun/wintundll"
 )
 
 type winDevice struct {
@@ -31,6 +32,9 @@ type winDevice struct {
 }
 
 func openPlatform(cfg Config) (Device, error) {
+	if err := wintundll.Ensure(); err != nil {
+		return nil, err
+	}
 	name := cfg.Name
 	if name == "" {
 		name = brand.DefaultTunName

@@ -39,6 +39,9 @@ $env:CGO_ENABLED = "0"
 
 Write-Host "==> local build windows/$Arch  version=$Version"
 
+# embed 依赖：构建前须有 wintun.dll（单 exe 分发，运行时释放）
+& "$PSScriptRoot/install-wintun.ps1" -Arch $Arch
+
 try {
     if (-not $ClientOnly) {
         Invoke-GoBuild -Root $Root -Goos "windows" -Goarch $Arch `
@@ -54,10 +57,6 @@ try {
         Invoke-GoBuild -Root $Root -Goos "windows" -Goarch $Arch `
             -Package "./cmd/client-gui" -OutputPath (Join-Path $Out "haovpn-client-gui.exe") -Ldflags $GuiLdflags -CgoEnabled $true
         Write-Host "    client-gui -> bin/haovpn-client-gui.exe (windowsgui)"
-    }
-    # Windows TUN 依赖 wintun.dll（与 exe 同目录）
-    if ($env:GOOS -eq "windows" -or -not $env:GOOS) {
-        & "$PSScriptRoot/install-wintun.ps1"
     }
 } finally {
     Remove-Item Env:GOOS -ErrorAction SilentlyContinue

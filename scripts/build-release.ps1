@@ -42,8 +42,8 @@ if (-not (Test-Path "go.mod")) {
     Write-Error "未找到 go.mod"
 }
 
-# 确保 Windows 本地有 wintun.dll 供 release 复制
-& "$PSScriptRoot/install-wintun.ps1"
+# 确保 wintun embed（amd64+arm64）供 Windows 客户端单 exe 构建
+& "$PSScriptRoot/install-wintun.ps1" -Arch all
 
 $Version = Get-ProjectVersion -Root $Root
 $Commit = Get-GitCommitShort -Root $Root
@@ -106,17 +106,6 @@ try {
             Invoke-GoBuild -Root $Root -Goos $goos -Goarch $goarch `
                 -Package "./cmd/client" -OutputPath $outPath -Ldflags $Ldflags
             $artifacts.Add([ordered]@{ type = "client"; platform = "$goos/$goarch"; path = $outPath })
-        }
-
-        # Windows 产物附带 wintun.dll
-        if ($goos -eq "windows") {
-            $wintunSrc = Join-Path $Root "bin/wintun.dll"
-            if (Test-Path $wintunSrc) {
-                Copy-Item $wintunSrc (Join-Path $dir "wintun.dll") -Force
-                Write-Host "    + wintun.dll"
-            } else {
-                Write-Warning "bin/wintun.dll 不存在，请先运行 build-local 或 install-wintun.ps1"
-            }
         }
 
         if (-not $NoZip) {

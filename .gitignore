@@ -37,5 +37,6 @@ Thumbs.db
 # Go 测试缓存
 *.test.exe
 
-# 结构化历史日志库（运行时）
-**/logs.db
+# Windows 客户端内嵌 wintun（go:embed）；构建前下载，见 scripts/install-wintun.ps1
+internal/tun/wintundll/amd64/wintun.dll
+internal/tun/wintundll/arm64/wintun.dll

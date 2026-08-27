@@ -115,7 +115,7 @@ dist/
 sudo .\bin\haovpn-server.exe        # 完整服务端 + WebUI
 ```
 
-`build-local` 会自动调用 `install-wintun.ps1` 将 `wintun.dll` 放入 `bin/`。
+`build-local` 会先调用 `install-wintun.ps1` 下载 Wintun 并 **go:embed 进 Windows 客户端**（单 exe 分发；首次连 TUN 时释放到 exe 同目录）。
 
 ---
 

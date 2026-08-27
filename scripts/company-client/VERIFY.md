@@ -45,9 +45,8 @@ RESULT-TEMPLATE.md        ← 结果回填（测完填）
 collect-client-info.ps1   ← 一键收集诊断
 PACK-INFO.txt
 client.yaml               ← 已预填 address + auth.username
-bin\haovpn-client.exe
-bin\haovpn-client-gui.exe  ← 推荐
-bin\wintun.dll
+bin\haovpn-client.exe          ← wintun 已内嵌，首次连 TUN 会在 bin\ 释放 wintun.dll
+bin\haovpn-client-gui.exe      ← 推荐
 certs\server.crt
 logs\
 ```
@@ -156,7 +155,7 @@ pwsh -File .\collect-client-info.ps1
 | `须先修改密码后再连接 VPN` | 账号仍 must_change；家里 Web 改密 |
 | `登录失败次数过多，请稍后再试` | IP 锁定，稍后再试 |
 | 握手超时 / dial 失败 | `server.address` 错、ZT 未通、公司防火墙拦 8443 |
-| TUN 创建失败 | 未管理员运行；缺 `wintun.dll` |
+| TUN 创建失败 | 未管理员运行；exe 目录不可写（无法释放内嵌 wintun.dll） |
 | 杀开关启用失败 | 未管理员；失败时状态行有提示且不清路由 |
 | 服务端刷 `丢弃非 IPv4` / `ver=6` | Windows IPv6 探测；已降 DEBUG；新客户端禁 TUN IPv6，可忽略 |
 | 握手成功但 ping 间歇 / 频繁 reconnect | **先 ping 底层** `192.168.196.17`：若 ZT 也超时，属 ZeroTier 抖动，隧道只能跟着断 |

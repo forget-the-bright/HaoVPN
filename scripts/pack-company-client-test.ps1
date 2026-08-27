@@ -44,7 +44,7 @@ Copy-Item -Force (Join-Path $Root "bin\haovpn-client.exe") (Join-Path $OutDir "b
 if (Test-Path (Join-Path $Root "bin\haovpn-client-gui.exe")) {
     Copy-Item -Force (Join-Path $Root "bin\haovpn-client-gui.exe") (Join-Path $OutDir "bin\")
 }
-Copy-Item -Force (Join-Path $Root "bin\wintun.dll") (Join-Path $OutDir "bin\")
+# wintun 已内嵌于 exe，首次连 TUN 时释放到 exe 同目录，无需单独拷贝
 if (Test-Path (Join-Path $Root "home\certs\server.crt")) {
     Copy-Item -Force (Join-Path $Root "home\certs\server.crt") (Join-Path $OutDir "certs\")
 }
