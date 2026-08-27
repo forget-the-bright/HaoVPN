@@ -52,11 +52,9 @@ try {
         Invoke-GoBuild -Root $Root -Goos "windows" -Goarch $Arch `
             -Package "./cmd/client" -OutputPath (Join-Path $Out "haovpn-client.exe") -Ldflags $Ldflags
         Write-Host "    client -> bin/haovpn-client.exe"
-        # GUI 无控制台黑窗：追加 -H windowsgui（CLI client 不加）
-        $GuiLdflags = "$Ldflags -H windowsgui"
-        Invoke-GoBuild -Root $Root -Goos "windows" -Goarch $Arch `
-            -Package "./cmd/client-gui" -OutputPath (Join-Path $Out "haovpn-client-gui.exe") -Ldflags $GuiLdflags -CgoEnabled $true
-        Write-Host "    client-gui -> bin/haovpn-client-gui.exe (windowsgui)"
+        Invoke-GoBuildGui -Root $Root -Goarch $Arch `
+            -OutputPath (Join-Path $Out "haovpn-client-gui.exe") -Ldflags $Ldflags
+        Write-Host "    client-gui -> bin/haovpn-client-gui.exe"
     }
 } finally {
     Remove-Item Env:GOOS -ErrorAction SilentlyContinue

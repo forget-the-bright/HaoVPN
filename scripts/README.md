@@ -21,7 +21,9 @@
 
 每个平台产出：`haovpn-server` + `haovpn-client`（Windows 带 `.exe`），共 **12 个二进制**。
 
-本机 `build-local` 额外构建 **`haovpn-client-gui.exe`**（仅 Windows，未纳入 `build-release` 全平台矩阵）。
+**Windows 平台**（`windows-amd64`；本机 amd64 时 release 含 GUI；`windows-arm64` 须在本机 ARM64 Windows 上构建 GUI）在 `build-release.ps1` 中**额外**产出 **`haovpn-client-gui.exe`**（Fyne，须 CGO=1）。Linux / macOS **不提供 GUI**（Go GUI 框架跨平台交叉编译成本高；现场用 CLI `haovpn-client`）。
+
+本机 `build-local` 同样构建 **`haovpn-client-gui.exe`**（仅 Windows）。
 
 ---
 
@@ -33,7 +35,7 @@ Windows 上 **服务端与客户端** 都通过 `internal/tun` 创建 Wintun 网
 |--------|-------------|
 | `haovpn-server.exe` | ✅ |
 | `haovpn-client.exe` | ✅ |
-| `haovpn-client-gui.exe` | ✅（仅 `build-local`） |
+| `haovpn-client-gui.exe` | ✅ | ✅（`build-local` / Windows release） |
 
 | 平台二进制 | Wintun |
 |------------|--------|
@@ -69,7 +71,7 @@ Windows 上 **服务端与客户端** 都通过 `internal/tun` 创建 Wintun 网
 # 1. 手动编辑 VERSION（AI 不得修改）
 notepad VERSION
 
-# 2. 全平台 release（6 平台 × 2 = 12 二进制 + 6 个 zip）
+# 2. 全平台 release（6 平台 × server+client = 12 二进制 + 6 zip；Windows zip 含 GUI）
 .\scripts\build-release.ps1
 
 # 仅构建部分平台
@@ -111,13 +113,14 @@ dist/
 │   └── haovpn-client
 ├── windows-amd64/
 │   ├── haovpn-server.exe    # 内嵌 wintun（首次启动 TUN 时释放 dll）
-│   └── haovpn-client.exe
+│   ├── haovpn-client.exe
+│   └── haovpn-client-gui.exe
 ├── windows-arm64/
-│   └── …
-└── …（其余 4 个平台目录 + zip）
+│   └── …（同上，含 GUI）
+└── …（linux/darwin 各平台仅 server + client）
 ```
 
-- 每个 zip 内为对应平台目录下的 **server + client 两个二进制**（无单独 `wintun.dll`）。
+- 每个 zip 内为对应平台目录下的二进制：**Linux/macOS** 为 server + client；**Windows** 为 server + client + **client-gui**（无单独 `wintun.dll`）。
 - `manifest.json` 含 version、commit、buildTime、各产物路径。
 
 ### 现场 / 公司测试打包
@@ -181,7 +184,8 @@ sudo .\bin\haovpn-server.exe        # 完整服务端 + WebUI
 
 - **Go 1.26**（`go version` 确认）
 - **PowerShell 7+**（`$PSVersionTable.PSVersion`）
-- 交叉编译默认 `CGO_ENABLED=0`（纯 Go，免 CGO 工具链）
+- 交叉编译 **server/client** 默认 `CGO_ENABLED=0`（纯 Go）
+- **GUI**（`haovpn-client-gui`）仅 Windows、`CGO_ENABLED=1`（Fyne）；须在 **Windows 开发机** 上由 `build-release.ps1` / `build-local.ps1` 构建
 - **Windows 构建**：需能访问 [wintun.net](https://www.wintun.net/) 下载 embed 源（或本地已有 `internal/tun/wintundll/*/wintun.dll`）
 - `go.mod` 与 `cmd/server`、`cmd/client` 已初始化
 

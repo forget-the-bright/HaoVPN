@@ -6,6 +6,21 @@
 
 ---
 
+## 2026-08-27 · GUI 发版策略：仅 Windows 含 client-gui
+
+### 决策
+- 曾评估 Gio + systray 重写以解决 Fyne 交叉编译；实测 **Linux/macOS GUI 仍无法从 Windows 主机 CGO=0 交叉编译**，与 Fyne 类似受平台图形栈限制。
+- **回滚**未提交的 Gio 迁移，保留 **Fyne `cmd/client-gui`**。
+- **release**：`build-release.ps1` 在 **windows/amd64、windows/arm64** zip 内额外打包 `haovpn-client-gui.exe`；Linux/macOS zip 仅 server + client（CLI）。
+- `build-local.ps1` 仍本机构建 GUI；`build-release.sh` 不构建 GUI（须在 Windows 上用 ps1）。
+
+### 验证
+- `go test ./...`
+- `.\scripts\build-local.ps1`
+- `.\scripts\build-release.ps1`
+
+---
+
 ## 2026-08-27 · 管理控制台性能与体验（一次性交付）
 
 ### 完成项

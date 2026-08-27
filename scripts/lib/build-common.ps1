@@ -85,6 +85,32 @@ function Invoke-GoBuild {
     }
 }
 
+# Test-CanBuildWindowsGui 判断当前主机能否构建指定架构的 Fyne GUI（CGO 须同架构或本机 arm64 编 arm64）。
+function Test-CanBuildWindowsGui {
+    param([string]$Goarch)
+    $hostArch = (go env GOHOSTARCH).Trim()
+    if ($Goarch -eq $hostArch) { return $true }
+    Write-Warning "跳过 windows/$Goarch GUI：Fyne CGO 须本机同架构构建（host=$hostArch）"
+    return $false
+}
+
+# Invoke-GoBuildGui 构建 Windows 桌面 GUI（Fyne 依赖 CGO，仅 Windows 目标）。
+function Invoke-GoBuildGui {
+    param(
+        [string]$Root,
+        [string]$Goarch,
+        [string]$OutputPath,
+        [string]$Ldflags
+    )
+    if ($Goarch -ne "amd64" -and $Goarch -ne "arm64") {
+        throw "GUI 仅支持 windows/amd64 与 windows/arm64"
+    }
+    $guiLdflags = "$Ldflags -H windowsgui"
+    Write-Host "    gui   windows/$Goarch (Fyne CGO=1)"
+    Invoke-GoBuild -Root $Root -Goos "windows" -Goarch $Goarch `
+        -Package "./cmd/client-gui" -OutputPath $OutputPath -Ldflags $guiLdflags -CgoEnabled $true
+}
+
 function Write-ReleaseManifest {
     param(
         [string]$OutDir,

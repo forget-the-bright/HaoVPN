@@ -5,7 +5,8 @@
 
 .DESCRIPTION
   读取根目录 VERSION（仅开发者维护）与 scripts/platforms.txt。
-  默认构建 6 个平台 × server + client = 12 个二进制。
+  默认构建 6 平台 × server + client = 12 个二进制；
+  Windows 平台额外构建 haovpn-client-gui.exe（Fyne，须 CGO，仅 windows/*）。
 
 .PARAMETER Platform
   仅构建指定平台，可多次指定。例: -Platform linux/amd64 -Platform windows/arm64
@@ -106,6 +107,12 @@ try {
             Invoke-GoBuild -Root $Root -Goos $goos -Goarch $goarch `
                 -Package "./cmd/client" -OutputPath $outPath -Ldflags $Ldflags
             $artifacts.Add([ordered]@{ type = "client"; platform = "$goos/$goarch"; path = $outPath })
+            # GUI 仅 Windows：Fyne 交叉编译 linux/macOS 不可行，不在 release 中构建
+            if ($goos -eq "windows" -and (Test-CanBuildWindowsGui -Goarch $goarch)) {
+                $guiPath = Join-Path $dir "haovpn-client-gui.exe"
+                Invoke-GoBuildGui -Root $Root -Goarch $goarch -OutputPath $guiPath -Ldflags $Ldflags
+                $artifacts.Add([ordered]@{ type = "client-gui"; platform = "$goos/$goarch"; path = $guiPath })
+            }
         }
 
         if (-not $NoZip) {

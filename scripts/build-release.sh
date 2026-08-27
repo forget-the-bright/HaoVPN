@@ -55,7 +55,7 @@ fi
 VERSION="$(tr -d ' \r\n' < VERSION)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}"
+LDFLAGS="-s -w -X haovpn/internal/version.Version=${VERSION} -X haovpn/internal/version.Commit=${COMMIT} -X haovpn/internal/version.BuildTime=${BUILD_TIME}"
 
 read_platforms() {
   local line goos goarch

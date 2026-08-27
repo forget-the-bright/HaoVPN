@@ -57,11 +57,13 @@ dist/
 │   └── haovpn-client
 ├── windows-amd64/
 │   ├── haovpn-server.exe      # 内嵌 wintun，见下
-│   └── haovpn-client.exe
+│   ├── haovpn-client.exe
+│   └── haovpn-client-gui.exe  # 仅 Windows zip
 └── …（linux-arm64、windows-arm64、darwin-amd64、darwin-arm64）
 ```
 
 - 默认 **6 平台 × 2 二进制 = 12 个文件** + 6 个 zip + `manifest.json`（平台列表见 `scripts/platforms.txt`）。
+- **Windows zip**（`windows-amd64`）含 **`haovpn-client-gui.exe`**；`windows-arm64` zip 在本机 amd64 构建时不含 GUI（Fyne CGO 须同架构），ARM64 本机构建 release 时会带上。
 - **Windows zip 内不再单独附带 `wintun.dll`**：已 `go:embed` 进 exe，首次创建 TUN 时释放到 exe 同目录。
 
 ### Windows 与 Wintun（单 exe 分发）

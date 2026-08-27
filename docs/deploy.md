@@ -276,6 +276,8 @@ launchd 配置历史见 `docs/dev-log.md`。
 
 ### 5.2 Windows
 
+桌面 GUI（`haovpn-client-gui.exe`）**仅 Windows 提供**；GitHub Release 的 `HaoVPN-*-windows-*.zip` 已含 GUI + CLI + server。Linux/macOS 分发包仅 CLI。
+
 ```powershell
 # 解压账号 zip 或公司测试包；bin\ 下仅 exe，无需 wintun.dll
 cd C:\haovpn-client
