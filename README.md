@@ -35,15 +35,47 @@
 
 进度与变更见 [docs/dev-log.md](docs/dev-log.md)。
 
-## 版本
+## 构建与发版
 
-版本号由根目录 **[VERSION](VERSION)** 统一管理，**仅开发者手动修改**。
+| 场景 | 命令 | 产物 |
+|------|------|------|
+| 本机日常 | `.\scripts\build-local.ps1` | `bin/`（当前 Windows 架构） |
+| 全平台发版 | `.\scripts\build-release.ps1` | `dist/`（6 平台 zip + manifest） |
+| 公司机测试包 | `.\scripts\pack-company-client-test.ps1` | `dist/haovpn-company-client-test-*.zip` |
 
-```powershell
-.\scripts\build-release.ps1
+发版前由开发者手动改 [VERSION](VERSION)，详见 [docs/versioning.md](docs/versioning.md)。
+
+### `dist/` 目录（`build-release`）
+
+```
+dist/
+├── VERSION
+├── manifest.json
+├── HaoVPN-<ver>-linux-amd64.zip
+├── linux-amd64/
+│   ├── haovpn-server
+│   └── haovpn-client
+├── windows-amd64/
+│   ├── haovpn-server.exe      # 内嵌 wintun，见下
+│   └── haovpn-client.exe
+└── …（linux-arm64、windows-arm64、darwin-amd64、darwin-arm64）
 ```
 
-详见 [docs/versioning.md](docs/versioning.md)。
+- 默认 **6 平台 × 2 二进制 = 12 个文件** + 6 个 zip + `manifest.json`（平台列表见 `scripts/platforms.txt`）。
+- **Windows zip 内不再单独附带 `wintun.dll`**：已 `go:embed` 进 exe，首次创建 TUN 时释放到 exe 同目录。
+
+### Windows 与 Wintun（单 exe 分发）
+
+| 二进制 | 是否内嵌 Wintun | 说明 |
+|--------|-----------------|------|
+| `haovpn-client.exe` / `haovpn-client-gui.exe` | ✅ | 工程师 PC 拨号 |
+| `haovpn-server.exe`（Windows） | ✅ | 服务端也要建 TUN/NAT，走同一套 `internal/tun` |
+| Linux / macOS 任意二进制 | — | 使用系统 TUN/utun，无 wintun.dll |
+
+- **分发**：拷贝单个 `.exe` 即可；**首次**连 TUN / 启动带 TUN 的服务端时，会在 **exe 所在目录** 写出 `wintun.dll`（目录须可写）。
+- **构建机**：首次或升级 Wintun 前运行 `.\scripts\install-wintun.ps1`（`build-local` / `build-release` 会自动调用）；DLL 源文件在 `internal/tun/wintundll/`（已 gitignore，不入库）。
+
+脚本细节见 [scripts/README.md](scripts/README.md)；部署见 [docs/deploy.md](docs/deploy.md)。
 
 ## 文档地图
 
@@ -58,10 +90,6 @@
 | [scripts/README.md](scripts/README.md) | 构建与测试脚本 |
 
 规划存档：[docs/meta-plan.md](docs/meta-plan.md)（进度以 dev-log 为准）。
-
-## 构建平台
-
-`build-release` 默认产出 6 平台 × `haovpn-server` + `haovpn-client`（Windows 另有 `haovpn-client-gui`），见 `scripts/platforms.txt`。
 
 ## 技术栈
 

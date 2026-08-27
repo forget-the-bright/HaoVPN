@@ -21,6 +21,38 @@
 
 每个平台产出：`haovpn-server` + `haovpn-client`（Windows 带 `.exe`），共 **12 个二进制**。
 
+本机 `build-local` 额外构建 **`haovpn-client-gui.exe`**（仅 Windows，未纳入 `build-release` 全平台矩阵）。
+
+---
+
+## Windows Wintun（内嵌单 exe）
+
+Windows 上 **服务端与客户端** 都通过 `internal/tun` 创建 Wintun 网卡，因此 **都会** 在构建时 `go:embed` 对应架构的 `wintun.dll`：
+
+| 二进制 | 内嵌 Wintun |
+|--------|-------------|
+| `haovpn-server.exe` | ✅ |
+| `haovpn-client.exe` | ✅ |
+| `haovpn-client-gui.exe` | ✅（仅 `build-local`） |
+
+| 平台二进制 | Wintun |
+|------------|--------|
+| Linux / macOS server、client | 不使用 wintun.dll |
+
+**运行时**：首次创建 TUN 时，将内嵌 DLL **释放到 exe 同目录**的 `wintun.dll`（与 WireGuard 官方加载方式一致）。分发 zip **不必**再带单独 dll 文件。
+
+**构建时**（仅 Windows 开发机需要）：
+
+```powershell
+# 下载 Wintun 0.14.1 到 internal/tun/wintundll/{amd64,arm64}/（go:embed 源，已 gitignore）
+.\scripts\install-wintun.ps1              # 默认 amd64+arm64
+.\scripts\install-wintun.ps1 -Arch amd64  # 仅本机构建
+```
+
+`build-local` / `build-release` 会在编译前自动调用；**不可**在未下载 embed 源的情况下交叉编译 Windows 目标。
+
+**现场注意**：exe 所在目录须**可写**（Program Files 等只读目录需安装器同时写入 dll，或改放到可写目录）。
+
 ---
 
 ## 发布打包
@@ -72,15 +104,30 @@ chmod +x scripts/*.sh
 dist/
 ├── VERSION
 ├── manifest.json
-├── HaoVPN-0.1.0-dev-linux-amd64.zip
+├── HaoVPN-<ver>-linux-amd64.zip
+├── HaoVPN-<ver>-windows-amd64.zip
 ├── linux-amd64/
 │   ├── haovpn-server
 │   └── haovpn-client
-├── linux-arm64/
-...
+├── windows-amd64/
+│   ├── haovpn-server.exe    # 内嵌 wintun（首次启动 TUN 时释放 dll）
+│   └── haovpn-client.exe
+├── windows-arm64/
+│   └── …
+└── …（其余 4 个平台目录 + zip）
 ```
 
-`manifest.json` 含 version、commit、buildTime、各产物路径。
+- 每个 zip 内为对应平台目录下的 **server + client 两个二进制**（无单独 `wintun.dll`）。
+- `manifest.json` 含 version、commit、buildTime、各产物路径。
+
+### 现场 / 公司测试打包
+
+| 脚本 | 产物 |
+|------|------|
+| [pack-company-client-test.ps1](pack-company-client-test.ps1) | `dist/company-client-test/` + `dist/haovpn-company-client-test-<时间戳>.zip`（client + GUI + yaml + 证书 + VERIFY） |
+| [pack-zt-field-test.ps1](pack-zt-field-test.ps1) | `dist/zt-field-test/` + `dist/HaoVPN-zt-field-test.zip`（本机 server/client + home 模板） |
+
+公司包 **bin/** 下仅 exe，不含独立 wintun.dll。
 
 ---
 
@@ -88,6 +135,7 @@ dist/
 
 | 脚本 | 说明 |
 |------|------|
+| [install-wintun.ps1](install-wintun.ps1) | 下载 Wintun → `internal/tun/wintundll/`（构建 embed 用，见上文） |
 | [dev-gen-certs.ps1](dev-gen-certs.ps1) / [.sh](dev-gen-certs.sh) | 开发用自签证书 → `./certs/` |
 | [dev-smoke-test.sh](dev-smoke-test.sh) | 冒烟：启动 server + health 检查 |
 | [dev-smoke-test.ps1](dev-smoke-test.ps1) | Windows：build-local + dev-e2e |
@@ -115,7 +163,7 @@ dist/
 sudo .\bin\haovpn-server.exe        # 完整服务端 + WebUI
 ```
 
-`build-local` 会先调用 `install-wintun.ps1` 下载 Wintun 并 **go:embed 进 Windows 客户端**（单 exe 分发；首次连 TUN 时释放到 exe 同目录）。
+`build-local` 会先 `install-wintun.ps1` 再编译，Windows 客户端/服务端 exe 均内嵌 Wintun。
 
 ---
 
@@ -134,7 +182,8 @@ sudo .\bin\haovpn-server.exe        # 完整服务端 + WebUI
 - **Go 1.26**（`go version` 确认）
 - **PowerShell 7+**（`$PSVersionTable.PSVersion`）
 - 交叉编译默认 `CGO_ENABLED=0`（纯 Go，免 CGO 工具链）
-- `go.mod` 与 `cmd/server`、`cmd/client` 已初始化（代码落地后）
+- **Windows 构建**：需能访问 [wintun.net](https://www.wintun.net/) 下载 embed 源（或本地已有 `internal/tun/wintundll/*/wintun.dll`）
+- `go.mod` 与 `cmd/server`、`cmd/client` 已初始化
 
 ---
 

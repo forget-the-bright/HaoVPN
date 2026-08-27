@@ -44,7 +44,7 @@
 | 平台 | 要求 |
 |------|------|
 | Linux | 内核支持 TUN；`CAP_NET_ADMIN` 或 root；iptables/nftables |
-| Windows | 管理员权限；Wintun 驱动（随客户端组件提供） |
+| Windows | 管理员权限；**`haovpn-server.exe` 内嵌 Wintun**（首次启动 TUN 时在 exe 同目录释放 `wintun.dll`，目录须可写） |
 | macOS | 管理员权限；utun |
 
 - 磁盘：≥100MB（含日志、SQLite）
@@ -54,7 +54,7 @@
 
 | 平台 | 要求 |
 |------|------|
-| Windows 10+ | 管理员（创建 TUN）；可选 Windows 服务 |
+| Windows 10+ | 管理员（创建 TUN）；**单 exe 分发**（内嵌 Wintun，首次连 TUN 释放 dll）；可选 Windows 服务 |
 | Linux | root 或 `CAP_NET_ADMIN` |
 | macOS | 管理员 |
 
@@ -76,7 +76,7 @@
 ./scripts/build-release.sh
 ```
 
-产物目录 `dist/`（**6 平台 × 2 二进制 = 12 个文件** + zip + manifest.json）：
+产物目录 `dist/`（**6 平台 × 2 二进制 = 12 个文件** + 6 个 zip + `manifest.json`）：
 
 ```
 dist/
@@ -85,11 +85,13 @@ dist/
 ├── HaoVPN-<ver>-linux-amd64.zip
 ├── linux-amd64/          # haovpn-server, haovpn-client
 ├── linux-arm64/
-├── windows-amd64/        # .exe
+├── windows-amd64/        # haovpn-server.exe, haovpn-client.exe（内嵌 wintun，无单独 dll）
 ├── windows-arm64/
 ├── darwin-amd64/
 └── darwin-arm64/
 ```
+
+**Windows 说明**：release zip **不再**附带独立 `wintun.dll`；server 与 client 的 `.exe` 均在首次使用 TUN 时，将内嵌 DLL 释放到 **exe 所在目录**。拷贝到现场时只需对应平台的两个 exe（或其一）。
 
 平台列表定义于 `scripts/platforms.txt`，可增删后重新构建。
 
@@ -100,6 +102,15 @@ dist/
 ```
 
 ### 3.2 从源码构建
+
+Windows 开发机构建前需准备 Wintun embed 源（`build-local` / `build-release` 会自动下载）：
+
+```powershell
+.\scripts\install-wintun.ps1
+.\scripts\build-local.ps1
+```
+
+Linux / macOS 直接：
 
 ```bash
 go build -o haovpn-server ./cmd/server
@@ -154,13 +165,15 @@ sudo systemctl status haovpn-server
 ### 4.2 Windows
 
 ```powershell
-# 以管理员打开 PowerShell
+# 以管理员打开 PowerShell；目录须可写（首次启动会释放 wintun.dll 到 exe 同目录）
 mkdir C:\HaoVPN
 copy haovpn-server.exe C:\HaoVPN\
 cd C:\HaoVPN
 .\haovpn-server.exe -c .\server.yaml
 # 首次运行后编辑 server.yaml，浏览器 http://127.0.0.1:8080 改密
 ```
+
+> **Wintun**：Windows 服务端与客户端共用 `internal/tun`，**均内嵌** Wintun；无需单独拷贝 `wintun.dll` 安装包。若 exe 放在只读目录（如 `Program Files`），请用安装器写入 dll 或改到可写目录（如 `C:\HaoVPN`）。
 
 可选：使用 `scripts/install-windows-service.ps1`（代码落地后）注册服务。
 
@@ -264,14 +277,17 @@ launchd 配置历史见 `docs/dev-log.md`。
 ### 5.2 Windows
 
 ```powershell
-# 解压到 C:\haovpn-client
+# 解压账号 zip 或公司测试包；bin\ 下仅 exe，无需 wintun.dll
 cd C:\haovpn-client
 .\haovpn-client.exe -c .\client.yaml
+# 或 GUI：.\haovpn-client-gui.exe -c .\client.yaml（须管理员 / UAC）
 
 # 注册为服务（开机自连）
 .\haovpn-client.exe --service install
 .\haovpn-client.exe --service start
 ```
+
+首次连接时会在 **exe 同目录** 生成 `wintun.dll`（内嵌释放）；请保证该目录可写。
 
 ### 5.3 Linux
 
