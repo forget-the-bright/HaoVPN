@@ -30,7 +30,7 @@ func TestDashboardRequiresAuth(t *testing.T) {
 	defer store.Close()
 
 	srv := api.NewServer(cfg, store, auth.New(store, 5, 60, 3600), audit.New(store),
-		sessionmgr.New(store), nil, nil, time.Now(), "test-server-pk")
+		sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "test-server-pk")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard", nil)
 	w := httptest.NewRecorder()

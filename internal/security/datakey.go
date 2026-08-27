@@ -9,12 +9,18 @@ import (
 	"strings"
 
 	"haovpn/internal/config"
+	"haovpn/internal/fileutil"
 	"haovpn/internal/logger"
 )
 
 const defaultKeyFileName = ".haovpn-key"
 
 // LoadOrCreateDataKey 加载数据库字段加密密钥：优先 server.yaml hex，否则 data/.haovpn-key。
+//
+// 参数：dbCfg — EncryptionKey 非空时优先；EncryptionKeyFile 为空时用 dataDir/.haovpn-key。
+// 返回：*KeyEnc 用于 Seal/Open 私钥；err 为 hex 无效、读写密钥文件失败或随机生成失败。
+// 副作用：密钥文件不存在时生成 32 字节随机密钥并写入（0600）；打 Info 日志。
+// 并发：服务启动单线程调用；返回的 KeyEnc 可多 goroutine 共用。
 func LoadOrCreateDataKey(dbCfg config.DatabaseSection, dataDir string) (*KeyEnc, error) {
 	if hexKey := strings.TrimSpace(dbCfg.EncryptionKey); hexKey != "" {
 		enc, err := NewKeyEncFromHex(hexKey)
@@ -29,7 +35,7 @@ func LoadOrCreateDataKey(dbCfg config.DatabaseSection, dataDir string) (*KeyEnc,
 	if keyPath == "" {
 		keyPath = filepath.Join(dataDir, defaultKeyFileName)
 	}
-	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+	if err := fileutil.EnsureParentDir(keyPath, 0o700); err != nil {
 		return nil, fmt.Errorf("create key dir: %w", err)
 	}
 

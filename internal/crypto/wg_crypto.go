@@ -1,4 +1,3 @@
-// Package crypto 封装密钥生成与隧道载荷加解密（基于 X25519 共享密钥 + ChaCha20-Poly1305 + 防重放窗口）。
 package crypto
 
 import (

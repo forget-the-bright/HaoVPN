@@ -8,11 +8,12 @@ import (
 	"unsafe"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 
 	"golang.org/x/sys/windows"
 )
 
-// 本产品 WFP 子层 GUID（固定，便于识别与清理）。
+// HaoVPNSublayerGUID 本产品 WFP 杀开关专用子层 GUID（固定，便于枚举与崩溃后清理）。
 var (
 	HaoVPNSublayerGUID = windows.GUID{Data1: 0xa1b2c3d4, Data2: 0xe5f6, Data3: 0x7890, Data4: [8]byte{0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89}}
 	// FWPM_LAYER_ALE_AUTH_CONNECT_V4
@@ -130,10 +131,17 @@ var (
 	killPrefixes  []string
 )
 
-// KillSwitchSupported Windows 支持杀开关。
+// KillSwitchSupported 探测当前平台是否支持杀开关。
+//
+// 返回：Windows 恒 nil；非 Windows 由 killswitch_other 返回不支持 error。
 func KillSwitchSupported() error { return nil }
 
-// EnableKillSwitch 用 WFP 阻断 AllowedIPs 出站连接。
+// EnableKillSwitch 在 VPN 未连接时用 WFP 阻断 AllowedIPs 前缀的出站 IPv4 连接。
+//
+// 参数：prefixes — AllowedIPs CIDR 列表；经 NormalizeKillPrefixes 去重。
+// 返回：前缀为空或 WFP 安装失败时 error。
+// 副作用：打开 FWP 引擎、注册子层、添加 Block 过滤器；安装前清理本子层旧规则。
+// 并发：包内 killMu 串行化。
 func EnableKillSwitch(prefixes []string) error {
 	prefixes = NormalizeKillPrefixes(prefixes)
 	if len(prefixes) == 0 {
@@ -156,7 +164,10 @@ func EnableKillSwitch(prefixes []string) error {
 	return nil
 }
 
-// DisableKillSwitch 删除过滤器（连接成功后允许 AllowedIPs）。
+// DisableKillSwitch 隧道握手成功后删除 Block 过滤器，允许 AllowedIPs 正常出站。
+//
+// 返回：WFP 删除失败时 error；引擎保持打开供后续 Enable 复用。
+// 副作用：删除 HaoVPN 子层下全部过滤器。
 func DisableKillSwitch() error {
 	killMu.Lock()
 	defer killMu.Unlock()
@@ -170,7 +181,10 @@ func DisableKillSwitch() error {
 	return nil
 }
 
-// RemoveKillSwitchRules 拆除全部杀开关并关闭引擎。
+// RemoveKillSwitchRules 客户端退出或 Teardown 时拆除全部杀开关规则并关闭 WFP 引擎。
+//
+// 返回：删除过滤器过程中的首个 error（若有）；始终清空 killFilterIDs/killPrefixes。
+// 副作用：FwpmEngineClose0；须在路由清理前或按 clientapp 约定顺序调用。
 func RemoveKillSwitchRules() error {
 	killMu.Lock()
 	defer killMu.Unlock()
@@ -235,7 +249,7 @@ func installFiltersLocked(prefixes []string) ([]uint64, error) {
 }
 
 func addBlockFilter(cidr string, idx int) (uint64, error) {
-	addr, mask, err := ParseCIDRToV4Mask(cidr)
+	addr, mask, err := netutil.ParseCIDRToV4Mask(cidr)
 	if err != nil {
 		return 0, err
 	}

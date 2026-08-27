@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"haovpn/internal/readmodel"
 )
 
 // TestListUsersPageFilter 分页与用户名筛选。
@@ -33,7 +35,7 @@ func TestListUsersPageFilter(t *testing.T) {
 		t.Fatalf("count users=%d", n)
 	}
 
-	itemsAll, totalAll, err := s.ListUsersPage(UserListFilter{Limit: 10})
+	itemsAll, totalAll, err := s.ListUsersPage(readmodel.UserListFilter{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +43,7 @@ func TestListUsersPageFilter(t *testing.T) {
 		t.Fatalf("all total=%d len=%d items=%+v", totalAll, len(itemsAll), itemsAll)
 	}
 
-	items, total, err := s.ListUsersPage(UserListFilter{Q: "alice", Limit: 10})
+	items, total, err := s.ListUsersPage(readmodel.UserListFilter{Q: "alice", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

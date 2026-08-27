@@ -44,7 +44,7 @@ func TestAcceptanceAPIFlow(t *testing.T) {
 	}
 	pool.Reserve(cfg.VPN.GatewayIP)
 
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), pool, nil, time.Now(), "server-pub-key-test")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "server-pub-key-test")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

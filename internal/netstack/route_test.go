@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"haovpn/internal/netstack"
+	"haovpn/internal/netutil"
 )
 
 // TestProbeIPForCIDR 验证 LAN 探测 IP 生成。
@@ -13,9 +14,9 @@ func TestProbeIPForCIDR(t *testing.T) {
 	}
 }
 
-// TestSplitCIDR 验证 Windows route 所需的 dest/mask 拆分。
+// TestSplitCIDR 验证 Windows route 所需的 dest/mask 拆分（逻辑在 netutil）。
 func TestSplitCIDR(t *testing.T) {
-	dest, mask, err := netstack.SplitCIDR("192.168.1.0/24")
+	dest, mask, err := netutil.SplitCIDR("192.168.1.0/24")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,9 +42,9 @@ func TestWindowsOnLinkRouteArgs(t *testing.T) {
 	}
 }
 
-// TestParseCIDRs 边界：非法 CIDR 必须失败。
-func TestParseCIDRs(t *testing.T) {
-	if _, err := netstack.ParseCIDRs([]string{"10.0.0.0/24", "bad"}); err == nil {
+// TestValidateCIDRListStrict 边界：非法 CIDR 必须失败（与旧 ParseCIDRs 语义一致）。
+func TestValidateCIDRListStrict(t *testing.T) {
+	if err := netutil.ValidateCIDRList("test", []string{"10.0.0.0/24", "bad"}); err == nil {
 		t.Fatal("非法 CIDR 应失败")
 	}
 }

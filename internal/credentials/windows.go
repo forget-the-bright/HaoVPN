@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"haovpn/internal/brand"
+	"haovpn/internal/fileutil"
 	"haovpn/internal/logger"
 )
 
@@ -51,8 +52,7 @@ func SaveService(username, password string) error {
 	if err != nil {
 		return fmt.Errorf("加密失败（须以管理员运行以写入本机凭据）: %w", err)
 	}
-	dir := filepath.Dir(credPath())
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fileutil.EnsureParentDir(credPath(), 0o700); err != nil {
 		return err
 	}
 	if err := os.WriteFile(credPath(), enc, 0o600); err != nil {

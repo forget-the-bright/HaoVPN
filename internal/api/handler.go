@@ -1,12 +1,9 @@
-// Package api 提供 HTTP 管理 API 与 WebUI 路由（默认仅本机 + TUN IP）。
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -14,10 +11,11 @@ import (
 	"haovpn/internal/auth"
 	"haovpn/internal/config"
 	"haovpn/internal/health"
-	"haovpn/internal/ippool"
 	"haovpn/internal/logstore"
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
+	"haovpn/internal/readmodel"
 	"haovpn/internal/safeutil"
 	"haovpn/internal/security"
 	"haovpn/internal/sessionmgr"
@@ -25,14 +23,31 @@ import (
 	"haovpn/internal/vpnaccount"
 )
 
-// Server 管理 API 服务，聚合各业务模块。
+// Server 管理 Web API 与页面路由的 HTTP 服务实例，聚合鉴权、审计、VPN 账号与在线会话等模块。
+//
+// 字段：
+//   cfg — 服务端全局配置（监听地址、会话 TTL、数据库路径等）；构造时注入，生命周期内只读引用。
+//   store — SQLite 持久化层；读写用户、审计、连接事件等。
+//   auth — Web 登录会话与 CSRF 校验服务。
+//   audit — 管理操作审计日志写入器。
+//   sessions — VPN 隧道在线会话管理器；踢线、在线数统计、监控页数据源。
+//   keyEnc — 账号私钥加解密；配置导出与 provisioning 时使用。
+//   vpnSvc — VPN 账号业务（IP 分配、策略、删除）；须非 nil 方可创建/删除/PATCH 账号。
+//   startedAt — 进程启动时刻；health/dashboard 计算 uptime。
+//   serverPK — 服务端隧道公钥（Base64）；导出客户端 ZIP/YAML 时写入 peer 配置。
+//   mux — 路由表；routes 注册完成后不变。
+//   httpServer — Listen 单地址模式下的 http.Server；Close 时优雅关闭。
+//   tunOK — 数据面 TUN 是否就绪；由 SetDataplaneHealth 在启动完成后注入。
+//   natOK — 数据面 NAT 是否就绪；由 SetDataplaneHealth 在启动完成后注入。
+//   logStore — 结构化历史日志库（可选）；未注入时 /api/v1/logs?source=history 返回空列表。
+//
+// 线程安全：HTTP 处理器并发调用；依赖 store/auth/sessions 等下游各自的并发安全。
 type Server struct {
 	cfg        *config.ServerConfig
 	store      *persist.Store
 	auth       *auth.Service
 	audit      *audit.Logger
 	sessions   *sessionmgr.Manager
-	ipPool     *ippool.Pool
 	keyEnc     *security.KeyEnc
 	vpnSvc     *vpnaccount.Service
 	startedAt  time.Time
@@ -44,14 +59,27 @@ type Server struct {
 	logStore   *logstore.Store
 }
 
-// NewServer 创建 API 服务实例。
+// NewServer 创建 API 服务实例并完成路由注册。
+//
+// 参数：
+//   cfg — 服务端配置；非 nil。
+//   store — 持久化存储；非 nil。
+//   authSvc — Web 鉴权服务；非 nil。
+//   auditLog — 审计日志；非 nil。
+//   sessMgr — VPN 在线会话管理器；非 nil。
+//   vpnSvc — VPN 账号领域服务；非 nil。
+//   keyEnc — 私钥加解密；可为 nil（仅影响需解密私钥的导出/provisioning）。
+//   startedAt — 服务启动时间戳；用于 uptime。
+//   serverTunnelPublicKey — 隧道公钥字符串；写入客户端导出配置。
+//
+// 返回：已注册全部路由的 *Server；调用方可继续 SetLogStore/SetVPNService/SetDataplaneHealth。
 func NewServer(
 	cfg *config.ServerConfig,
 	store *persist.Store,
 	authSvc *auth.Service,
 	auditLog *audit.Logger,
 	sessMgr *sessionmgr.Manager,
-	pool *ippool.Pool,
+	vpnSvc *vpnaccount.Service,
 	keyEnc *security.KeyEnc,
 	startedAt time.Time,
 	serverTunnelPublicKey string,
@@ -62,9 +90,8 @@ func NewServer(
 		auth:      authSvc,
 		audit:     auditLog,
 		sessions:  sessMgr,
-		ipPool:    pool,
+		vpnSvc:    vpnSvc,
 		keyEnc:    keyEnc,
-		vpnSvc:    nil, // main 注入
 		startedAt: startedAt,
 		serverPK:  serverTunnelPublicKey,
 		mux:       http.NewServeMux(),
@@ -74,22 +101,32 @@ func NewServer(
 }
 
 // SetLogStore 注入结构化历史日志库（可选）。
+//
+// 未注入时 /api/v1/logs?source=history 返回空列表；可在 NewServer 之后调用。
 func (s *Server) SetLogStore(ls *logstore.Store) {
 	s.logStore = ls
 }
 
-// SetVPNService 注入 VPN 账号服务（IP 模式/策略解析）。
+// SetVPNService 注入或替换 VPN 账号领域服务。
+//
+// 用于 IP 模式/策略解析与开户；须在 handleUsers 等写操作前注入非 nil 实例。
 func (s *Server) SetVPNService(v *vpnaccount.Service) {
 	s.vpnSvc = v
 }
 
-// SetDataplaneHealth 设置 TUN/NAT 运行态（启动完成后由 main 注入）。
+// SetDataplaneHealth 设置 TUN/NAT 数据面就绪状态。
+//
+// 由 serverapp 在 TUN 与 NAT 配置完成后注入；供 health/dashboard 展示。
 func (s *Server) SetDataplaneHealth(tunOK, natOK bool) {
 	s.tunOK = tunOK
 	s.natOK = natOK
 }
 
-// routes 注册所有 HTTP 路由。
+// routes 注册所有 HTTP 路由，按三组划分：
+//
+//   公开接口 — 无需登录：/api/v1/login、/login、/api/v1/health、/api/v1/system/info。
+//   需登录 API — requireAuth 鉴权 + CSRF（POST/PUT/PATCH/DELETE）：用户/审计/仪表盘/备份/日志/改密/CSRF/监控等 /api/v1/*。
+//   WebUI 页面 — go:embed 模板：/static/、/、/users、/connections、/audit、/tools；/peers 重定向至 /users。
 func (s *Server) routes() {
 	// 公开接口
 	s.mux.HandleFunc("/api/v1/login", s.handleLogin) // 登录接口豁免 CSRF
@@ -123,12 +160,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/tools", s.requireAuthPage(s.handleToolsPage))
 }
 
-// Handler 返回 HTTP 处理器（测试与自定义监听用）。
+// Handler 返回带安全中间件包装的 HTTP 处理器。
+//
+// 供 httptest 与自定义监听使用；等价于 Listen 内部使用的 handler 链。
 func (s *Server) Handler() http.Handler {
 	return s.withMiddleware(s.mux)
 }
 
-// Listen 在指定地址启动 HTTP 服务。
+// Listen 在指定地址启动单监听 HTTP 服务。
+//
+// 返回：ListenAndServe 错误（正常关闭时为 http.ErrServerClosed）。
+// 副作用：创建 s.httpServer；Close 可优雅关停。
 func (s *Server) Listen(addr string) error {
 	s.httpServer = &http.Server{
 		Addr:    addr,
@@ -138,7 +180,9 @@ func (s *Server) Listen(addr string) error {
 	return s.httpServer.ListenAndServe()
 }
 
-// Close 优雅关闭 HTTP 服务。
+// Close 优雅关闭由 Listen 创建的 HTTP 服务。
+//
+// 未调用 Listen 或已关闭时返回 nil。
 func (s *Server) Close() error {
 	if s.httpServer == nil {
 		return nil
@@ -146,7 +190,7 @@ func (s *Server) Close() error {
 	return s.httpServer.Close()
 }
 
-// withMiddleware 包装安全响应头与日志。
+// withMiddleware 为路由链注入安全响应头（CSP 等）。
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for k, v := range security.SecurityHeaders() {
@@ -156,456 +200,23 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// requireAuth 鉴权中间件：未登录返回 401；须改密时仅允许改密/登出。
-func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		se, ok := s.sessionFromRequest(r)
-		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "未登录"})
-			return
-		}
-		if u, err := s.store.GetUserByID(se.UserID); err == nil && u.MustChangePassword {
-			allowed := r.URL.Path == "/api/v1/password" || r.URL.Path == "/api/v1/logout"
-			if !allowed {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "须先修改密码"})
-				return
-			}
-		}
-		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete {
-			if !s.validateCSRF(r) {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "CSRF token 无效"})
-				return
-			}
-		}
-		next(w, r)
-	}
-}
-
-func (s *Server) requireAuthPage(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		se, ok := s.sessionFromRequest(r)
-		if !ok {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-		if u, err := s.store.GetUserByID(se.UserID); err == nil && u.MustChangePassword {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-		next(w, r)
-	}
-}
-
-func (s *Server) sessionFromRequest(r *http.Request) (auth.SessionEntry, bool) {
-	c, err := r.Cookie("session")
-	if err != nil {
-		return auth.SessionEntry{}, false
-	}
-	return s.auth.ValidateSession(c.Value)
-}
-
-func (s *Server) validateCSRF(r *http.Request) bool {
-	c, err := r.Cookie("session")
-	if err != nil {
-		return false
-	}
-	token := r.Header.Get("X-CSRF-Token")
-	if token == "" {
-		_ = parseRequestForm(r)
-		token = r.FormValue("csrf_token")
-	}
-	return s.auth.ValidateCSRF(c.Value, token)
-}
-
+// handleHealth 健康检查（GET /api/v1/health，公开）。
+//
+// 返回：uptime、在线数、db/tun/nat 状态及近期错误摘要。
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	dbOK := s.store.DB().Ping() == nil
 	st := health.NewStatus(s.startedAt, s.sessions.OnlineCount(), dbOK, s.tunOK, s.natOK, logger.RecentErrors())
 	writeJSON(w, http.StatusOK, st)
 }
 
+// handleSystemInfo 返回构建版本信息（GET /api/v1/system/info，公开）。
 func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, version.Info())
 }
 
-func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST only"})
-		return
-	}
-	if err := parseRequestForm(r); err != nil {
-		ip := clientIP(r)
-		logger.Warn("登录表单解析失败 ip=%s ct=%q err=%v", ip, r.Header.Get("Content-Type"), err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid form data"})
-		return
-	}
-	username := r.FormValue("username")
-	password := r.FormValue("password")
-	ip := clientIP(r)
-	token, user, err := s.auth.Login(username, password, ip)
-	if err != nil {
-		s.audit.Log(nil, "login_failed", "user", nil, ip, map[string]string{"username": username})
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return
-	}
-	csrf := s.auth.GetCSRF(token)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   s.cfg.API.SessionTTLSec,
-	})
-	s.audit.Log(&user.ID, "login", "user", &user.ID, ip, nil)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                   true,
-		"must_change_password": user.MustChangePassword,
-		"csrf_token":           csrf,
-	})
-}
-
-func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie("session"); err == nil {
-		se, ok := s.auth.ValidateSession(c.Value)
-		if ok {
-			uid := se.UserID
-			s.audit.Log(&uid, "logout", "user", &uid, clientIP(r), nil)
-		}
-		s.auth.Logout(c.Value)
-	}
-	http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, nil)
-		return
-	}
-	se, ok := s.sessionFromRequest(r)
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, nil)
-		return
-	}
-	_ = parseRequestForm(r)
-	newPass := r.FormValue("new_password")
-	hash, err := auth.HashPassword(newPass)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := s.store.UpdateUserPassword(se.UserID, hash, true); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "更新失败"})
-		return
-	}
-	s.audit.Log(&se.UserID, "change_password", "user", &se.UserID, clientIP(r), nil)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		q := r.URL.Query()
-		limit := clampLimit(parseIntDefault(q.Get("limit"), 50), 50, 500)
-		offset := parseIntDefault(q.Get("offset"), 0)
-		enabled := -1
-		useEnabled := false
-		if v := q.Get("enabled"); v == "1" || v == "true" {
-			enabled = 1
-			useEnabled = true
-		} else if v == "0" || v == "false" {
-			enabled = 0
-			useEnabled = true
-		}
-		items, total, err := s.store.ListUsersPage(persist.UserListFilter{
-			Q: q.Get("q"), Enabled: enabled, UseEnabled: useEnabled, Limit: limit, Offset: offset,
-		})
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		onlineOnly := q.Get("online") == "1" || q.Get("online") == "true"
-		type accountView struct {
-			ID         int64    `json:"id"`
-			Username   string   `json:"username"`
-			Enabled    bool     `json:"enabled"`
-			HasVPN     bool     `json:"has_vpn"`
-			VPNIP      string   `json:"vpn_ip,omitempty"`
-			IPMode     string   `json:"ip_mode,omitempty"`
-			PolicyVer  int      `json:"policy_ver,omitempty"`
-			AllowedIPs []string `json:"allowed_ips,omitempty"`
-			Online     bool     `json:"online"`
-		}
-		var out []accountView
-		for _, u := range items {
-			_, online := s.sessions.GetSession(u.ID)
-			if onlineOnly && !online {
-				continue
-			}
-			out = append(out, accountView{
-				ID: u.ID, Username: u.Username, Enabled: u.Enabled,
-				HasVPN: u.HasVPN, VPNIP: u.VPNIP, IPMode: u.IPMode,
-				PolicyVer: u.PolicyVer, AllowedIPs: u.AllowedIPs, Online: online,
-			})
-		}
-		if onlineOnly {
-			total = len(out)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"items": out, "total": total, "limit": limit, "offset": offset,
-		})
-	case http.MethodPost:
-		_ = parseRequestForm(r)
-		username := r.FormValue("username")
-		password := r.FormValue("password")
-		ipMode := r.FormValue("ip_mode")
-		if ipMode == "" {
-			ipMode = persist.IPModeFixed
-		}
-		ipLeaseSec, _ := strconv.Atoi(r.FormValue("ip_lease_sec"))
-		requestedIP := strings.TrimSpace(r.FormValue("vpn_ip"))
-		hash, err := auth.HashPassword(password)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		id, vpnIP, err := s.provisionVPNAccount(username, hash, ipMode, ipLeaseSec, nil, requestedIP)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		se, _ := s.sessionFromRequest(r)
-		s.audit.Log(&se.UserID, "account_create", "user", &id, clientIP(r), map[string]string{"username": username, "vpn_ip": vpnIP})
-		writeJSON(w, http.StatusOK, map[string]any{
-			"id": id, "username": username, "vpn_ip": vpnIP, "ip_mode": ipMode,
-			"policy_ver": 1, "export_zip_url": fmt.Sprintf("/api/v1/users/%d/export.zip", id),
-		})
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, nil)
-	}
-}
-
-func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
-	parts := strings.Split(path, "/")
-	id, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效 ID"})
-		return
-	}
-	se, _ := s.sessionFromRequest(r)
-
-	// GET /api/v1/users/{id}/export.zip
-	if len(parts) > 1 && parts[1] == "export.zip" && r.Method == http.MethodGet {
-		s.handleUserExportZip(w, r, id, se)
-		return
-	}
-	if len(parts) > 1 && parts[1] == "export" && r.Method == http.MethodGet {
-		s.handleUserExportYAML(w, r, id, se)
-		return
-	}
-	if len(parts) > 1 && parts[1] == "kick" && r.Method == http.MethodPost {
-		s.sessions.KickUser(id)
-		s.audit.Log(&se.UserID, "kick_account", "user", &id, clientIP(r), nil)
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-		return
-	}
-	if len(parts) > 1 && parts[1] == "vpn" && r.Method == http.MethodPatch {
-		s.handleUserVPNPatch(w, r, id, se)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodDelete:
-		u, _ := s.store.GetUserByID(id)
-		s.sessions.KickUser(id)
-		if u != nil && u.VPNIP != "" {
-			// fixed / 动态残留占用都释放内存池；DB 行由 DeleteUser 级联删
-			s.ipPool.Release(u.VPNIP)
-			s.sessions.UnregisterVPNIP(u.VPNIP)
-		}
-		if err := s.store.DeleteUser(id); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		s.audit.Log(&se.UserID, "account_delete", "user", &id, clientIP(r), nil)
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	case http.MethodPost:
-		_ = parseRequestForm(r)
-		action := r.FormValue("action")
-		if action == "disable" {
-			if err := s.store.SetUserEnabled(id, false); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-				return
-			}
-			s.sessions.KickUser(id)
-			logger.Info("账号已禁用并踢线: user_id=%d", id)
-			s.audit.Log(&se.UserID, "user_disable", "user", &id, clientIP(r), nil)
-		} else if action == "enable" {
-			if err := s.store.SetUserEnabled(id, true); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-				return
-			}
-			s.audit.Log(&se.UserID, "user_enable", "user", &id, clientIP(r), nil)
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	default:
-		writeJSON(w, http.StatusMethodNotAllowed, nil)
-	}
-}
-
-func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
-	var body struct {
-		AllowedIPs *[]string `json:"allowed_ips"`
-		IPMode     string    `json:"ip_mode"`
-		IPLeaseSec int       `json:"ip_lease_sec"`
-		VPNIP      *string   `json:"vpn_ip"` // nil=不改；非 nil 时按模式处理
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效 JSON"})
-		return
-	}
-	u, err := s.store.GetUserByID(id)
-	if err != nil || !u.HasVPN() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "账号不存在或无 VPN 身份"})
-		return
-	}
-	oldMode, oldIP := u.IPMode, u.VPNIP
-	if oldMode == "" {
-		oldMode = persist.IPModeFixed
-	}
-	newMode := oldMode
-	if body.IPMode != "" {
-		newMode = body.IPMode
-	}
-	if body.IPLeaseSec > 0 {
-		u.IPLeaseSec = body.IPLeaseSec
-	}
-	allowed := u.AllowedIPs
-	if body.AllowedIPs != nil {
-		if err := validateAllowedIPs(*body.AllowedIPs); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		allowed = *body.AllowedIPs
-	}
-
-	newIP := oldIP
-	if body.VPNIP != nil {
-		req := strings.TrimSpace(*body.VPNIP)
-		switch newMode {
-		case persist.IPModeDynamicSession, persist.IPModeDynamicLease:
-			if req != "" {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "动态 IP 模式不可指定 VPN IP"})
-				return
-			}
-			newIP = ""
-		case persist.IPModeFixed:
-			if req == "" {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "fixed 模式须指定 VPN IP，或省略 vpn_ip 字段保持不变"})
-				return
-			}
-			newIP = req
-		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "未知 ip_mode"})
-			return
-		}
-	} else if newMode != oldMode {
-		// 仅改模式、未带 vpn_ip
-		if newMode == persist.IPModeFixed && oldIP == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "切到 fixed 须指定 vpn_ip"})
-			return
-		}
-		if newMode == persist.IPModeDynamicSession || newMode == persist.IPModeDynamicLease {
-			newIP = ""
-		}
-	}
-
-	// 池占用调整
-	wasFixed := oldMode == persist.IPModeFixed
-	willFixed := newMode == persist.IPModeFixed
-	if wasFixed && !willFixed {
-		s.releaseFixedVPNIP(id, oldIP)
-	} else if willFixed {
-		if !wasFixed {
-			// 从动态切 fixed：占用指定 IP
-			if err := s.rebindFixedVPNIP(id, "", newIP); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-		} else if newIP != oldIP {
-			if err := s.rebindFixedVPNIP(id, oldIP, newIP); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-		}
-		if p := net.ParseIP(newIP); p != nil && p.To4() != nil {
-			newIP = p.To4().String()
-		}
-	}
-
-	pv, err := s.store.IncrementPolicyVer(id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := s.store.UpdateVPNFields(id, newIP, allowed, newMode, u.IPLeaseSec, pv); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	s.sessions.KickUser(id)
-	s.audit.Log(&se.UserID, "policy_change_kick", "user", &id, clientIP(r), map[string]string{
-		"policy_ver": fmt.Sprintf("%d", pv), "vpn_ip": newIP, "ip_mode": newMode,
-	})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "policy_ver": pv, "vpn_ip": newIP, "ip_mode": newMode})
-}
-
-func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
-	u, err := s.store.GetUserByID(id)
-	if err != nil || !u.HasVPN() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "账号不存在或无 VPN 配置"})
-		return
-	}
-	plainKey, err := s.openAccountPrivateKey(u)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "私钥解密失败"})
-		return
-	}
-	zipBytes, err := buildAccountExportZip(s.cfg, u, plainKey, s.serverPK)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	s.audit.Log(&se.UserID, "config_export", "user", &id, clientIP(r), map[string]string{"format": "zip"})
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=haovpn-client-%s.zip", u.Username))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(zipBytes)
-}
-
-func (s *Server) handleUserExportYAML(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
-	u, err := s.store.GetUserByID(id)
-	if err != nil || !u.HasVPN() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "账号不存在或无 VPN 配置"})
-		return
-	}
-	plainKey, err := s.openAccountPrivateKey(u)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "私钥解密失败"})
-		return
-	}
-	caFile := s.cfg.Server.TLS.CertFile
-	if caFile == "" {
-		caFile = "./certs/server.crt"
-	}
-	yaml := buildClientExportYAML(s.cfg, u, plainKey, s.serverPK, caFile)
-	s.audit.Log(&se.UserID, "config_export", "user", &id, clientIP(r), nil)
-	w.Header().Set("Content-Type", "application/x-yaml")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=client-%s.yaml", u.Username))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(yaml))
-}
-
+// handleAudit 分页查询管理审计日志（GET /api/v1/audit）。
+//
+// 查询参数：action、since（RFC3339）、limit、offset。
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit := clampLimit(parseIntDefault(q.Get("limit"), 50), 50, 500)
@@ -616,7 +227,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 			since = parsed
 		}
 	}
-	logs, total, err := s.store.ListAuditLogsFiltered(persist.AuditListFilter{
+	logs, total, err := s.store.ListAuditLogsFiltered(readmodel.AuditListFilter{
 		Action: q.Get("action"),
 		Since:  since,
 		Limit:  limit,
@@ -631,6 +242,9 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleDashboard 仪表盘摘要 JSON（GET /api/v1/dashboard）。
+//
+// 返回：在线账号数、uptime、db/tun/nat 状态、recent_errors。
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	dbOK := s.store.DB().Ping() == nil
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -644,6 +258,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleLogs 读取实时或历史日志（GET /api/v1/logs）。
+//
+// 参数：source=live|history（默认 live）、tail、level、q、since、offset。
+// history 走 logStore；live 读 server.log 或 *.live.log 尾部。
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, nil)
@@ -707,54 +325,33 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func parseIntDefault(s string, def int) int {
-	if s == "" {
-		return def
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return n
-}
-
+// handleBackup 下载 SQLite 主库备份（GET /api/v1/backup）。
+//
+// 副作用：写审计 db_backup；直接 ServeFile 数据库路径。
 func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	se, _ := s.sessionFromRequest(r)
 	s.audit.Log(&se.UserID, "db_backup", "system", nil, clientIP(r), nil)
 	http.ServeFile(w, r, s.cfg.Database.Path)
 }
 
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func clientIP(r *http.Request) string {
-	if x := r.Header.Get("X-Forwarded-For"); x != "" {
-		return strings.Split(x, ",")[0]
-	}
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i >= 0 {
-		return host[:i]
-	}
-	return host
-}
-
 // LogPublicBindAudit 公网绑定启动时写审计记录。
+//
+// 当 allow_public_bind 开启时由 serverapp 调用，提示管理口暴露风险。
 func LogPublicBindAudit(auditLog *audit.Logger) {
 	auditLog.Log(nil, "management_public_bind_enabled", "system", nil, "", map[string]string{
 		"message": "用户已开启 allow_public_bind，管理口暴露风险自担",
 	})
 }
 
-// StartAllListeners 在多个 host 上启动管理 API。
-// 先绑回环再绑 TUN IP，避免 TUN 重试拖慢本机 WebUI 就绪。
+// StartAllListeners 在多个 host 上并发启动管理 API 监听。
+//
+// 先绑回环地址再绑 TUN IP，避免 TUN 重试拖慢本机 WebUI；非回环地址 bind 最多重试 8 次。
+// 返回：已成功创建的 http.Server 切片（可能为空）。
 func StartAllListeners(s *Server, hosts []string, port int) []*http.Server {
 	var ordered []string
 	var rest []string
 	for _, h := range hosts {
-		if h == "127.0.0.1" || h == "::1" || h == "localhost" {
+		if netutil.IsLoopbackHost(h) {
 			ordered = append(ordered, h)
 		} else {
 			rest = append(rest, h)
@@ -767,7 +364,7 @@ func StartAllListeners(s *Server, hosts []string, port int) []*http.Server {
 	for _, host := range ordered {
 		addr := fmt.Sprintf("%s:%d", host, port)
 		retries := 1
-		if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+		if !netutil.IsLoopbackHost(host) {
 			retries = 8
 		}
 		ln, err := listenAPI(addr, retries)
@@ -790,7 +387,9 @@ func StartAllListeners(s *Server, hosts []string, port int) []*http.Server {
 	return servers
 }
 
-// FormatBoundAddrs 仅列出已成功监听的地址。
+// FormatBoundAddrs 将已监听地址格式化为逗号分隔字符串。
+//
+// 无可用监听时返回 "(无)"。
 func FormatBoundAddrs(servers []*http.Server) string {
 	var s string
 	for i, srv := range servers {
@@ -805,7 +404,10 @@ func FormatBoundAddrs(servers []*http.Server) string {
 	return s
 }
 
-// listenAPI 尝试绑定；retries>1 用于 TUN IP 刚配置后的短暂窗口。
+// listenAPI 尝试 TCP 绑定指定地址。
+//
+// 参数：retries>1 时用于 TUN IP 刚配置后的短暂重试窗口（间隔 300ms）。
+// 返回：成功时 Listener；全部失败时 last error。
 func listenAPI(addr string, retries int) (net.Listener, error) {
 	if retries < 1 {
 		retries = 1

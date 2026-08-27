@@ -2,79 +2,26 @@ package persist
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"haovpn/internal/paginate"
+	"haovpn/internal/readmodel"
 )
 
 // userListCols Web 列表所需列（不含 password_hash / private_key_enc）。
 const userListCols = `id, username, enabled, public_key, vpn_ip, allowed_ips, ip_mode, ip_lease_sec, policy_ver`
 
-// UserListItem Web 账号列表项（轻量）。
-type UserListItem struct {
-	ID         int64    `json:"id"`
-	Username   string   `json:"username"`
-	Enabled    bool     `json:"enabled"`
-	HasVPN     bool     `json:"has_vpn"`
-	VPNIP      string   `json:"vpn_ip,omitempty"`
-	IPMode     string   `json:"ip_mode,omitempty"`
-	PolicyVer  int      `json:"policy_ver,omitempty"`
-	AllowedIPs []string `json:"allowed_ips,omitempty"`
-}
-
-// UserListFilter 账号列表筛选。
-type UserListFilter struct {
-	Q          string
-	Enabled    int  // 0 禁用 / 1 启用（须配合 UseEnabled）
-	UseEnabled bool // true 时按 Enabled 筛选
-	Limit      int
-	Offset     int
-}
-
-// AuditListFilter 审计列表筛选。
-type AuditListFilter struct {
-	Action string
-	Since  time.Time
-	Limit  int
-	Offset int
-}
-
-// ConnectionEventFilter 连接事件筛选。
-type ConnectionEventFilter struct {
-	UserID    int64
-	EventType string
-	Limit     int
-	Offset    int
-}
-
-// MonitorAccountRow 监控页一行（用户 + session_stats JOIN）。
-type MonitorAccountRow struct {
-	ID             int64
-	Username       string
-	VPNIP          string
-	IPMode         string
-	PolicyVer      int
-	AllowedIPs     []string
-	ConnectedAt    *time.Time
-	LastHeartbeat  *time.Time
-	RxBytes        int64
-	TxBytes        int64
-	ReconnectCount int
-	RemoteAddr     string
-}
-
 // ListUsersPage 分页列出账号（轻量列 + 可选筛选）。
-func (s *Store) ListUsersPage(f UserListFilter) ([]UserListItem, int, error) {
-	if f.Limit <= 0 {
-		f.Limit = 50
-	}
-	if f.Limit > 500 {
-		f.Limit = 500
-	}
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
+//
+// 参数：f — Limit/Offset 经 paginate 裁剪；Q 模糊匹配 username；UseEnabled+Enabled 筛选启用状态。
+// 返回：items 不含 password_hash/private_key_enc；total 为筛选后总行数；err 为 COUNT 或 SELECT 失败。
+// 副作用：只读 users 表。
+// 并发：可与其他 Store 读操作并行；SQLite 层串行执行。
+func (s *Store) ListUsersPage(f readmodel.UserListFilter) ([]readmodel.UserListItem, int, error) {
+	f.Limit = paginate.ClampLimit(f.Limit, 50, 500)
+	f.Offset = paginate.ClampOffset(f.Offset)
 
 	where := []string{"1=1"}
 	args := []any{}
@@ -103,7 +50,7 @@ func (s *Store) ListUsersPage(f UserListFilter) ([]UserListItem, int, error) {
 	}
 	defer rows.Close()
 
-	var out []UserListItem
+	var out []readmodel.UserListItem
 	for rows.Next() {
 		item, err := scanUserListItem(rows)
 		if err != nil {
@@ -114,8 +61,8 @@ func (s *Store) ListUsersPage(f UserListFilter) ([]UserListItem, int, error) {
 	return out, total, rows.Err()
 }
 
-func scanUserListItem(row scannable) (UserListItem, error) {
-	var item UserListItem
+func scanUserListItem(row scannable) (readmodel.UserListItem, error) {
+	var item readmodel.UserListItem
 	var enabled int
 	var pubKey, vpnIP, ipsJSON, ipMode sql.NullString
 	var ipLease, policyVer int
@@ -127,20 +74,18 @@ func scanUserListItem(row scannable) (UserListItem, error) {
 	item.VPNIP = vpnIP.String
 	item.IPMode = ipMode.String
 	item.PolicyVer = policyVer
-	if ipsJSON.Valid && ipsJSON.String != "" {
-		_ = json.Unmarshal([]byte(ipsJSON.String), &item.AllowedIPs)
-	}
+	unmarshalAllowedIPs(ipsJSON, &item.AllowedIPs)
 	return item, nil
 }
 
 // ListAuditLogsFiltered 带筛选的审计分页。
-func (s *Store) ListAuditLogsFiltered(f AuditListFilter) ([]AuditEntry, int, error) {
-	if f.Limit <= 0 {
-		f.Limit = 50
-	}
-	if f.Limit > 500 {
-		f.Limit = 500
-	}
+//
+// 参数：f — Action 精确匹配；Since 过滤 created_at≥该时间；Limit/Offset 分页。
+// 返回：[]AuditEntry 按 id 降序；total 为筛选后总数；err 为查询失败。
+// 副作用：只读 audit_logs 表。
+// 并发：可并行调用；只读无锁。
+func (s *Store) ListAuditLogsFiltered(f readmodel.AuditListFilter) ([]AuditEntry, int, error) {
+	f.Limit = paginate.ClampLimit(f.Limit, 50, 500)
 	where := []string{"1=1"}
 	args := []any{}
 	if a := strings.TrimSpace(f.Action); a != "" {
@@ -149,7 +94,7 @@ func (s *Store) ListAuditLogsFiltered(f AuditListFilter) ([]AuditEntry, int, err
 	}
 	if !f.Since.IsZero() {
 		where = append(where, "created_at>=?")
-		args = append(args, f.Since.UTC().Format("2006-01-02 15:04:05"))
+		args = append(args, formatSQLiteTime(f.Since))
 	}
 	wsql := strings.Join(where, " AND ")
 
@@ -169,38 +114,14 @@ func (s *Store) ListAuditLogsFiltered(f AuditListFilter) ([]AuditEntry, int, err
 	return out, total, err
 }
 
-func scanAuditRows(rows *sql.Rows) ([]AuditEntry, error) {
-	var out []AuditEntry
-	for rows.Next() {
-		var e AuditEntry
-		var actor sql.NullInt64
-		var target sql.NullInt64
-		var created string
-		if err := rows.Scan(&e.ID, &actor, &e.Action, &e.TargetType, &target, &e.ClientIP, &e.DetailJSON, &created); err != nil {
-			return nil, err
-		}
-		if actor.Valid {
-			v := actor.Int64
-			e.ActorUserID = &v
-		}
-		if target.Valid {
-			v := target.Int64
-			e.TargetID = &v
-		}
-		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
-		out = append(out, e)
-	}
-	return out, rows.Err()
-}
-
 // ListConnectionEventsFiltered 连接事件分页筛选。
-func (s *Store) ListConnectionEventsFiltered(f ConnectionEventFilter) ([]ConnectionEvent, int, error) {
-	if f.Limit <= 0 {
-		f.Limit = 50
-	}
-	if f.Limit > 500 {
-		f.Limit = 500
-	}
+//
+// 参数：f — UserID>0 时按用户过滤；EventType 非空时精确匹配；Limit/Offset 分页。
+// 返回：[]ConnectionEvent 按 id 降序；total 为筛选后总数；err 为查询失败。
+// 副作用：只读 connection_events 表。
+// 并发：可并行调用；只读无锁。
+func (s *Store) ListConnectionEventsFiltered(f readmodel.ConnectionEventFilter) ([]ConnectionEvent, int, error) {
+	f.Limit = paginate.ClampLimit(f.Limit, 50, 500)
 	where := []string{"1=1"}
 	args := []any{}
 	if f.UserID > 0 {
@@ -226,21 +147,17 @@ func (s *Store) ListConnectionEventsFiltered(f ConnectionEventFilter) ([]Connect
 	}
 	defer rows.Close()
 
-	var out []ConnectionEvent
-	for rows.Next() {
-		var e ConnectionEvent
-		var created string
-		if err := rows.Scan(&e.ID, &e.UserID, &e.EventType, &e.RemoteAddr, &e.DetailJSON, &created); err != nil {
-			return nil, 0, err
-		}
-		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
-		out = append(out, e)
-	}
-	return out, total, rows.Err()
+	out, err := scanConnectionEventRows(rows)
+	return out, total, err
 }
 
 // ListMonitorAccountRows 一次 JOIN 拉取监控所需字段，避免 N+1。
-func (s *Store) ListMonitorAccountRows() ([]MonitorAccountRow, error) {
+//
+// 返回：已配置公钥的 VPN 账号 + 左连接 session_stats（无会话时统计字段为零值）；
+// err 为 JOIN 查询或 Scan 失败。
+// 副作用：只读 users 与 session_stats 表。
+// 并发：可并行调用；管理监控页刷新时使用。
+func (s *Store) ListMonitorAccountRows() ([]readmodel.MonitorAccountRow, error) {
 	rows, err := s.db.Query(`SELECT u.id, u.username, u.vpn_ip, u.ip_mode, u.policy_ver, u.allowed_ips,
 		ss.connected_at, ss.last_heartbeat, ss.rx_bytes, ss.tx_bytes, ss.reconnect_count, ss.remote_addr
 		FROM users u
@@ -252,9 +169,9 @@ func (s *Store) ListMonitorAccountRows() ([]MonitorAccountRow, error) {
 	}
 	defer rows.Close()
 
-	var out []MonitorAccountRow
+	var out []readmodel.MonitorAccountRow
 	for rows.Next() {
-		var r MonitorAccountRow
+		var r readmodel.MonitorAccountRow
 		var vpnIP, ipMode, ipsJSON sql.NullString
 		var policyVer int
 		var connAt, hb, remote sql.NullString
@@ -267,11 +184,9 @@ func (s *Store) ListMonitorAccountRows() ([]MonitorAccountRow, error) {
 		r.VPNIP = vpnIP.String
 		r.IPMode = ipMode.String
 		r.PolicyVer = policyVer
-		if ipsJSON.Valid && ipsJSON.String != "" {
-			_ = json.Unmarshal([]byte(ipsJSON.String), &r.AllowedIPs)
-		}
-		r.ConnectedAt = parseTimePtr(connAt)
-		r.LastHeartbeat = parseTimePtr(hb)
+		unmarshalAllowedIPs(ipsJSON, &r.AllowedIPs)
+		r.ConnectedAt = parseSQLiteTimePtr(connAt)
+		r.LastHeartbeat = parseSQLiteTimePtr(hb)
 		if rx.Valid {
 			r.RxBytes = rx.Int64
 		}
@@ -287,20 +202,14 @@ func (s *Store) ListMonitorAccountRows() ([]MonitorAccountRow, error) {
 	return out, rows.Err()
 }
 
-func parseTimePtr(ns sql.NullString) *time.Time {
-	if !ns.Valid || ns.String == "" {
-		return nil
-	}
-	t, err := time.Parse("2006-01-02 15:04:05", ns.String)
-	if err != nil {
-		return nil
-	}
-	return &t
-}
-
 // PruneAuditLogs 删除早于 cutoff 的审计记录。
+//
+// 参数：cutoff — created_at 早于此 UTC 时间的行将被 DELETE。
+// 返回：n 为实际删除行数；err 为执行失败（库已关闭、磁盘错误等）。
+// 副作用：写 audit_logs 表；不可恢复，由 maintenance 定时任务调用。
+// 并发：与其它写操作由 SQLite 串行化。
 func (s *Store) PruneAuditLogs(cutoff time.Time) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM audit_logs WHERE created_at < ?`, cutoff.UTC().Format("2006-01-02 15:04:05"))
+	res, err := s.db.Exec(`DELETE FROM audit_logs WHERE created_at < ?`, formatSQLiteTime(cutoff))
 	if err != nil {
 		return 0, err
 	}
@@ -308,8 +217,13 @@ func (s *Store) PruneAuditLogs(cutoff time.Time) (int64, error) {
 }
 
 // PruneConnectionEvents 删除早于 cutoff 的连接事件。
+//
+// 参数：cutoff — created_at 早于此 UTC 时间的行将被 DELETE。
+// 返回：n 为实际删除行数；err 为执行失败。
+// 副作用：写 connection_events 表；不可恢复，由 maintenance 定时任务调用。
+// 并发：与其它写操作由 SQLite 串行化。
 func (s *Store) PruneConnectionEvents(cutoff time.Time) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM connection_events WHERE created_at < ?`, cutoff.UTC().Format("2006-01-02 15:04:05"))
+	res, err := s.db.Exec(`DELETE FROM connection_events WHERE created_at < ?`, formatSQLiteTime(cutoff))
 	if err != nil {
 		return 0, err
 	}
@@ -317,6 +231,11 @@ func (s *Store) PruneConnectionEvents(cutoff time.Time) (int64, error) {
 }
 
 // UsernameByID 按 ID 取用户名（事件列表展示用）。
+//
+// 参数：id — users.id；不存在时返回 "#<id>" 占位字符串。
+// 返回：username 或占位；永不返回 error（查询失败时降级为占位）。
+// 副作用：只读 users 表一行。
+// 并发：可并行调用；只读无锁。
 func (s *Store) UsernameByID(id int64) string {
 	var name string
 	if err := s.db.QueryRow(`SELECT username FROM users WHERE id=?`, id).Scan(&name); err != nil {

@@ -1,15 +1,17 @@
 package api
 
 import (
-	"net"
 	"net/http"
 	"strconv"
 	"time"
 
-	"haovpn/internal/persist"
+	"haovpn/internal/netutil"
+	"haovpn/internal/readmodel"
 )
 
-// handleCSRF 返回当前会话的 CSRF Token。
+// handleCSRF 返回当前会话的 CSRF Token（GET /api/v1/csrf）。
+//
+// 未登录或会话无效时返回 401；供 WebUI 写操作前刷新 token。
 func (s *Server) handleCSRF(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie("session")
 	if err != nil {
@@ -24,7 +26,9 @@ func (s *Server) handleCSRF(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"csrf_token": token})
 }
 
-// handleMonitorOnline 返回当前在线账号。
+// handleMonitorOnline 返回当前在线 VPN 账号快照（GET /api/v1/monitor/online）。
+//
+// 每项含 DB 会话统计与内存 live 流量（Rx/Tx、allowed_ips）。
 func (s *Server) handleMonitorOnline(w http.ResponseWriter, r *http.Request) {
 	var items []map[string]any
 	for _, uid := range s.sessions.ListOnline() {
@@ -35,7 +39,9 @@ func (s *Server) handleMonitorOnline(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-// handleMonitorAccounts 返回 VPN 账号监控摘要（单次 JOIN，无 N+1）。
+// handleMonitorAccounts 返回 VPN 账号监控摘要（GET /api/v1/monitor/accounts）。
+//
+// 单次 JOIN 查询避免 N+1；支持 ?online=1 与 ?q= 用户名筛选。
 func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	onlineOnly := q.Get("online") == "1" || q.Get("online") == "true"
@@ -60,14 +66,10 @@ func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 		if nameQ != "" && !containsFold(row.Username, nameQ) {
 			continue
 		}
-		item := monitorRowToItem(row, isOnline)
+		item := readmodel.MonitorRowToItem(row, isOnline)
 		if isOnline {
 			if sess, ok := s.sessions.GetSession(row.ID); ok {
-				item["rx_bytes"] = sess.RxBytes.Load()
-				item["tx_bytes"] = sess.TxBytes.Load()
-				if len(sess.AllowedIPs) > 0 {
-					item["allowed_ips"] = ipNetsToStrings(sess.AllowedIPs)
-				}
+				readmodel.MergeLiveSessionStats(item, sess.RxBytes.Load(), sess.TxBytes.Load(), netutil.IPNetsToStrings(sess.AllowedIPs))
 			}
 		}
 		items = append(items, item)
@@ -75,14 +77,16 @@ func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 }
 
-// handleMonitorEvents 返回最近连接事件（分页 + 筛选）。
+// handleMonitorEvents 分页返回连接事件（GET /api/v1/monitor/events）。
+//
+// 查询参数：user_id、event_type、limit、offset。
 func (s *Server) handleMonitorEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit := clampLimit(parseIntDefault(q.Get("limit"), 50), 50, 200)
 	offset := parseIntDefault(q.Get("offset"), 0)
 	userID, _ := strconv.ParseInt(q.Get("user_id"), 10, 64)
 
-	items, total, err := s.store.ListConnectionEventsFiltered(persist.ConnectionEventFilter{
+	items, total, err := s.store.ListConnectionEventsFiltered(readmodel.ConnectionEventFilter{
 		UserID: userID, EventType: q.Get("event_type"), Limit: limit, Offset: offset,
 	})
 	if err != nil {
@@ -111,30 +115,16 @@ func (s *Server) handleMonitorEvents(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func monitorRowToItem(row persist.MonitorAccountRow, online bool) map[string]any {
-	item := map[string]any{
-		"user_id": row.ID, "username": row.Username, "vpn_ip": row.VPNIP,
-		"ip_mode": row.IPMode, "policy_ver": row.PolicyVer,
-		"allowed_ips": row.AllowedIPs, "online": online,
-		"rx_bytes": row.RxBytes, "tx_bytes": row.TxBytes,
-		"reconnect_count": row.ReconnectCount, "remote_addr": row.RemoteAddr,
-	}
-	if row.ConnectedAt != nil {
-		item["connected_at"] = row.ConnectedAt.Format(time.RFC3339)
-	}
-	if row.LastHeartbeat != nil {
-		item["last_heartbeat"] = row.LastHeartbeat.Format(time.RFC3339)
-	}
-	return item
-}
-
+// buildAccountMonitorItemFromRow 将 userID 转为监控 API 单项 map。
+//
+// 合并 DB session_stats 与内存会话 live 统计；用户不存在时返回 nil。
 func (s *Server) buildAccountMonitorItemFromRow(userID int64, online bool) map[string]any {
 	u, err := s.store.GetUserByID(userID)
 	if err != nil {
 		return nil
 	}
 	st, _ := s.store.GetSessionStat(userID)
-	row := persist.MonitorAccountRow{
+	row := readmodel.MonitorAccountRow{
 		ID: u.ID, Username: u.Username, VPNIP: u.VPNIP, IPMode: u.IPMode,
 		PolicyVer: u.PolicyVer, AllowedIPs: u.AllowedIPs,
 	}
@@ -146,26 +136,25 @@ func (s *Server) buildAccountMonitorItemFromRow(userID int64, online bool) map[s
 		row.ReconnectCount = st.ReconnectCount
 		row.RemoteAddr = st.RemoteAddr
 	}
-	item := monitorRowToItem(row, online)
+	item := readmodel.MonitorRowToItem(row, online)
 	if sess, ok := s.sessions.GetSession(userID); ok && online {
-		item["rx_bytes"] = sess.RxBytes.Load()
-		item["tx_bytes"] = sess.TxBytes.Load()
-		if len(sess.AllowedIPs) > 0 {
-			item["allowed_ips"] = ipNetsToStrings(sess.AllowedIPs)
-		}
+		readmodel.MergeLiveSessionStats(item, sess.RxBytes.Load(), sess.TxBytes.Load(), netutil.IPNetsToStrings(sess.AllowedIPs))
 	}
 	return item
 }
 
+// containsFold 判断 s 是否包含 sub（ASCII 大小写不敏感）。
 func containsFold(s, sub string) bool {
 	return len(sub) == 0 || len(s) >= len(sub) && (s == sub || len(sub) > 0 && foldContains(s, sub))
 }
 
+// foldContains 在 s 中查找 sub 的首次出现（ASCII 大小写不敏感）。
 func foldContains(s, sub string) bool {
 	// 简单大小写不敏感包含
 	return indexFold(s, sub) >= 0
 }
 
+// indexFold 返回 sub 在 s 中的起始下标；未找到返回 -1。
 func indexFold(s, sub string) int {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if equalFoldASCII(s[i:i+len(sub)], sub) {
@@ -175,6 +164,7 @@ func indexFold(s, sub string) int {
 	return -1
 }
 
+// equalFoldASCII 比较两字符串是否 ASCII 大小写不敏感相等。
 func equalFoldASCII(a, b string) bool {
 	if len(a) != len(b) {
 		return false
@@ -194,12 +184,3 @@ func equalFoldASCII(a, b string) bool {
 	return true
 }
 
-func ipNetsToStrings(nets []*net.IPNet) []string {
-	var out []string
-	for _, n := range nets {
-		if n != nil {
-			out = append(out, n.String())
-		}
-	}
-	return out
-}

@@ -31,7 +31,7 @@ func TestConcurrentHealthAPI(t *testing.T) {
 	cfg := testServerCfg()
 	pool, _ := ippool.New(cfg.VPN.Subnet)
 	pool.Reserve(cfg.VPN.GatewayIP)
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), pool, nil, time.Now(), "pk")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "pk")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

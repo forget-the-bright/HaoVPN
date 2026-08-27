@@ -1,6 +1,10 @@
 package netstack
 
-import "testing"
+import (
+	"testing"
+
+	"haovpn/internal/netutil"
+)
 
 func TestNormalizeKillPrefixes(t *testing.T) {
 	got := NormalizeKillPrefixes([]string{"192.168.1.0/24", "", "192.168.1.0/24", "10.0.0.0/8"})
@@ -39,7 +43,7 @@ func TestDNSSavedTakeDoesNotRepollute(t *testing.T) {
 }
 
 func TestParseCIDRToV4Mask(t *testing.T) {
-	ip, mask, err := ParseCIDRToV4Mask("192.168.1.0/24")
+	ip, mask, err := netutil.ParseCIDRToV4Mask("192.168.1.0/24")
 	if err != nil {
 		t.Fatal(err)
 	}

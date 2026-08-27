@@ -1,4 +1,4 @@
-// Package security 的 cert 子模块：TLS 自签证书自动生成（开箱即用）。
+// cert.go 负责 TLS 自签证书自动生成（开箱即用，与 tls_client.go 服务端加载配合）。
 package security
 
 import (
@@ -13,20 +13,30 @@ import (
 	"math/big"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"haovpn/internal/fileutil"
 	"haovpn/internal/logger"
 )
 
 // CertGenOptions 自签证书 SAN 生成选项（仅新建证书时生效）。
+//
+// 字段：
+//   ListenAddr — server.listen 地址；用于推导绑定 IP 或主机名加入 SAN。
+//   CertSANs — 配置额外 SAN 列表；元素可为 IP 或 DNS 名，由 buildCertSANs 解析。
 type CertGenOptions struct {
 	ListenAddr string   // server.listen，用于推导绑定 IP
 	CertSANs   []string // 配置额外 SAN
 }
 
 // EnsureServerCert 若证书不存在且 autoGenerate 为 true，生成 10 年自签证书到指定路径。
+//
+// 参数：certFile/keyFile — PEM 路径；autoGenerate — false 且文件缺失时返回错误；
+// opts — 可选 SAN 推导参数，nil 时仅 localhost/127.0.0.1。
+// 返回：err 为目录创建失败、生成失败或 auto_generate=false 且文件不存在。
+// 副作用：可能写入 cert/key PEM 文件（权限 0600）；打 Warn/Info 日志。
+// 并发：启动时单线程调用；并发生成同一文件应由调用方避免。
 func EnsureServerCert(certFile, keyFile string, autoGenerate bool, opts *CertGenOptions) error {
 	if fileExists(certFile) && fileExists(keyFile) {
 		return nil
@@ -34,7 +44,7 @@ func EnsureServerCert(certFile, keyFile string, autoGenerate bool, opts *CertGen
 	if !autoGenerate {
 		return fmt.Errorf("TLS 证书不存在且 auto_generate=false: %s", certFile)
 	}
-	if err := os.MkdirAll(filepath.Dir(certFile), 0o755); err != nil {
+	if err := fileutil.EnsureParentDir(certFile, 0o755); err != nil {
 		return fmt.Errorf("创建证书目录: %w", err)
 	}
 	logger.Warn("TLS 证书不存在，正在生成 10 年自签证书（生产环境请替换为正式证书）")
@@ -46,6 +56,11 @@ func EnsureServerCert(certFile, keyFile string, autoGenerate bool, opts *CertGen
 }
 
 // LoadServerTLS 加载或确保存在后加载服务端 TLS 证书。
+//
+// 参数：certFile/keyFile/autoGenerate/opts — 同 EnsureServerCert。
+// 返回：tls.Certificate 可直接用于 tls.Listen；err 为 Ensure 或 LoadX509KeyPair 失败。
+// 副作用：可能触发自签证书生成（见 EnsureServerCert）。
+// 并发：启动时单线程调用。
 func LoadServerTLS(certFile, keyFile string, autoGenerate bool, opts *CertGenOptions) (tls.Certificate, error) {
 	if err := EnsureServerCert(certFile, keyFile, autoGenerate, opts); err != nil {
 		return tls.Certificate{}, err

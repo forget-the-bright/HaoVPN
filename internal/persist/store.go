@@ -1,10 +1,8 @@
-// Package persist provides SQLite storage.
 package persist
 
 import (
 	"database/sql"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -16,19 +14,44 @@ import (
 //go:embed schema.sql
 var schemaFS embed.FS
 
-// IP 分配模式常量
+// IP 分配模式常量（users.ip_mode 取值）。
 const (
+	// IPModeFixed 创建账号时固定分配 vpn_ip，握手不复用池。
 	IPModeFixed          = "fixed"
+	// IPModeDynamicSession 断线立即释放 IP，下次握手重新分配。
 	IPModeDynamicSession = "dynamic_session"
+	// IPModeDynamicLease 断线后保留 IP 至 lease_until，租约内可复用。
 	IPModeDynamicLease   = "dynamic_lease"
 )
 
-// Store wraps SQLite operations.
+// Store 封装 SQLite 持久化操作，供服务端 Web/API、隧道握手与会话统计读写 users 等表。
+//
+// 字段：
+//   db — 底层 *sql.DB 连接；Open 时设置 max_open_conns=1、WAL 与 busy_timeout。
+//
+// 线程安全：SQLite 单连接模式下由 Store 方法串行访问；事务须通过 DB() 自行管理。
 type Store struct {
 	db *sql.DB
 }
 
-// User VPN 账号：Web 登录 + 隧道身份合一。
+// User VPN 账号：Web 登录与隧道身份合一，对应 users 表一行。
+//
+// 字段：
+//   ID — 主键；CreateUser/CreateVPNAccount 写入后由 SQLite 自增。
+//   Username — 登录名；全局唯一，不可为空。
+//   PasswordHash — bcrypt 等密码哈希；JSON 序列化时省略。
+//   Enabled — 是否允许 Web 登录与隧道握手；false 时拒绝认证。
+//   MustChangePassword — 首次登录须改密；管理员创建时可置 true。
+//   IsAdmin — Web 管理员；可访问管理 API，未必有隧道密钥。
+//   PublicKey — WireGuard 风格公钥（Base64）；空表示纯 Web 账号（如 admin）。
+//   PrivateKeyEnc — 私钥明文或 AES 密封密文；仅服务端解密下发，JSON 省略。
+//   VPNIP — 分配的隧道内 IPv4；fixed 模式创建时写入，动态模式握手时分配。
+//   AllowedIPs — 客户端分流 CIDR 列表；空时由 persist.ResolveAllowedIPs 回退服务端默认。
+//   IPMode — 分配模式：fixed / dynamic_session / dynamic_lease（见 IPMode* 常量）。
+//   IPLeaseSec — dynamic_lease 租约秒数；≤0 时读写默认 86400。
+//   PolicyVer — 策略版本；变更 AllowedIPs 等时递增，握手推送给客户端。
+//   CreatedAt — 记录创建时间（UTC 存库）。
+//   UpdatedAt — 最近更新时间；密码、VPN 字段变更时刷新。
 type User struct {
 	ID                 int64     `json:"id"`
 	Username           string    `json:"username"`
@@ -52,7 +75,16 @@ func (u *User) HasVPN() bool {
 	return u != nil && u.PublicKey != ""
 }
 
-// AuditEntry is an audit log record.
+// AuditEntry 管理操作审计日志，对应 audit_logs 表一行。
+//
+// 字段：
+//   ActorUserID — 操作者 users.id；系统动作可为 nil；DeleteUser 时可能置空保留记录。
+//   Action — 动作标识（如 user.create、vpn.disable）；由 api/audit 包定义。
+//   TargetType — 目标类型（user、session 等）；与 TargetID 成对解读。
+//   TargetID — 目标主键；可为 nil 表示无具体对象。
+//   ClientIP — 发起请求的客户端 IP；Web API 写入。
+//   DetailJSON — 可选 JSON 附加字段（变更前后值等）；空串表示无。
+//   CreatedAt — 入库时间（UTC）。
 type AuditEntry struct {
 	ID          int64     `json:"id"`
 	ActorUserID *int64    `json:"actor_user_id,omitempty"`
@@ -64,7 +96,15 @@ type AuditEntry struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// ConnectionEvent 连接上下线事件。
+// ConnectionEvent 隧道连接上下线事件，对应 connection_events 表一行。
+//
+// 字段：
+//   ID — 自增主键。
+//   UserID — 关联 users.id；握手成功后写入。
+//   EventType — 事件类型（如 connect、disconnect、auth_fail）；由 sessionmgr 定义。
+//   RemoteAddr — 客户端 TCP 远端地址（host:port）。
+//   DetailJSON — 可选 JSON 附加信息（错误码、策略版本等）；空串表示无。
+//   CreatedAt — 事件入库时间。
 type ConnectionEvent struct {
 	ID         int64     `json:"id"`
 	UserID     int64     `json:"user_id"`
@@ -74,7 +114,16 @@ type ConnectionEvent struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// SessionStat 会话统计。
+// SessionStat 在线会话实时统计，对应 session_stats 表（每 user_id 一行）。
+//
+// 字段：
+//   UserID — 关联 users.id；Upsert 主键。
+//   ConnectedAt — 本次会话建立时间；断线后可为 nil。
+//   LastHeartbeat — 最近一次心跳/数据活跃时间；超时判定依据。
+//   RxBytes — 自连接以来下行字节累计（服务端视角收包）。
+//   TxBytes — 自连接以来上行字节累计（服务端视角发包）。
+//   ReconnectCount — 本会话周期内重连次数；新连接时可重置或累加。
+//   RemoteAddr — 当前或最近远端地址；无连接时可为空串。
 type SessionStat struct {
 	UserID         int64
 	ConnectedAt    *time.Time
@@ -88,7 +137,12 @@ type SessionStat struct {
 const userSelectCols = `id, username, password_hash, enabled, must_change_password, is_admin,
 	public_key, private_key_enc, vpn_ip, allowed_ips, ip_mode, ip_lease_sec, policy_ver, created_at, updated_at`
 
-// Open opens or creates the SQLite database.
+// Open 打开或创建 SQLite 数据库并应用 schema.sql（CREATE TABLE IF NOT EXISTS）。
+//
+// 参数：path — 数据库文件路径；父目录须已存在。
+// 返回：*Store 就绪后可 CRUD；err 常见原因为路径不可写、schema 应用失败或 ping 超时。
+// 副作用：启用 foreign_keys、WAL、busy_timeout=5s；max_open_conns=1。
+// 并发：返回的 Store 可在多 goroutine 调用，SQLite 层串行化写入。
 func Open(path string) (*Store, error) {
 	dsn := path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
@@ -109,39 +163,32 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) migrate() error {
-	// v1 库若仍有 peers / peer_id 列，须先迁移再执行 schema（否则索引引用 user_id 会失败）
-	if s.hasPeersTable() || s.tableHasColumn("connection_events", "peer_id") ||
-		s.tableHasColumn("session_stats", "peer_id") || s.tableHasColumn("ip_allocations", "peer_id") {
-		if err := s.migrateV1ToV2(); err != nil {
-			return fmt.Errorf("migrate v1→v2: %w", err)
-		}
-	}
 	schema, err := schemaFS.ReadFile("schema.sql")
 	if err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(string(schema)); err != nil {
-		return fmt.Errorf("migrate schema: %w", err)
+		return fmt.Errorf("apply schema: %w", err)
 	}
-	if err := s.migrateV1ToV2(); err != nil {
-		return err
-	}
-	return s.migrateV3()
+	return nil
 }
 
-func (s *Store) hasPeersTable() bool {
-	var name string
-	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='peers'`).Scan(&name)
-	return err == nil
-}
-
-// Close closes the database.
+// Close 关闭底层 SQLite 连接并释放文件句柄。
+//
+// 返回：err 为 sql.DB.Close 的错误；重复调用安全（由 database/sql 处理）。
+// 副作用：之后所有 Store 方法将失败；调用方应在进程退出或服务 Stop 时调用。
 func (s *Store) Close() error { return s.db.Close() }
 
-// DB exposes raw db for transactions.
+// DB 暴露底层 *sql.DB，供调用方开启事务或执行 Store 未封装的 SQL。
+//
+// 返回：与 Open 时同一连接池（max_open_conns=1）；Close 后不可再用。
+// 并发：事务边界由调用方管理；多 goroutine 共用时应自行串行化或使用 tx。
 func (s *Store) DB() *sql.DB { return s.db }
 
-// CountUsers returns user count.
+// CountUsers 统计 users 表总行数（含禁用与纯 Web 账号）。
+//
+// 返回：n 为账号总数；err 为查询失败（库已关闭、磁盘错误等）。
+// 副作用：只读；常用于初始化时判断是否需创建默认管理员。
 func (s *Store) CountUsers() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
@@ -165,7 +212,7 @@ func (s *Store) CreateAdminUser(username, passwordHash string, mustChange bool) 
 
 // CreateVPNAccount 创建带隧道身份的 VPN 账号（Web + 密钥 + IP 策略）。
 func (s *Store) CreateVPNAccount(u User) (int64, error) {
-	ips, _ := json.Marshal(u.AllowedIPs)
+	ips := marshalStringSlice(u.AllowedIPs)
 	if u.IPMode == "" {
 		u.IPMode = IPModeFixed
 	}
@@ -178,7 +225,7 @@ func (s *Store) CreateVPNAccount(u User) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO users(username, password_hash, must_change_password, public_key, private_key_enc,
 		vpn_ip, allowed_ips, ip_mode, ip_lease_sec, policy_ver) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		u.Username, u.PasswordHash, boolToInt(u.MustChangePassword), nullStr(u.PublicKey), nullStr(u.PrivateKeyEnc),
-		nullStr(u.VPNIP), string(ips), u.IPMode, u.IPLeaseSec, u.PolicyVer)
+		nullStr(u.VPNIP), ips, u.IPMode, u.IPLeaseSec, u.PolicyVer)
 	if err != nil {
 		return 0, err
 	}
@@ -187,9 +234,9 @@ func (s *Store) CreateVPNAccount(u User) (int64, error) {
 
 // UpdateVPNFields 更新账号隧道字段（策略/IP 模式等）。
 func (s *Store) UpdateVPNFields(id int64, vpnIP string, allowedIPs []string, ipMode string, ipLeaseSec, policyVer int) error {
-	ips, _ := json.Marshal(allowedIPs)
+	ips := marshalStringSlice(allowedIPs)
 	_, err := s.db.Exec(`UPDATE users SET vpn_ip=?, allowed_ips=?, ip_mode=?, ip_lease_sec=?, policy_ver=?, updated_at=datetime('now') WHERE id=?`,
-		nullStr(vpnIP), string(ips), ipMode, ipLeaseSec, policyVer, id)
+		nullStr(vpnIP), ips, ipMode, ipLeaseSec, policyVer, id)
 	return err
 }
 
@@ -212,13 +259,21 @@ func (s *Store) IncrementPolicyVer(id int64) (int, error) {
 	return u.PolicyVer, nil
 }
 
-// GetUserByUsername finds a user by name.
+// GetUserByUsername 按登录名查询用户（Web 登录与隧道身份共用）。
+//
+// 参数：username — 非空、与 users.username 精确匹配。
+// 返回：*User 含密码哈希等敏感字段；未找到时 err 为 sql.ErrNoRows。
+// 副作用：只读。
 func (s *Store) GetUserByUsername(username string) (*User, error) {
 	row := s.db.QueryRow(`SELECT `+userSelectCols+` FROM users WHERE username=?`, username)
 	return scanUser(row)
 }
 
-// GetUserByID finds a user by ID.
+// GetUserByID 按主键查询用户。
+//
+// 参数：id — users.id；须为正整数。
+// 返回：*User；未找到时 err 为 sql.ErrNoRows。
+// 副作用：只读；IncrementPolicyVer 等内部方法也会调用。
 func (s *Store) GetUserByID(id int64) (*User, error) {
 	row := s.db.QueryRow(`SELECT `+userSelectCols+` FROM users WHERE id=?`, id)
 	return scanUser(row)
@@ -230,7 +285,10 @@ func (s *Store) GetUserByPublicKey(pub string) (*User, error) {
 	return scanUser(row)
 }
 
-// ListUsers returns all users.
+// ListUsers 列出全部用户，按 id 升序。
+//
+// 返回：[]User 含 Web 与 VPN 账号；无用户时为空切片非 nil；err 为查询失败。
+// 副作用：只读；管理 API 用户列表与导出功能使用。
 func (s *Store) ListUsers() ([]User, error) {
 	rows, err := s.db.Query(`SELECT ` + userSelectCols + ` FROM users ORDER BY id`)
 	if err != nil {
@@ -266,14 +324,22 @@ func (s *Store) ListVPNAccounts() ([]User, error) {
 	return out, rows.Err()
 }
 
-// UpdateUserPassword updates password hash.
+// UpdateUserPassword 更新用户密码哈希并可选清除「须改密」标记。
+//
+// 参数：hash — 已哈希密码（如 bcrypt）；clearMustChange 为 true 时 must_change_password=0。
+// 返回：err 为 UPDATE 失败或 id 不存在（影响行数 0 仍返回 nil）。
+// 副作用：刷新 updated_at。
 func (s *Store) UpdateUserPassword(id int64, hash string, clearMustChange bool) error {
 	_, err := s.db.Exec(`UPDATE users SET password_hash=?, must_change_password=?, updated_at=datetime('now') WHERE id=?`,
 		hash, boolToInt(!clearMustChange), id)
 	return err
 }
 
-// SetUserEnabled toggles user enabled state.
+// SetUserEnabled 启用或禁用账号（Web 登录与隧道握手均受 enabled 约束）。
+//
+// 参数：enabled — false 时拒绝认证，不断开已有 TCP（由 sessionmgr 处理）。
+// 返回：err 为 UPDATE 失败。
+// 副作用：刷新 updated_at；禁用后新握手失败。
 func (s *Store) SetUserEnabled(id int64, enabled bool) error {
 	_, err := s.db.Exec(`UPDATE users SET enabled=?, updated_at=datetime('now') WHERE id=?`, boolToInt(enabled), id)
 	return err
@@ -309,44 +375,36 @@ func (s *Store) UpdateUserPrivateKeyEnc(id int64, enc string) error {
 	return err
 }
 
-// InsertAuditLog appends an audit record.
+// InsertAuditLog 追加一条审计记录到 audit_logs。
+//
+// 参数：e — Action/TargetType 等由调用方填好；ActorUserID、TargetID 可 nil。
+// 返回：err 为 INSERT 失败（外键、磁盘等）。
+// 副作用：写库；不可更新或删除（DeleteUser 仅置空 actor_user_id）。
 func (s *Store) InsertAuditLog(e AuditEntry) error {
 	_, err := s.db.Exec(`INSERT INTO audit_logs(actor_user_id, action, target_type, target_id, client_ip, detail_json) VALUES(?,?,?,?,?,?)`,
 		e.ActorUserID, e.Action, e.TargetType, e.TargetID, e.ClientIP, e.DetailJSON)
 	return err
 }
 
-// ListAuditLogs returns recent audit entries.
+// ListAuditLogs 分页查询审计日志，按 id 降序（最新在前）。
+//
+// 参数：limit — 每页条数；offset — 跳过条数（管理 API 分页）。
+// 返回：[]AuditEntry；err 为查询失败。
+// 副作用：只读。
 func (s *Store) ListAuditLogs(limit, offset int) ([]AuditEntry, error) {
 	rows, err := s.db.Query(`SELECT id, actor_user_id, action, target_type, target_id, client_ip, detail_json, created_at FROM audit_logs ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AuditEntry
-	for rows.Next() {
-		var e AuditEntry
-		var actor sql.NullInt64
-		var target sql.NullInt64
-		var created string
-		if err := rows.Scan(&e.ID, &actor, &e.Action, &e.TargetType, &target, &e.ClientIP, &e.DetailJSON, &created); err != nil {
-			return nil, err
-		}
-		if actor.Valid {
-			v := actor.Int64
-			e.ActorUserID = &v
-		}
-		if target.Valid {
-			v := target.Int64
-			e.TargetID = &v
-		}
-		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return scanAuditRows(rows)
 }
 
-// InsertConnectionEvent records a connection event.
+// InsertConnectionEvent 写入隧道连接/断线/认证失败等事件。
+//
+// 参数：userID — 关联 users.id；eventType — 如 connect、disconnect；detail 为 JSON 或空。
+// 返回：err 为 INSERT 失败。
+// 副作用：写 connection_events；供仪表盘与 ListRecentConnectionEvents 展示。
 func (s *Store) InsertConnectionEvent(userID int64, eventType, remoteAddr, detail string) error {
 	_, err := s.db.Exec(`INSERT INTO connection_events(user_id, event_type, remote_addr, detail_json) VALUES(?,?,?,?)`,
 		userID, eventType, remoteAddr, detail)
@@ -364,20 +422,14 @@ func (s *Store) ListRecentConnectionEvents(limit int) ([]ConnectionEvent, error)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ConnectionEvent
-	for rows.Next() {
-		var e ConnectionEvent
-		var created string
-		if err := rows.Scan(&e.ID, &e.UserID, &e.EventType, &e.RemoteAddr, &e.DetailJSON, &created); err != nil {
-			return nil, err
-		}
-		e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return scanConnectionEventRows(rows)
 }
 
-// UpsertSessionStat updates session stats.
+// UpsertSessionStat 插入或更新在线会话统计（每 user_id 一行）。
+//
+// 参数：st — UserID 必填；ConnectedAt/LastHeartbeat 可为 nil 表示未知。
+// 返回：err 为 UPSERT 失败。
+// 副作用：写 session_stats；sessionmgr 心跳与断线时调用。
 func (s *Store) UpsertSessionStat(st SessionStat) error {
 	_, err := s.db.Exec(`INSERT INTO session_stats(user_id, connected_at, last_heartbeat, rx_bytes, tx_bytes, reconnect_count, remote_addr)
 		VALUES(?,?,?,?,?,?,?)
@@ -393,7 +445,11 @@ func (s *Store) UpsertSessionStat(st SessionStat) error {
 	return err
 }
 
-// GetSessionStat returns stats for a user.
+// GetSessionStat 读取指定用户的会话统计行。
+//
+// 参数：userID — users.id。
+// 返回：*SessionStat；无记录时 err 为 sql.ErrNoRows。
+// 副作用：只读；管理 API 展示在线状态与流量时使用。
 func (s *Store) GetSessionStat(userID int64) (*SessionStat, error) {
 	row := s.db.QueryRow(`SELECT user_id, connected_at, last_heartbeat, rx_bytes, tx_bytes, reconnect_count, remote_addr FROM session_stats WHERE user_id=?`, userID)
 	var st SessionStat
@@ -401,14 +457,8 @@ func (s *Store) GetSessionStat(userID int64) (*SessionStat, error) {
 	if err := row.Scan(&st.UserID, &connAt, &hb, &st.RxBytes, &st.TxBytes, &st.ReconnectCount, &remote); err != nil {
 		return nil, err
 	}
-	if connAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", connAt.String)
-		st.ConnectedAt = &t
-	}
-	if hb.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", hb.String)
-		st.LastHeartbeat = &t
-	}
+	st.ConnectedAt = parseSQLiteTimePtr(connAt)
+	st.LastHeartbeat = parseSQLiteTimePtr(hb)
 	if remote.Valid {
 		st.RemoteAddr = remote.String
 	}
@@ -435,9 +485,7 @@ func scanUser(row scannable) (*User, error) {
 	u.PublicKey = pubKey.String
 	u.PrivateKeyEnc = privEnc.String
 	u.VPNIP = vpnIP.String
-	if ipsJSON.Valid && ipsJSON.String != "" {
-		_ = json.Unmarshal([]byte(ipsJSON.String), &u.AllowedIPs)
-	}
+	unmarshalAllowedIPs(ipsJSON, &u.AllowedIPs)
 	u.IPMode = ipMode.String
 	if u.IPMode == "" {
 		u.IPMode = IPModeFixed
@@ -450,8 +498,8 @@ func scanUser(row scannable) (*User, error) {
 	if u.PolicyVer <= 0 {
 		u.PolicyVer = 1
 	}
-	u.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
-	u.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updated)
+	u.CreatedAt = parseSQLiteTime(created)
+	u.UpdatedAt = parseSQLiteTime(updated)
 	return &u, nil
 }
 
@@ -466,7 +514,7 @@ func timePtrStr(t *time.Time) interface{} {
 	if t == nil {
 		return nil
 	}
-	return t.UTC().Format("2006-01-02 15:04:05")
+	return formatSQLiteTime(*t)
 }
 
 func nullStr(s string) interface{} {

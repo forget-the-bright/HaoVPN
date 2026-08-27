@@ -1,6 +1,6 @@
--- HaoVPN SQLite 数据库 schema v2.0
+-- HaoVPN SQLite 数据库 schema
 -- VPN 账号合一：users 表同时承载 Web 登录与隧道身份（无 peers 表）
--- 启动时由 persist 包执行；v1→v2 迁移见 migrate_v2.go
+-- 启动时由 persist.Open 执行本文件（CREATE TABLE IF NOT EXISTS）；无运行时 v1→v3 迁移
 
 -- VPN 账号（Web 登录 + 隧道身份）
 CREATE TABLE IF NOT EXISTS users (

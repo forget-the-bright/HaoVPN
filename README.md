@@ -86,6 +86,9 @@ dist/
 | **[记忆.md](记忆.md)** | 接手顺序与当前进度表 |
 | [docs/README.md](docs/README.md) | docs 目录索引 |
 | [docs/development-principles.md](docs/development-principles.md) | 开发原则 |
+| [docs/architecture.md](docs/architecture.md) | **CODEMAP**（包导航、依赖、HTTP 路由表） |
+| [docs/comment-style.md](docs/comment-style.md) | **注释规范** |
+| [cmd/README.md](cmd/README.md) | 三个二进制入口 |
 | [docs/deploy.md](docs/deploy.md) | 部署、配置、验收 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | 故障排障（现象→处理） |
 | [docs/dev-log.md](docs/dev-log.md) | 开发日志（唯一进度来源） |

@@ -34,7 +34,7 @@ func TestSecurityChecklistMetaPlan(t *testing.T) {
 	cfg := testServerCfg()
 	pool, _ := ippool.New(cfg.VPN.Subnet)
 	pool.Reserve(cfg.VPN.GatewayIP)
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), pool, nil, time.Now(), "tunnel-pk")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "tunnel-pk")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -75,7 +75,7 @@ func TestSecurityChecklistMetaPlan(t *testing.T) {
 	sessMgr := sessionmgr.New(store)
 	var kickedUser int64
 	sessMgr.SetKickHandler(func(id int64) { kickedUser = id })
-	srvKick := api.NewServer(cfg, store, authSvc, audit.New(store), sessMgr, pool, nil, time.Now(), "tunnel-pk")
+	srvKick := api.NewServer(cfg, store, authSvc, audit.New(store), sessMgr, testVPNService(store, pool, cfg), nil, time.Now(), "tunnel-pk")
 
 	hash, _ := auth.HashPassword("UserPass1234!")
 	kp, _ := crypto.GenerateKeyPair()

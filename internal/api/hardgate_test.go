@@ -57,7 +57,7 @@ func TestAccountPrivateKeyAESAndExport(t *testing.T) {
 	pool, _ := ippool.New(cfg.VPN.Subnet)
 	pool.Reserve(cfg.VPN.GatewayIP)
 
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), pool, keyEnc, time.Now(), "srv-pk")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), keyEnc, time.Now(), "srv-pk")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -177,7 +177,7 @@ func TestLogsAPIContainsMarker(t *testing.T) {
 		API:    config.APISection{Port: 8080, SessionTTLSec: 3600},
 		Log:    config.LogSection{File: logPath},
 	}
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), nil, nil, time.Now(), "pk")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "pk")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

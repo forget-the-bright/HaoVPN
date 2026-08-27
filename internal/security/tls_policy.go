@@ -1,17 +1,19 @@
-// Package security provides TLS policy, bind checks, and redaction.
 package security
 
 import (
 	"crypto/tls"
-	"fmt"
-	"net"
+	"crypto/x509"
 	"regexp"
-	"strings"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 )
 
-// TLSConfig returns a secure TLS config for server or client.
+// TLSConfig 构造服务端或客户端共用的安全 TLS 配置（最低 TLS 1.2、现代 cipher）。
+//
+// 参数：cert 服务端时写入 Certificates；isServer true 为服务端模式，false 为客户端基础模板。
+// 返回：已设 MinVersion 与 CipherSuites 的 *tls.Config；客户端须再设 RootCAs/InsecureSkipVerify。
+// 副作用：无；返回新 struct，可安全修改后交给 tls.Listen/Dial。
 func TLSConfig(cert tls.Certificate, isServer bool) *tls.Config {
 	cfg := &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -31,7 +33,21 @@ func TLSConfig(cert tls.Certificate, isServer bool) *tls.Config {
 	return cfg
 }
 
-// ClientTLSConfig returns client TLS config with optional CA.
+// ClientTLSConfigWithRootCAs 基于 TLSConfig 生成客户端 TLS，挂载自定义 CA 池。
+//
+// 参数：rootCAs — 可为 nil（仅 insecure 模式）；insecureSkipVerify 仅开发/内网慎用。
+func ClientTLSConfigWithRootCAs(rootCAs *x509.CertPool, insecureSkipVerify bool) *tls.Config {
+	cfg := TLSConfig(tls.Certificate{}, false)
+	cfg.InsecureSkipVerify = insecureSkipVerify
+	cfg.RootCAs = rootCAs
+	return cfg
+}
+
+// ClientTLSConfig 基于 TLSConfig 生成客户端 TLS，可选挂载 CA 与跳过校验开关。
+//
+// 参数：caPool 非 nil 时将其 RootCAs 复制到 cfg；insecureSkipVerify 仅开发/内网慎用。
+// 返回：可直接用于 tls.Dial 的 *tls.Config。
+// 副作用：无。
 func ClientTLSConfig(caPool *tls.Config, insecureSkipVerify bool) *tls.Config {
 	cfg := TLSConfig(tls.Certificate{}, false)
 	cfg.InsecureSkipVerify = insecureSkipVerify
@@ -41,34 +57,19 @@ func ClientTLSConfig(caPool *tls.Config, insecureSkipVerify bool) *tls.Config {
 	return cfg
 }
 
-// BindCheck validates management API listen hosts against allow_public_bind policy.
+// BindCheck 校验管理 API 监听地址是否符合 allow_public_bind 策略。
+//
+// 参数：listenHosts 为配置中的 host 列表；allowPublic false 时禁止公网/0.0.0.0 绑定。
+// 返回：策略违规时 err；允许但 wildcard 且 allowPublic 时打 Warn 仍返回 nil。
+// 副作用：可能写 Warn 日志提醒公网暴露风险。
 func BindCheck(listenHosts []string, allowPublic bool) error {
-	hasWildcard := false
-	for _, h := range listenHosts {
-		h = strings.TrimSpace(h)
-		if h == "0.0.0.0" || h == "::" {
-			hasWildcard = true
-		}
+	if err := netutil.ValidatePublicBindPolicy(listenHosts, allowPublic); err != nil {
+		return err
 	}
-	if hasWildcard && !allowPublic {
-		return fmt.Errorf("listen_hosts contains 0.0.0.0/:: but api.allow_public_bind is false; set allow_public_bind: true if you accept the risk")
-	}
-	if hasWildcard && allowPublic {
+	if netutil.HasWildcardListenHost(listenHosts) && allowPublic {
 		logger.Warn("PUBLIC BIND ENABLED: management API is exposed on all interfaces. You assume all risks.")
 	}
 	return nil
-}
-
-// ResolveListenAddrs builds net listen addresses from hosts and port.
-func ResolveListenAddrs(hosts []string, port int) ([]string, error) {
-	if len(hosts) == 0 {
-		hosts = []string{"127.0.0.1"}
-	}
-	var addrs []string
-	for _, h := range hosts {
-		addrs = append(addrs, net.JoinHostPort(strings.TrimSpace(h), fmt.Sprintf("%d", port)))
-	}
-	return addrs, nil
 }
 
 var (
@@ -76,7 +77,11 @@ var (
 	reKey      = regexp.MustCompile(`(?i)[A-Za-z0-9+/]{40,}={0,2}`)
 )
 
-// Redact removes sensitive data from log/API strings.
+// Redact 从日志或 API 响应字符串中脱敏密码、token 与疑似密钥材料。
+//
+// 参数：s 原始文本；过长（>200）时额外匹配 base64 样长串。
+// 返回：替换为 [REDACTED] / [REDACTED_KEY] 后的副本；不修改原串。
+// 副作用：无；纯正则替换。
 func Redact(s string) string {
 	s = rePassword.ReplaceAllString(s, "$1=[REDACTED]")
 	if len(s) > 200 {
@@ -85,7 +90,11 @@ func Redact(s string) string {
 	return s
 }
 
-// SecurityHeaders returns recommended HTTP security headers.
+// SecurityHeaders 返回 Web 管理端推荐的 HTTP 安全响应头。
+//
+// 参数：无。
+// 返回：header 名 → 值的 map；CSP 允许同源内联 script/style（模板无外链 CDN）。
+// 副作用：无。
 //
 // WebUI 模板使用内联 <script>/<style>（无外链 CDN）。若仅设 default-src 'self'，
 // 浏览器会拦截内联脚本，表现为「白屏 / 登录按钮无反应」。因此显式允许同源内联。

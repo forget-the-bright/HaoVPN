@@ -1,4 +1,3 @@
-// Package config 负责 YAML 配置的加载、校验与首次启动自动生成。
 package config
 
 // serverYAMLTemplate 服务端默认配置模板（含中文注释，首次启动写入 server.yaml）

@@ -6,6 +6,172 @@
 
 ---
 
+*最后更新：2026-08-27 · 架构第六轮*
+
+---
+
+## 2026-08-27 · 架构第六轮（Wintun · 改密 · 删迁移）
+
+### 完成
+
+- **Wintun 启动噪声**：`internal/tun/wintun_log_windows.go` 将 DLL 日志接入 logger，预期 Open 失败降为 Debug；`wintun_adapter_windows.go` 启动前清理 `haovpn0 1` 类孤儿网卡、固定 GUID Create、二次 Open 复用。
+- **管理员改密**：`POST /api/v1/users/{id}/password` + WebUI「改密」模态；审计 `admin_reset_password`；单测 `users_password_test.go`。
+- **删 DB 迁移**：移除 `migrate_v2/v3.go`、明文私钥启动迁移；`store.migrate()` 仅执行 `schema.sql`（未发布、无旧库）。
+- **paginate**：`ParseIntDefault` 从 api 抽到 `paginate/parse.go`。
+- **脚本**：`scripts/test-wintun-restart.ps1` 连续启停检查 live.log 与网卡孤儿名。
+
+### 验证
+
+- `go test ./...` ✅
+- `build-local.ps1` ✅
+- Wintun 重启实测：管理员运行 `.\scripts\test-wintun-restart.ps1`
+
+### 关联
+
+- `internal/tun/wintun_*`、`internal/api/users.go`、`internal/persist/store.go`、`web/templates/user_list.html`
+
+---
+
+## 2026-08-27 · 架构解耦第五轮（分页 · 删号 · 维护解耦）
+
+### Part 1 — paginate 与 persist 辅助
+
+- 新增 `internal/paginate`：`ClampLimit`、`ClampOffset`；api `httputil`、persist `query_ext`、logstore 共用。
+- persist 拆分辅助：`query_ext.go`（ListUsersPage 等）、`scan.go`、`jsoncol.go`、`timefmt.go`。
+
+### Part 2 — vpnaccount 删号与 api 解耦
+
+- 新增 `vpnaccount/delete.go`：`DeleteAccount`（踢线、按 ip_mode 释 IP、删 users 行）。
+- api `users.go` DELETE 改调 `vpnSvc.DeleteAccount`；生产代码不再 import `ippool`。
+
+### Part 3 — maintenance 后台任务
+
+- 新增 `internal/maintenance/retention.go`：审计/连接事件/历史日志保留。
+- 从 api 迁出；`serverapp` 启动 `StartRetentionLoop`。
+
+### Part 4 — 依赖边界
+
+- **netstack → platform**：Windows route/NAT 子进程统一 `platform.Command`。
+- **tunnel → tun**：`ServerHandler.TunDev` 类型为 `tun.Device`。
+- **readmodel**：`monitor.go`（MonitorRowToItem、MergeLiveSessionStats）。
+
+### Part 5 — clientgui / clientapp 收敛与注释
+
+- 新增 `internal/clientgui`：Fyne UI 从 `cmd/client-gui` 抽出；`main.go` 仅 flag/UAC/单实例。
+- 新增 `clientapp/bootstrap.go`（`RunCLI`）、`service_windows.go`（SCM 下沉）。
+- 多包 doc.go 与 handler 注释加厚（P0–P5）；遵循 `docs/comment-style.md`。
+
+### Part 6 — 文档
+
+- 新建 `internal/README.md`（包索引 + 改 X 功能来哪）。
+- 更新 `docs/architecture.md`、`docs/README.md`、`cmd/README.md`、`web/README.md`、记忆.md。
+
+### 验证
+
+- `go test ./...` ✅ 全绿
+- `.\scripts\build-local.ps1` ✅ server/client/client-gui 构建通过
+- 行为不变：无新功能；DELETE 账号现经 `vpnaccount.DeleteAccount` 同步释放 `ip_allocations`
+
+### 关联
+
+- `internal/paginate/`、`internal/persist/`、`internal/vpnaccount/delete.go`、`internal/maintenance/`、`internal/api/`、`cmd/client-gui/`、`docs/architecture.md`、`internal/README.md`
+
+---
+
+## 2026-08-27 · 架构解耦第四轮（高内聚 · 低耦合）
+
+### Part 1 — netutil 公共能力收敛
+
+- 新增 `addr.go`：`HostFromAddr`、`ParseHostIP`、`NormalizeIPv4`、`DedupTrimNonEmpty`。
+- `SplitCIDR`、`ParseCIDRToV4Mask` 从 netstack 迁入 `cidr.go`。
+- 单测 `internal/netutil/addr_test.go`；netstack 测试改调 netutil。
+
+### Part 2 — 大文件拆分
+
+- **api**：`users.go`、`auth_handlers.go`、`httputil.go`。
+- **clientapp**：`runtime.go`。
+- **transport**：`frame.go`、`reconnect.go`。
+
+### Part 3 — 耦合边界
+
+- **security**：`BuildClientTLSFromOptions`、`ClientTLSConfigWithRootCAs`。
+- **sessionmgr**：`PacketConn`（`conn.go`）。
+- **readmodel**：DTO 从 persist 剥离。
+
+### Part 4 — fileutil 与注释
+
+- **fileutil**：`EnsureParentDir`；替换 5 处 MkdirAll。
+- doc.go 加厚；`tun_windows.go` 注释补全。
+
+### Part 5 — 文档
+
+- `docs/architecture.md` HTTP API 路由表；`cmd/README.md`；记忆.md / docs/README 更新。
+
+### 验证
+
+- `go test ./...` ✅
+- `.\scripts\build-local.ps1` ✅
+
+### 关联
+
+- `internal/netutil/`、`internal/api/`、`internal/clientapp/`、`internal/transport/`、`internal/readmodel/`、`internal/fileutil/`、`docs/architecture.md`
+
+---
+
+## 2026-08-27 · 架构第三轮 + 全量注释补全
+
+### Part 1 — 代码收敛（无功能变更）
+
+- **Server ApplyDefaults**：`netutil.DefaultRetentionDays`；`ServerConfig.ApplyDefaults()`；Validate 去心跳字面量；`FromServerVPN` 假定已 ApplyDefaults。
+- **网关 netutil**：`gateway.go`（InferGatewayFromVPNIP、ResolveGateway、IsLoopbackHost）；config/client 删 `ResolveGateway` 死代码；clientapp teardown 统一 PreferGateway。
+- **删死代码**：删除 `api/account.go`；handler 直连 vpnSvc；删 `netstack.ParseCIDRs`（测试改 netutil.ValidateCIDRList）。
+- **cmd 收敛**：CLI 默认 `-c` 用 `ResolveClientConfigPath`；`clientapp.ResolveCredentials`；export 用 `brand.DefaultTunName`。
+- **security**：cert/keyenc 去掉重复 Package 声明。
+
+### Part 2–3 — 注释规范与补全
+
+- 新增 `docs/comment-style.md`；development-principles 链接注释规范。
+- Tier1 核心（engine、handler、sessionmgr、tunnel、transport、persist 等）导出符号与字段中文 godoc。
+- Tier2–4：netstack/winnet/netutil/config/security/cmd/web 等补全；transport/pool 英文 godoc 改中文。
+- 新建 `web/README.md`；`web/static/app.js` 主要函数中文注释。
+
+### Part 4 — 文档
+
+- `docs/architecture.md` 增加「关键文件索引」表。
+- `记忆.md` 进度表与阅读顺序更新。
+
+### 验证
+
+- `go test ./...` ✅
+- `go build ./...` ✅
+- `.\scripts\build-local.ps1` ✅
+
+---
+
+## 2026-08-27 · 架构解耦第二轮（无功能变更）
+
+### 完成项（Phase A–G）
+
+- **netutil 扩展**：`ResolveMTU`、`ReadBufferSize`、`IPMatchesRules`、`ValidateIPInSubnet`、`SplitHostPortLoose`；心跳/重连/MTU 常量单一来源。
+- **config**：`ClientConfig.ApplyDefaults()`、`loadYAML` 泛型；删除 `validate_net.go`；GUI/服务统一 `ResolveClientConfigPath`。
+- **transport**：`FromClientConfig` / `FromServerVPN`；clientapp/serverapp 删除手写 tcfg 映射。
+- **清理 re-export**：删除 `api/util.go`；serverapp 直连 `netutil`；security 去掉 `ResolveListenAddrs` 转发。
+- **export / vpnaccount**：导出 YAML 默认值对齐 `ApplyDefaults`；`ValidateManualIP` 委托 `netutil.ValidateIPInSubnet`。
+- **doc.go**：28 个 `internal/*` 包补中文 `doc.go`；英文 Package 注释迁入 doc.go。
+- **文档**：`docs/architecture.md` 扩展为 CODEMAP；`记忆.md` / README / docs/README / meta-plan 接入导航。
+
+### 验证
+
+- `go test ./...` ✅
+- `go build ./...` ✅
+- `.\scripts\build-local.ps1` ✅
+
+### 说明
+
+本轮仅优化代码结构与文档导航，**不改变 VPN 业务行为**。
+
+---
+
 ## 2026-08-27 · GUI 发版策略：仅 Windows 含 client-gui
 
 ### 决策

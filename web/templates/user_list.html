@@ -137,6 +137,28 @@
     </div>
   </div>
 
+  <div id="passwordModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+    <div class="card" style="width:min(420px,92vw);margin:auto">
+      <h2 class="card-title">重置登录密码</h2>
+      <p class="text-muted" id="passwordHint"></p>
+      <form id="passwordForm">
+        <input type="hidden" id="passwordUserId">
+        <div class="form-group">
+          <label>新密码（≥8 位）</label>
+          <input id="passwordNew" type="password" required minlength="8" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label>确认新密码</label>
+          <input id="passwordConfirm" type="password" required minlength="8" autocomplete="new-password">
+        </div>
+        <div class="form-row" style="margin-top:12px">
+          <button type="submit" class="btn btn-primary">保存并踢线</button>
+          <button type="button" class="btn btn-ghost" onclick="closePassword()">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
   <script>
     HaoVPN.setActiveNav('users');
@@ -189,6 +211,7 @@
             '<button class="btn btn-ghost btn-sm" onclick="kick(' + u.id + ')">踢线</button>';
         }
         ops +=
+          '<button class="btn btn-ghost btn-sm" onclick="openPassword(' + u.id + ')">改密</button>' +
           '<button class="btn btn-ghost btn-sm" onclick="toggle(' + u.id + ',' + (u.enabled ? 'true' : 'false') + ')">' +
           (u.enabled ? '禁用' : '启用') + '</button>' +
           '<button class="btn btn-danger btn-sm" onclick="delUser(' + u.id + ')">删除</button>';
@@ -239,6 +262,38 @@
     function closePolicy() {
       document.getElementById('policyModal').style.display = 'none';
     }
+
+    function openPassword(id) {
+      var u = accountCache[id];
+      if (!u) return;
+      document.getElementById('passwordUserId').value = id;
+      document.getElementById('passwordHint').textContent = '为账号「' + u.username + '」设置新登录密码（隧道/Web 均使用此密码；保存后踢线）';
+      document.getElementById('passwordNew').value = '';
+      document.getElementById('passwordConfirm').value = '';
+      document.getElementById('passwordModal').style.display = 'flex';
+    }
+    function closePassword() {
+      document.getElementById('passwordModal').style.display = 'none';
+    }
+
+    document.getElementById('passwordForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var id = document.getElementById('passwordUserId').value;
+      var p1 = document.getElementById('passwordNew').value;
+      var p2 = document.getElementById('passwordConfirm').value;
+      if (p1 !== p2) {
+        HaoVPN.toast('两次输入的密码不一致', 'error');
+        return;
+      }
+      var fd = new FormData();
+      fd.append('new_password', p1);
+      try {
+        await HaoVPN.refreshCSRF();
+        await HaoVPN.api('/api/v1/users/' + id + '/password', { method: 'POST', body: fd });
+        HaoVPN.toast('密码已更新，在线会话已踢线', 'success');
+        closePassword();
+      } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
+    });
 
     document.getElementById('policyForm').addEventListener('submit', async function (e) {
       e.preventDefault();

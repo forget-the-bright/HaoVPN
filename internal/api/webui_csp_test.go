@@ -28,7 +28,7 @@ func TestLoginPageCSPAllowsInlineScript(t *testing.T) {
 	_ = ensureTestAdmin(store, authSvc, "admin", "changeme123")
 	cfg := testServerCfg()
 	pool, _ := ippool.New(cfg.VPN.Subnet)
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), pool, nil, time.Now(), "pk")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "pk")
 
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	w := httptest.NewRecorder()

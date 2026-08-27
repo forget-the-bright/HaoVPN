@@ -114,6 +114,17 @@ tail -f ./logs/server.log
 
 ---
 
+## 6. Wintun 启动日志（Windows 服务端/客户端）
+
+| 现象 | 说明 | 处理 |
+|------|------|------|
+| `Failed to find matching adapter name` / 0x490 | Wintun DLL 在 **OpenAdapter 未命中** 时的预期日志；新版已降为 Debug | 若仍为 ERROR 级 raw log，升级最新 build；见 `server.live.log` 中 `[DEBUG] wintun:` |
+| `Removed orphaned adapter "haovpn0 1"` | Windows 因重名给旧网卡加后缀；启动时会清理并 Create | 连续重启后应减少；可跑 `.\scripts\test-wintun-restart.ps1`（管理员） |
+| `windows wintun haovpn0 已复用` | 正常：第二次启动复用适配器 | 无需处理 |
+| WinNAT / ICS 失败 + `forward_only` | Win11 家庭版常见；服务仍可隧道/ping 网关 | 见 [deploy.md § NAT](deploy.md)；工控跨网段需 Pro/Hyper-V 或手工 ICS |
+
+---
+
 ## 7. 上报问题时请提供
 
 1. `haovpn-server -version` / `haovpn-client -version` 输出

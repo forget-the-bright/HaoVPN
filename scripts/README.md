@@ -147,6 +147,7 @@ dist/
 | [dev-full-test.ps1](dev-full-test.ps1) | 全量验证（go test + E2E + 安全检查） |
 | [dev-acceptance.ps1](dev-acceptance.ps1) | **smoke**（无管理员，`require_tun=false`）— 通过 ≠ 可交付 |
 | [dev-field-gate.ps1](dev-field-gate.ps1) | **field 硬门禁**（TUN+NAT+PLC+服务，须 `-PlcHost`） |
+| [test-wintun-restart.ps1](test-wintun-restart.ps1) | Wintun 连续启停 3 轮，检查 live.log 与孤儿网卡（须管理员） |
 
 ```powershell
 # smoke（开发日常）

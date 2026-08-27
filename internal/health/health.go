@@ -1,8 +1,4 @@
-// Package health 提供启动自检与运行态健康探针。
-
 package health
-
-
 
 import (
 
@@ -17,7 +13,7 @@ import (
 
 
 	"haovpn/internal/config"
-
+	"haovpn/internal/fileutil"
 	"haovpn/internal/logger"
 
 	"haovpn/internal/persist"
@@ -73,8 +69,9 @@ func (c *Checker) RunStartupChecks() ([]Result, error) {
 
 
 	dbDir := dirOf(c.cfg.Database.Path)
+	_ = dbDir
 
-	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+	if err := fileutil.EnsureParentDir(c.cfg.Database.Path, 0o755); err != nil {
 
 		results = append(results, Result{"database_dir", false, err.Error()})
 

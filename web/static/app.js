@@ -1,11 +1,14 @@
 /**
- * HaoVPN WebUI 共用脚本：CSRF、API、Toast、格式化
+ * HaoVPN WebUI 共用脚本：CSRF、API、Toast、格式化、分页。
+ * 各 templates/*.html 通过 window.HaoVPN 调用；无构建步骤，修改后须重编服务端 embed。
  */
 (function () {
   'use strict';
 
+  /** 当前页 CSRF token；由 refreshCSRF 或模板注入 setCSRF 设置 */
   let csrfToken = '';
 
+  /** 右下角 Toast 提示；type 为 info|ok|error 等，对应 CSS class */
   function toast(msg, type) {
     let box = document.getElementById('toastContainer');
     if (!box) {
@@ -21,6 +24,7 @@
     setTimeout(function () { el.remove(); }, 4500);
   }
 
+  /** 从 /api/v1/csrf 刷新 token；失败返回空串不抛错 */
   async function refreshCSRF() {
     try {
       const r = await fetch('/api/v1/csrf');
@@ -33,6 +37,7 @@
     }
   }
 
+  /** 带 CSRF 的 fetch 封装；JSON 响应且 r.ok=false 时抛 Error(j.error) */
   async function api(path, opts) {
     opts = opts || {};
     opts.headers = opts.headers || {};
@@ -48,6 +53,7 @@
     return r;
   }
 
+  /** POST /api/v1/logout 后跳转登录页 */
   async function logout() {
     try {
       await api('/api/v1/logout', { method: 'POST' });
@@ -55,6 +61,7 @@
     location.href = '/login';
   }
 
+  /** 字节数人类可读（B/KB/MB/GB） */
   function formatBytes(n) {
     n = Number(n) || 0;
     if (n < 1024) return n + ' B';
@@ -63,6 +70,7 @@
     return (n / 1073741824).toFixed(2) + ' GB';
   }
 
+  /** 秒数转 uptime 字符串（如 1h 2m） */
   function formatUptime(sec) {
     sec = Number(sec) || 0;
     const h = Math.floor(sec / 3600);
@@ -73,12 +81,14 @@
     return s + 's';
   }
 
+  /** 生成 OK/异常 状态徽章 HTML 片段 */
   function statusBadge(ok, okText, failText) {
     return ok
       ? '<span class="badge badge-ok">' + (okText || '正常') + '</span>'
       : '<span class="badge badge-error">' + (failText || '异常') + '</span>';
   }
 
+  /** 侧栏导航高亮：data-page 与当前 page 匹配项加 active */
   function setActiveNav(page) {
     document.querySelectorAll('.nav-item[data-page]').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-page') === page);
@@ -94,8 +104,11 @@
     formatUptime: formatUptime,
     statusBadge: statusBadge,
     setActiveNav: setActiveNav,
+    /** 读取当前内存中的 CSRF token（模板注入或 refreshCSRF 设置） */
     getCSRF: function () { return csrfToken; },
+    /** 由服务端模板或登录响应注入 CSRF token */
     setCSRF: function (t) { csrfToken = t; },
+    /** 将键值对象编码为 URL 查询串（跳过空值） */
     buildQuery: function (params) {
       var parts = [];
       Object.keys(params || {}).forEach(function (k) {
@@ -105,6 +118,7 @@
       });
       return parts.length ? '?' + parts.join('&') : '';
     },
+    /** 渲染分页控件：总条数、上一页/下一页按钮，onChange(offset) 翻页回调 */
     renderPager: function (el, total, limit, offset, onChange) {
       if (!el) return;
       el.innerHTML = '';
@@ -125,6 +139,7 @@
       btn('上一页', cur <= 1, Math.max(0, offset - limit));
       btn('下一页', cur >= pages, offset + limit);
     },
+    /** 防抖包装：ms 毫秒内重复调用只执行最后一次 */
     debounce: function (fn, ms) {
       var t;
       return function () {

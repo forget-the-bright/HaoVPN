@@ -5,28 +5,28 @@ package netstack
 import (
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
-	"sync"
 
 	"haovpn/internal/brand"
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 	"haovpn/internal/platform"
+	"haovpn/internal/winnet"
 )
 
-// ifIndexCache 同一会话多次加路由时避免重复起 PowerShell（GUI 下冷启动可达数秒）。
-var (
-	ifIndexMu    sync.Mutex
-	ifIndexCache = map[string]int{}
-)
+// ifIndex 解析已统一到 internal/winnet（避免 netstack→tun 反向依赖）。
 
 // enableIPForwardPlatform 打开系统与相关网卡的 IPv4 转发。
 func enableIPForwardPlatform() error {
+	if ipForwardEnabled() {
+		logger.Info("windows: IP 转发已开启，跳过重复配置")
+		return nil
+	}
 	cmd := platform.Command("reg", "add",
 		`HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`,
 		"/v", "IPEnableRouter", "/t", "REG_DWORD", "/d", "1", "/f")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reg IPEnableRouter: %w: %s", err, strings.TrimSpace(string(out)))
+		return platform.CommandOutputError("reg IPEnableRouter", out, err)
 	}
 	ps := `Get-NetIPInterface -AddressFamily IPv4 | Where-Object {$_.ConnectionState -eq 'Connected'} | ForEach-Object { Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex -Forwarding Enabled -ErrorAction SilentlyContinue }`
 	_ = platform.Command("powershell", "-NoProfile", "-Command", ps).Run()
@@ -52,6 +52,10 @@ func setupNATPlatform(vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outbound
 // setupWinNAT 使用 New-NetNat（依赖 Hyper-V/WinNAT 子系统）。
 func setupWinNAT(vpnSubnet string) error {
 	name := brand.WinNATName
+	if winNATMatches(name, vpnSubnet) {
+		logger.Info("windows: NetNat %s 已存在 prefix=%s，跳过", name, vpnSubnet)
+		return nil
+	}
 	_ = platform.Command("powershell", "-NoProfile", "-Command",
 		fmt.Sprintf("Remove-NetNat -Name %s -Confirm:$false -ErrorAction SilentlyContinue", name)).Run()
 
@@ -59,10 +63,9 @@ func setupWinNAT(vpnSubnet string) error {
 		`New-NetNat -Name %s -InternalIPInterfaceAddressPrefix %s -ErrorAction Stop`,
 		name, vpnSubnet,
 	)
-	out, err := platform.Command("powershell", "-NoProfile", "-Command", ps).CombinedOutput()
+	out, err := winnet.RunPS(ps)
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		return fmt.Errorf("New-NetNat 失败: %w: %s", err, msg)
+		return platform.CommandOutputError("New-NetNat", out, err)
 	}
 	logger.Info("windows: New-NetNat %s prefix=%s", name, vpnSubnet)
 	return nil
@@ -113,17 +116,18 @@ if (-not $ok) {
   Get-NetAdapter | ForEach-Object { if ($_.Name -eq $n -and $_.Status -eq 'Up') { $ok = $true } }
 }
 if (-not $ok) { throw "网卡不存在或未 Up: $n" }
-`, escapePSSingleQuoted(name))
-	out, err := platform.Command("powershell", "-NoProfile", "-Command", ps).CombinedOutput()
+`, winnet.EscapeSingleQuoted(name))
+	out, err := winnet.RunPS(ps)
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		return err
 	}
+	_ = out
 	return nil
 }
 
 // findInterfaceWithIPInCIDR 本机有该网段 IP 的网卡（服务端与 PLC 同二层/同网段）。
 func findInterfaceWithIPInCIDR(lanCIDR string) (string, error) {
-	_, ipnet, err := net.ParseCIDR(lanCIDR)
+	_, ipnet, err := netutil.ParseCIDR(lanCIDR)
 	if err != nil {
 		return "", err
 	}
@@ -151,7 +155,7 @@ Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
 if ($found) { $found }
 `, network, mask)
 
-	out, err := platform.Command("powershell", "-NoProfile", "-Command", ps).CombinedOutput()
+	out, err := winnet.RunPS(ps)
 	if err != nil {
 		return "", err
 	}
@@ -182,19 +186,15 @@ if (-not $found) { throw "路由表无可用出站网卡" }
 $found
 `, probe)
 
-	out, err := platform.Command("powershell", "-NoProfile", "-Command", ps).CombinedOutput()
+	out, err := winnet.RunPS(ps)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+		return "", err
 	}
 	name := strings.TrimSpace(string(out))
 	if name == "" {
 		return "", fmt.Errorf("路由表无可用出站网卡")
 	}
 	return name, nil
-}
-
-func escapePSSingleQuoted(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
 }
 
 // setupICSPlatform 用 ICS 做 VPN→LAN SNAT（WinNAT 不可用时的回退，如 Windows 家庭版）。
@@ -204,6 +204,12 @@ func setupICSPlatform(tunName, lanCIDR, outboundIf string) error {
 		return fmt.Errorf("ICS 回退: %w", err)
 	}
 	logger.Info("windows: ICS 回退 lan_if=%s tun=%s lan=%s", lanIf, tunName, lanCIDR)
+
+	tunIfIndex := 0
+	if idx, err := winnet.InterfaceIndex(tunName); err == nil {
+		tunIfIndex = idx
+	}
+	tunAlias := winnet.ResolveInterfaceAlias(tunName)
 
 	ps := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
@@ -220,12 +226,22 @@ Restart-Service SharedAccess -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 $pubName = '%s'
 $prvName = '%s'
+$prvIdx = %d
+$prvAlias = '%s'
 $pub = $null
 $prv = $null
 foreach ($c in @($net.EnumEveryConnection())) {
   $n = $net.NetConnectionProps($c).Name
   if ($n -eq $pubName -or ($n -like "*$pubName*")) { $pub = $c }
-  if ($n -eq $prvName -or ($n -like "*$prvName*")) { $prv = $c }
+  if ($n -eq $prvName -or ($n -like "*$prvName*") -or ($prvAlias -ne '' -and $n -eq $prvAlias)) { $prv = $c }
+}
+if (-not $prv -and $prvIdx -gt 0) {
+  $na = Get-NetAdapter -InterfaceIndex $prvIdx -ErrorAction SilentlyContinue
+  if ($na) {
+    foreach ($c in @($net.EnumEveryConnection())) {
+      if ($net.NetConnectionProps($c).Name -eq $na.Name) { $prv = $c; break }
+    }
+  }
 }
 if (-not $pub) { throw "ICS: 未找到出站网卡 $pubName" }
 if (-not $prv) { throw "ICS: 未找到 TUN 网卡 $prvName（Wintun 须已创建）" }
@@ -242,12 +258,10 @@ foreach ($order in @('privateFirst','publicFirst')) {
   } catch { }
 }
 if (-not $ok) { throw "ICS EnableSharing 失败（0x80040201 常见于 Win11 家庭版，可设 nat.forward_only: true 或手工在「网络连接→共享」启用一次）" }
-`, escapePSSingleQuoted(lanIf), escapePSSingleQuoted(tunName))
+`, winnet.EscapeSingleQuoted(lanIf), winnet.EscapeSingleQuoted(tunName), tunIfIndex, winnet.EscapeSingleQuoted(tunAlias))
 
-	out, err := platform.Command("powershell", "-NoProfile", "-Command", ps).CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		return fmt.Errorf("ICS 启用失败: %w: %s（家庭版请确认 LAN 网卡名正确且 SharedAccess 服务可启动）", err, msg)
+	if _, err := winnet.RunPS(ps); err != nil {
+		return fmt.Errorf("ICS 启用失败: %w（家庭版请确认 LAN 网卡名正确且 SharedAccess 服务可启动）", err)
 	}
 	logger.Info("windows: ICS 已启用 public=%s private=%s（VPN→LAN NAT 回退）", lanIf, tunName)
 	return nil
@@ -275,53 +289,14 @@ foreach ($c in @($net.EnumEveryConnection())) {
 	return nil
 }
 
-// interfaceIndexByName 按网卡名取接口索引（route IF 参数需要数字，不能用别名）。
-func interfaceIndexByName(name string) (int, error) {
-	ifIndexMu.Lock()
-	if idx, ok := ifIndexCache[name]; ok && idx > 0 {
-		ifIndexMu.Unlock()
-		return idx, nil
-	}
-	ifIndexMu.Unlock()
-
-	iface, err := net.InterfaceByName(name)
-	if err == nil && iface.Index > 0 {
-		ifIndexMu.Lock()
-		ifIndexCache[name] = iface.Index
-		ifIndexMu.Unlock()
-		return iface.Index, nil
-	}
-	// 网卡名偶发与 Wintun 别名不一致时，用 PowerShell 按 Name/描述兜底（仅首次，结果缓存）
-	ps := fmt.Sprintf(`
-$if = Get-NetAdapter | Where-Object { $_.Name -eq '%s' } | Select-Object -First 1
-if (-not $if) {
-  $if = Get-NetAdapter | Where-Object { $_.InterfaceDescription -match 'Wintun|HaoVPN' } | Select-Object -First 1
-}
-if (-not $if) { throw 'adapter not found' }
-Write-Output $if.ifIndex
-`, escapePSSingleQuoted(name))
-	out, err2 := platform.Command("powershell", "-NoProfile", "-Command", ps).CombinedOutput()
-	if err2 != nil {
-		return 0, fmt.Errorf("查网卡索引 %q: %v / %w: %s", name, err, err2, strings.TrimSpace(string(out)))
-	}
-	idx, err3 := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err3 != nil || idx <= 0 {
-		return 0, fmt.Errorf("无效 ifIndex=%q for %s", strings.TrimSpace(string(out)), name)
-	}
-	ifIndexMu.Lock()
-	ifIndexCache[name] = idx
-	ifIndexMu.Unlock()
-	return idx, nil
-}
-
 // addClientRoutePlatform 添加分流路由：经 Wintun 接口 on-link（忽略 gateway 作下一跳）。
 func addClientRoutePlatform(cidr, tunName, gateway string) error {
 	_ = gateway
-	dest, mask, err := SplitCIDR(cidr)
+	dest, mask, err := netutil.SplitCIDR(cidr)
 	if err != nil {
 		return err
 	}
-	ifIndex, err := interfaceIndexByName(tunName)
+	ifIndex, err := winnet.InterfaceIndex(tunName)
 	if err != nil {
 		return err
 	}
@@ -334,13 +309,13 @@ func addClientRoutePlatform(cidr, tunName, gateway string) error {
 		if strings.Contains(msg, "对象已存在") || strings.Contains(strings.ToLower(msg), "exists") {
 			return nil
 		}
-		return fmt.Errorf("route %v: %w: %s", args, err, msg)
+		return platform.CommandOutputError("route "+strings.Join(args, " "), out, err)
 	}
 	return nil
 }
 
 func delClientRoutePlatform(cidr, tunName, gateway string) error {
-	dest, mask, err := SplitCIDR(cidr)
+	dest, mask, err := netutil.SplitCIDR(cidr)
 	if err != nil {
 		return err
 	}
@@ -349,4 +324,29 @@ func delClientRoutePlatform(cidr, tunName, gateway string) error {
 	cmd := platform.Command("route", "DELETE", dest, "MASK", mask)
 	_ = cmd.Run()
 	return nil
+}
+
+// ipForwardEnabled 检查注册表 IPEnableRouter 是否已为 1。
+func ipForwardEnabled() bool {
+	out, err := platform.Command("reg", "query",
+		`HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`,
+		"/v", "IPEnableRouter").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	s := strings.ToLower(string(out))
+	return strings.Contains(s, "0x1") ||
+		(strings.Contains(s, "ipeablerouter") && strings.Contains(s, " 0x1"))
+}
+
+// winNATMatches 检查是否已有相同 prefix 的 NetNat 规则（避免每次重启 Remove+New）。
+func winNATMatches(name, prefix string) bool {
+	ps := fmt.Sprintf(`
+$n = Get-NetNat -Name '%s' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $n) { exit 1 }
+if ($n.InternalIPInterfaceAddressPrefix -eq '%s') { exit 0 }
+exit 2
+`, winnet.EscapeSingleQuoted(name), winnet.EscapeSingleQuoted(prefix))
+	err := platform.Command("powershell", "-NoProfile", "-Command", ps).Run()
+	return err == nil
 }

@@ -1,12 +1,8 @@
-// Package clientapp 提供 CLI/GUI 共用的客户端拨号、策略应用与重连引擎。
 package clientapp
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"sync"
@@ -16,20 +12,26 @@ import (
 	"haovpn/internal/crypto"
 	"haovpn/internal/logger"
 	"haovpn/internal/netstack"
+	"haovpn/internal/netutil"
 	"haovpn/internal/safeutil"
 	"haovpn/internal/security"
 	"haovpn/internal/transport"
 	"haovpn/internal/tunnel"
-	"haovpn/internal/tun"
 )
 
-// State 连接状态（供 GUI 展示）。
+// State 客户端 VPN 连接状态，供 GUI/CLI 轮询展示。
+//
+// 取值由 Engine 在 Start、onConnect、onClose 与 Stop 中更新；State() 读取时持 mu 锁。
 type State int
 
 const (
+	// StateIdle 未连接或已 Stop；vpnIP 为空，重连循环未运行或已取消。
 	StateIdle State = iota
+	// StateConnecting 正在建立 TLS 或等待握手/策略应用。
 	StateConnecting
+	// StateConnected 握手成功且策略已应用；TUN 与路由就绪，数据面可收发。
 	StateConnected
+	// StateReconnecting 隧道已断开，transport 正在自动重连；可能已启用杀开关并清除路由。
 	StateReconnecting
 )
 
@@ -48,7 +50,12 @@ func (s State) String() string {
 	}
 }
 
-// Credentials 隧道登录凭据。
+// Credentials 隧道登录凭据，由 CLI/GUI 经 SetCredentials 写入 Engine。
+//
+// 字段：
+//   Username — VPN 账号名；握手前 TrimSpace，空则拒绝连接。
+//   Password — 明文密码；用于 tunnel 鉴权，握手成功前不得为空。
+//   PrivateKey — 可选 WireGuard 风格私钥；握手应答未下发时作回退；正常密码登录以服务端下发为准。
 type Credentials struct {
 	Username   string
 	Password   string
@@ -71,7 +78,28 @@ func (netstackKillSwitch) Enable(p []string) error       { return netstack.Enabl
 func (netstackKillSwitch) Disable() error                { return netstack.DisableKillSwitch() }
 func (netstackKillSwitch) Remove() error                 { return netstack.RemoveKillSwitchRules() }
 
-// Engine 客户端隧道引擎。
+// Engine CLI/GUI 共用的客户端 VPN 拨号引擎：TLS 重连、隧道握手、TUN/路由与杀开关编排。
+//
+// 字段：
+//   cfg — 只读客户端配置指针；生命周期由调用方保证，Engine 不拷贝配置。
+//   creds — 当前登录凭据；SetCredentials 写入，onConnect 读取时需持 mu。
+//   ks — 杀开关实现；默认 netstackKillSwitch，单测可注入假实现。
+//   mu — 保护 state、vpnIP、gateway、lastError、ksOK、creds、cancel/reconnect 等可见状态。
+//   state — 连接状态枚举，见 State。
+//   vpnIP — 握手成功后分配的虚拟 IP；未连接或 Stop 后为空。
+//   gateway — 服务端下发的网关 IP，供 runtime 添加路由时使用。
+//   lastError — 最近一次对用户可见的错误文案（如杀开关失败）；空表示无。
+//   ksOK — 杀开关是否处于预期保护状态；未开启杀开关配置时恒为 true。
+//   rt — TUN 设备与路由运行时；与数据面读写同包内协作。
+//   reconnect — transport 重连客户端；Start 创建，Stop 停止。
+//   cancel / runCtx — Start 创建的根上下文；Stop 调用 cancel 以结束 tunReadLoop。
+//   activeMu — 保护 activeConn、cryptoSess、sessionPriv；锁序须先于 mu（见 Stop/onClose）。
+//   activeConn — 当前活跃 TLS 隧道连接；断线或 Stop 时置 nil。
+//   cryptoSess — 与 activeConn 配对的加解密会话；握手下发密钥后建立。
+//   sessionPriv — 当前会话客户端私钥字符串；供调试或后续扩展，Stop 时清空。
+//   clearRoutesHook — 仅单测：clearRoutes 前回调，用于断言杀开关与清路由顺序。
+//
+// 线程安全：State/LastError/KillSwitchOK/VPNIP 等查询方法持 mu；Start/Stop 应由单 goroutine 串行调用。
 type Engine struct {
 	cfg   *config.ClientConfig
 	creds Credentials
@@ -97,7 +125,10 @@ type Engine struct {
 	clearRoutesHook func()
 }
 
-// NewEngine 创建引擎（尚未连接）。
+// NewEngine 创建尚未连接的客户端 VPN 引擎实例。
+//
+// 参数：cfg — 客户端配置；调用方保证生命周期内有效。
+// 返回：state=StateIdle 的 Engine；须 SetCredentials 后 Start。
 func NewEngine(cfg *config.ClientConfig) *Engine {
 	return &Engine{cfg: cfg, state: StateIdle, rt: &runtime{cfg: cfg}, ks: netstackKillSwitch{}, ksOK: true}
 }
@@ -132,28 +163,39 @@ func (e *Engine) setKillSwitchStatus(ok bool, userErr string) {
 	e.mu.Unlock()
 }
 
-// SetCredentials 设置/更新登录凭据（退出登录后重填）。
+// SetCredentials 设置或更新隧道登录凭据（如 GUI 登录/退出后重填）。
+//
+// 参数：c — 账号密码必填；PrivateKey 可选，握手未下发私钥时作回退。
+// 返回：无。
+// 副作用：覆盖 Engine 内 creds；不影响已连接会话，下次 onConnect 使用新凭据。
+// 并发：持 mu 锁；可与 State 等查询并行，但与 Start/Stop 同 goroutine 调用为宜。
 func (e *Engine) SetCredentials(c Credentials) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.creds = c
 }
 
-// State 当前状态。
+// State 返回当前连接状态（持 mu 锁读取）。
+//
+// 并发：可与 LastError 等查询并行；Start/Stop 应由单 goroutine 串行调用。
 func (e *Engine) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.state
 }
 
-// LastError 最近一次对用户可见的错误（空表示无）。
+// LastError 返回最近一次对用户可见的错误文案。
+//
+// 空字符串表示无错误；杀开关失败等场景由 setKillSwitchStatus 写入。
 func (e *Engine) LastError() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.lastError
 }
 
-// KillSwitchOK 杀开关是否处于已保护状态（未开启杀开关时恒为 true）。
+// KillSwitchOK 返回杀开关是否处于预期保护状态。
+//
+// 未开启 kill_switch 配置时恒为 true；断线后 Enable 失败时为 false。
 func (e *Engine) KillSwitchOK() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -163,21 +205,28 @@ func (e *Engine) KillSwitchOK() bool {
 	return e.ksOK
 }
 
-// VPNIP 已分配的虚拟 IP（未连接为空）。
+// VPNIP 返回握手成功后分配的虚拟 IP。
+//
+// 未连接、重连中或 Stop 后为空字符串。
 func (e *Engine) VPNIP() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.vpnIP
 }
 
-// Start 后台启动重连循环；重复调用无效。
+// Start 在后台启动 TLS 重连循环与 TUN 读循环；重复调用若已在运行则直接返回 nil。
+//
+// 参数：无（配置与凭据来自 NewEngine/SetCredentials）。
+// 返回：err — 杀开关平台不支持或 BuildClientTLS 失败；已在运行时为 nil。
+// 副作用：创建 runCtx/cancel、ReconnectClient、tunReadLoop goroutine；state 变为 StateConnecting。
+// 并发：非阻塞；重连与 onConnect 在 transport 内部 goroutine 执行；调用方不应并行多次 Start。
 func (e *Engine) Start() error {
 	if e.cfg.Security.KillSwitch {
 		if err := e.ks.Supported(); err != nil {
 			return fmt.Errorf("杀开关: %w", err)
 		}
 	}
-	tlsCfg, err := BuildClientTLS(e.cfg)
+	tlsCfg, err := security.BuildClientTLS(e.cfg)
 	if err != nil {
 		return err
 	}
@@ -192,19 +241,7 @@ func (e *Engine) Start() error {
 	e.state = StateConnecting
 	e.mu.Unlock()
 
-	tcfg := transport.DefaultConfig()
-	tcfg.ReconnectInitial = time.Duration(e.cfg.Reconnect.InitialSec) * time.Second
-	tcfg.ReconnectMax = time.Duration(e.cfg.Reconnect.MaxSec) * time.Second
-	if e.cfg.Server.DialTimeoutSec > 0 {
-		tcfg.DialTimeout = time.Duration(e.cfg.Server.DialTimeoutSec) * time.Second
-	}
-	if e.cfg.Server.HeartbeatIntervalSec > 0 {
-		tcfg.HeartbeatInterval = time.Duration(e.cfg.Server.HeartbeatIntervalSec) * time.Second
-	}
-	if e.cfg.Server.HeartbeatTimeoutSec > 0 {
-		tcfg.HeartbeatTimeout = time.Duration(e.cfg.Server.HeartbeatTimeoutSec) * time.Second
-	}
-
+	tcfg := transport.FromClientConfig(e.cfg)
 	e.reconnect = transport.NewReconnectClient(e.cfg.Server.Address, tlsCfg, tcfg, nil, e.onConnect)
 	e.reconnect.Start()
 
@@ -214,7 +251,13 @@ func (e *Engine) Start() error {
 	return nil
 }
 
-// Stop 停止重连、关闭 TUN（退出登录/退出程序）。
+// Stop 停止重连循环、关闭 TUN/路由并拆除杀开关（退出登录或进程退出时调用）。
+//
+// 参数：无。
+// 返回：无。
+// 副作用：清空 activeConn/cryptoSess、cancel 上下文、Stop reconnect、rt.close、ks.Remove；
+//         state 置 StateIdle，vpnIP 清空；Remove 失败时写入 lastError。
+// 并发：可阻塞至 reconnect 停止；锁序 activeMu → mu；与 Start 不可并行，应由同一控制 goroutine 调用。
 func (e *Engine) Stop() {
 	// 锁序：activeMu → mu，与 onClose 一致，避免死锁。
 	e.activeMu.Lock()
@@ -253,6 +296,13 @@ func (e *Engine) setState(st State) {
 	e.mu.Unlock()
 }
 
+// onConnect 由 transport.ReconnectClient 在每次 TLS 连接建立后回调，完成握手、策略与数据面绑定。
+//
+// 参数：conn — 新建立的 TLS 连接；失败或放弃时由本函数 Close。
+// 返回：无（错误路径 Close conn 并可能 protectThenClearRoutes）。
+// 副作用：隧道鉴权、建立 cryptoSess、rt.applyPolicy（TUN/路由/DNS）、注册 OnData/OnClose；
+//         成功时 state=StateConnected 并可能 Disable 杀开关；失败时清路由/杀开关保护。
+// 并发：在 transport 重连 goroutine 中运行；与 tunReadLoop 通过 activeMu 协调 activeConn/cryptoSess。
 func (e *Engine) onConnect(conn *transport.Conn) {
 	e.setState(StateConnecting)
 	e.mu.Lock()
@@ -339,13 +389,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		e.protectThenClearRoutes()
 		return
 	}
-	mtu := hsRes.Policy.MTU
-	if mtu <= 0 {
-		mtu = e.cfg.Tun.MTU
-	}
-	if mtu <= 0 {
-		mtu = 1420
-	}
+	mtu := netutil.ResolveMTU(hsRes.Policy.MTU, e.cfg.Tun.MTU)
 	e.mu.Lock()
 	e.vpnIP = hsRes.Policy.VPNIP
 	e.gateway = hsRes.Policy.GatewayIP
@@ -366,10 +410,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 }
 
 func (e *Engine) tunReadLoop(ctx context.Context) {
-	mtu := e.cfg.Tun.MTU
-	if mtu <= 0 {
-		mtu = 1420
-	}
+	mtu := netutil.ResolveMTU(e.cfg.Tun.MTU)
 	e.rt.readLoop(ctx, func(b []byte) error {
 		e.activeMu.Lock()
 		conn := e.activeConn
@@ -389,226 +430,9 @@ func (e *Engine) tunReadLoop(ctx context.Context) {
 	}, mtu)
 }
 
-// runtime TUN 与路由。
-type runtime struct {
-	mu         sync.Mutex
-	cfg        *config.ClientConfig
-	tunDev     tun.Device
-	routes     []string
-	allowedCIDRs []string
-	vpnIP      string
-	policyVer  int
-	gateway    string
-}
-
-func (rt *runtime) allowedIPs() []string {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return append([]string{}, rt.allowedCIDRs...)
-}
-
-func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-
-	if policy.VPNIP == "" {
-		return fmt.Errorf("握手未下发 vpn_ip")
-	}
-	if rt.cfg.Peer.VPNIP != "" && rt.cfg.Peer.VPNIP != policy.VPNIP {
-		logger.Warn("配置 vpn_ip=%s 与握手应答 %s 不一致，以服务端为准", rt.cfg.Peer.VPNIP, policy.VPNIP)
-	}
-	if len(rt.cfg.Peer.AllowedIPs) > 0 {
-		logger.Warn("配置 allowed_ips 将被握手应答覆盖（服务端权威）")
-	}
-
-	mtu := policy.MTU
-	if mtu <= 0 {
-		mtu = rt.cfg.Tun.MTU
-	}
-	if mtu <= 0 {
-		mtu = 1420
-	}
-
-	needRecreate := rt.tunDev == nil || rt.vpnIP != policy.VPNIP
-	if needRecreate {
-		if rt.tunDev != nil {
-			rt.clearRoutesLocked() // 内含一次 RestoreDNS
-			_ = rt.tunDev.Close()
-			rt.tunDev = nil
-		}
-		dev, err := tun.Open(tun.Config{
-			Name: rt.cfg.Tun.Name,
-			MTU:  mtu,
-			CIDR: policy.VPNIP + "/32",
-		})
-		if err != nil {
-			return fmt.Errorf("TUN 创建失败: %w", err)
-		}
-		rt.tunDev = dev
-		rt.vpnIP = policy.VPNIP
-		rt.routes = nil
-	} else {
-		rt.clearRoutesLocked()
-	}
-
-	gw := config.PreferGateway(policy.GatewayIP, policy.VPNIP, &rt.cfg.Peer)
-	rt.gateway = gw
-	tunName := rt.tunDev.Name()
-	if gw != "" {
-		gwCIDR := gw + "/32"
-		if err := netstack.AddClientRoute(gwCIDR, tunName, gw); err != nil {
-			logger.Warn("添加网关路由 %s: %v", gwCIDR, err)
-		} else {
-			rt.routes = append(rt.routes, gwCIDR)
-		}
-	}
-	for _, cidr := range policy.AllowedIPs {
-		if gw != "" && cidr == gw+"/32" {
-			continue
-		}
-		if err := netstack.AddClientRoute(cidr, tunName, gw); err != nil {
-			logger.Warn("添加路由 %s: %v", cidr, err)
-		} else {
-			rt.routes = append(rt.routes, cidr)
-		}
-	}
-
-	if policy.PolicyVer != rt.policyVer && rt.policyVer > 0 {
-		logger.Info("策略已更新 policy_ver %d -> %d", rt.policyVer, policy.PolicyVer)
-	}
-	rt.policyVer = policy.PolicyVer
-	rt.allowedCIDRs = append([]string{}, policy.AllowedIPs...)
-	logger.Info("已应用服务端策略 vpn_ip=%s allowed_ips=%v policy_ver=%d gateway=%s mtu=%d",
-		policy.VPNIP, policy.AllowedIPs, policy.PolicyVer, gw, mtu)
-
-	if rt.cfg.Tun.DNSFromPolicyEnabled() && len(policy.DNSServers) > 0 {
-		if err := netstack.ApplyDNS(tunName, policy.DNSServers); err != nil {
-			// 非 Windows 等平台会返回明确错误；禁止打 dns_applied 假装成功。
-			logger.Warn("DNS 设置失败（未应用）adapter=%s: %v", tunName, err)
-		} else {
-			logger.Info("dns_applied servers=%v adapter=%s", policy.DNSServers, tunName)
-		}
-	}
-	return nil
-}
-
-func (rt *runtime) clearRoutes() {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.clearRoutesLocked()
-}
-
-func (rt *runtime) clearRoutesLocked() {
-	if rt.tunDev == nil {
-		return
-	}
-	tunName := rt.tunDev.Name()
-	gw := rt.gateway
-	if gw == "" {
-		gw = rt.cfg.Peer.ResolveGatewayFor(rt.vpnIP)
-	}
-	for _, cidr := range rt.routes {
-		_ = netstack.DelClientRoute(cidr, tunName, gw)
-	}
-	rt.routes = nil
-	_ = netstack.RestoreDNS(tunName)
-}
-
-func (rt *runtime) close() {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.clearRoutesLocked()
-	if rt.tunDev != nil {
-		_ = rt.tunDev.Close()
-		rt.tunDev = nil
-	}
-	rt.allowedCIDRs = nil
-}
-
-func (rt *runtime) write(pkt []byte) error {
-	rt.mu.Lock()
-	dev := rt.tunDev
-	rt.mu.Unlock()
-	if dev == nil {
-		return nil
-	}
-	_, err := dev.Write(pkt)
-	return err
-}
-
-func (rt *runtime) readLoop(ctx context.Context, send func([]byte) error, mtu int) {
-	buf := make([]byte, mtu+100)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		rt.mu.Lock()
-		dev := rt.tunDev
-		rt.mu.Unlock()
-		if dev == nil {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		n, err := dev.Read(buf)
-		if err != nil {
-			logger.Warn("TUN 读错误: %v", err)
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		if err := send(buf[:n]); err != nil {
-			logger.Warn("隧道发送失败: %v", err)
-		}
-	}
-}
-
-// BuildClientTLS 构造客户端 TLS 配置；CA 无效时返回错误（不静默回退）。
-func BuildClientTLS(cfg *config.ClientConfig) (*tls.Config, error) {
-	tlsCfg := security.TLSConfig(tls.Certificate{}, false)
-	tlsCfg.InsecureSkipVerify = cfg.Server.TLS.InsecureSkipVerify
-	if !cfg.Server.TLS.InsecureSkipVerify {
-		ca := strings.TrimSpace(cfg.Server.TLS.CAFile)
-		if ca == "" {
-			return nil, fmt.Errorf("未配置 server.tls.ca_file 且未启用 insecure_skip_verify")
-		}
-		pem, err := os.ReadFile(ca)
-		if err != nil {
-			return nil, fmt.Errorf("读取 CA 失败 %s: %w", ca, err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("CA 文件不是有效 PEM: %s", ca)
-		}
-		tlsCfg.RootCAs = pool
-	} else if cfg.Server.TLS.CAFile != "" {
-		pem, err := os.ReadFile(cfg.Server.TLS.CAFile)
-		if err == nil {
-			pool := x509.NewCertPool()
-			if pool.AppendCertsFromPEM(pem) {
-				tlsCfg.RootCAs = pool
-			}
-		}
-	}
-	tlsCfg.ServerName = cfg.Server.TLS.ServerName
-	if tlsCfg.ServerName == "" {
-		host, _, err := net.SplitHostPort(cfg.Server.Address)
-		if err != nil {
-			host = cfg.Server.Address
-		}
-		host = strings.Trim(host, "[]")
-		if host != "" && host != "0.0.0.0" && !strings.HasPrefix(host, "REPLACE_") {
-			tlsCfg.ServerName = host
-		} else {
-			tlsCfg.ServerName = "localhost"
-		}
-	}
-	return tlsCfg, nil
-}
-
 // PromptPassword 从终端读取密码（无回显需调用方处理；此处简单 Scanln）。
 func PromptPassword() (string, error) {
-	fmt.Fprint(os.Stderr, "密码: ")
+	fmt.Fprint(os.Stderr, "请输入密码（或设置 HAOVPN_PASSWORD）: ")
 	var s string
 	_, err := fmt.Scanln(&s)
 	return s, err

@@ -1,27 +1,24 @@
 package netstack
 
 import (
-	"fmt"
 	"net"
 	"strings"
+
+	"haovpn/internal/netutil"
 )
 
-// NormalizeKillPrefixes 规范化 AllowedIPs 为防火墙 remoteip 参数。
+// NormalizeKillPrefixes 去重并规范化 AllowedIPs 前缀列表，供 WFP 杀开关 remoteip 条件使用。
+//
+// 参数：prefixes — 握手或 yaml 的 CIDR 列表；空串与重复项被跳过。
+// 返回：保序去重后的新切片（不修改原切片）。
 func NormalizeKillPrefixes(prefixes []string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, p := range prefixes {
-		p = strings.TrimSpace(p)
-		if p == "" || seen[p] {
-			continue
-		}
-		seen[p] = true
-		out = append(out, p)
-	}
-	return out
+	return netutil.DedupTrimNonEmpty(prefixes)
 }
 
-// ParseDNSShowOutput 从 netsh 输出解析 DNS。
+// ParseDNSShowOutput 从 netsh interface ipv4 show dnsservers 输出中提取 IPv4 DNS 服务器列表。
+//
+// 参数：out — netsh 标准输出字节。
+// 返回：按出现顺序的 IPv4 地址字符串；无法解析时可能为空切片。
 func ParseDNSShowOutput(out []byte) []string {
 	var servers []string
 	for _, line := range strings.Split(string(out), "\n") {
@@ -34,32 +31,22 @@ func ParseDNSShowOutput(out []byte) []string {
 	return servers
 }
 
-// ParseCIDRToV4Mask 将 CIDR 转为主机序 IPv4 地址与掩码（WFP 条件用）。
-func ParseCIDRToV4Mask(cidr string) (addr, mask uint32, err error) {
-	ip, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return 0, 0, err
-	}
-	v4 := ip.To4()
-	if v4 == nil {
-		return 0, 0, fmt.Errorf("非 IPv4: %s", cidr)
-	}
-	m := ipnet.Mask
-	if len(m) != 4 {
-		return 0, 0, fmt.Errorf("无效掩码: %s", cidr)
-	}
-	addr = uint32(v4[0])<<24 | uint32(v4[1])<<16 | uint32(v4[2])<<8 | uint32(v4[3])
-	mask = uint32(m[0])<<24 | uint32(m[1])<<16 | uint32(m[2])<<8 | uint32(m[3])
-	return addr, mask, nil
-}
-
-// WFPFilterRef 枚举到的过滤器摘要（纯逻辑测试用）。
+// WFPFilterRef 枚举到的 WFP 过滤器摘要（纯数据，供单测与崩溃残留清理逻辑使用）。
+//
+// 字段：
+//   ID — FwpmFilterEnum0 返回的 filterId。
+//   Sublayer — 子层 GUID 的 16 字节原始形式，与 HaoVPNKillSublayerBytes 比对。
 type WFPFilterRef struct {
 	ID       uint64
 	Sublayer [16]byte // GUID 原始字节
 }
 
-// SelectProductFilterIDs 选出属于本产品子层的过滤器 ID（崩溃残留清理逻辑）。
+// SelectProductFilterIDs 从枚举结果中筛出属于 HaoVPN 杀开关子层的过滤器 ID。
+//
+// 参数：
+//   items — enumLayerFiltersLocked 或测试注入的枚举列表。
+//   productSublayer — 本产品固定子层 GUID 字节（HaoVPNKillSublayerBytes）。
+// 返回：待 FwpmFilterDeleteById0 删除的 ID 列表。
 func SelectProductFilterIDs(items []WFPFilterRef, productSublayer [16]byte) []uint64 {
 	var out []uint64
 	for _, it := range items {
@@ -70,7 +57,10 @@ func SelectProductFilterIDs(items []WFPFilterRef, productSublayer [16]byte) []ui
 	return out
 }
 
-// HaoVPNKillSublayerBytes 本产品杀开关子层 GUID 的固定字节（与 Windows 实现一致）。
+// HaoVPNKillSublayerBytes 返回本产品 WFP 杀开关子层 GUID 的固定 16 字节形式。
+//
+// 返回：与 killswitch_windows 中 HaoVPNSublayerGUID 一致（{a1b2c3d4-e5f6-7890-abcd-ef0123456789} 小端编码）。
+// 用途：跨进程/崩溃后按子层 GUID 清理残留 Block 过滤器。
 func HaoVPNKillSublayerBytes() [16]byte {
 	// {a1b2c3d4-e5f6-7890-abcd-ef0123456789} 小端 Data1/Data2/Data3 + Data4
 	return [16]byte{

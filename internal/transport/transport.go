@@ -1,9 +1,7 @@
-// Package transport implements TLS-TCP framed transport with heartbeat and reconnect.
 package transport
 
 import (
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -13,52 +11,20 @@ import (
 	"time"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 )
 
-const (
-	// FrameHeaderSize is the 4-byte big-endian length prefix.
-	FrameHeaderSize = 4
-	// MaxFrameSize limits a single frame payload.
-	MaxFrameSize = 1 << 20 // 1 MiB
-	// FrameTypeData is a data frame.
-	FrameTypeData byte = 0x01
-	// FrameTypeHeartbeat is a keepalive frame.
-	FrameTypeHeartbeat byte = 0x02
-	// FrameTypeMTUProbe is used for path MTU discovery.
-	FrameTypeMTUProbe byte = 0x03
-	// FrameTypeHandshake 隧道身份握手（JSON payload）。
-	FrameTypeHandshake byte = 0x04
-)
-
-// State represents connection lifecycle.
-type State int32
-
-const (
-	StateDisconnected State = iota
-	StateConnecting
-	StateConnected
-	StateDisconnecting
-	StateClosed
-)
-
-func (s State) String() string {
-	switch s {
-	case StateDisconnected:
-		return "disconnected"
-	case StateConnecting:
-		return "connecting"
-	case StateConnected:
-		return "connected"
-	case StateDisconnecting:
-		return "disconnecting"
-	case StateClosed:
-		return "closed"
-	default:
-		return "unknown"
-	}
-}
-
-// Config holds transport parameters.
+// Config 传输层心跳、队列、重连与 MTU 参数（由 client/server YAML 经 config_from 映射）。
+//
+// 字段：
+//   HeartbeatInterval — 发送心跳帧间隔；0 时 DefaultConfig 用 netutil 默认。
+//   HeartbeatTimeout — 读超时与对端静默判定；超时则 Close。
+//   WriteTimeout — 单次 TLS Write 截止时间；队列阻塞另受 MaxQueueSize 限制。
+//   MaxQueueSize — 待发帧 channel 容量；满时 SendRaw 丢弃并返回错误。
+//   ReconnectInitial — 重连首次退避；0 时 EffectiveReconnectInitial 为 1s。
+//   ReconnectMax — 退避上限；0 时 EffectiveReconnectMax 为 3s。
+//   DialTimeout — TCP 拨号超时；0 时 EffectiveDialTimeout 为 3s（避免损耗链路空等）。
+//   MTU — 读缓冲与帧大小参考；与 VPN 内层 MTU 对齐，默认 netutil.DefaultMTU。
 type Config struct {
 	HeartbeatInterval time.Duration
 	HeartbeatTimeout  time.Duration
@@ -70,18 +36,20 @@ type Config struct {
 	MTU               int
 }
 
-// DefaultConfig returns sensible defaults.
-// 损耗型 underlay（如 ZeroTier）：HeartbeatTimeout 宜长；DialTimeout/ReconnectMax 宜短以便快速重试。
+// DefaultConfig 返回传输层合理默认值（心跳、队列、重连、拨号、MTU）。
+//
+// 返回：可直接用于 Dial/ListenTLS；损耗型 underlay（如 ZeroTier）宜调大 HeartbeatTimeout、缩短 DialTimeout/ReconnectMax。
+// 副作用：无；纯函数。
 func DefaultConfig() Config {
 	return Config{
-		HeartbeatInterval: 15 * time.Second,
-		HeartbeatTimeout:  90 * time.Second,
+		HeartbeatInterval: time.Duration(netutil.DefaultHeartbeatIntervalSec) * time.Second,
+		HeartbeatTimeout:  time.Duration(netutil.DefaultHeartbeatTimeoutSec) * time.Second,
 		WriteTimeout:      15 * time.Second,
 		MaxQueueSize:      256,
-		ReconnectInitial:  1 * time.Second,
-		ReconnectMax:      3 * time.Second,
-		DialTimeout:       3 * time.Second,
-		MTU:               1420,
+		ReconnectInitial:  time.Duration(netutil.DefaultReconnectInitialSec) * time.Second,
+		ReconnectMax:      time.Duration(netutil.DefaultReconnectMaxSec) * time.Second,
+		DialTimeout:       time.Duration(netutil.DefaultDialTimeoutSec) * time.Second,
+		MTU:               netutil.DefaultMTU,
 	}
 }
 
@@ -114,62 +82,23 @@ func AfterDisconnectPause() time.Duration {
 	return 200 * time.Millisecond
 }
 
-// Frame is a decoded transport frame.
-type Frame struct {
-	Type    byte
-	Payload []byte
-}
-
-// EncodeFrame builds [4-byte len][type+payload].
-func EncodeFrame(typ byte, payload []byte) ([]byte, error) {
-	body := make([]byte, 1+len(payload))
-	body[0] = typ
-	copy(body[1:], payload)
-	if len(body) > MaxFrameSize {
-		return nil, fmt.Errorf("frame too large: %d", len(body))
-	}
-	out := make([]byte, FrameHeaderSize+len(body))
-	binary.BigEndian.PutUint32(out[:FrameHeaderSize], uint32(len(body)))
-	copy(out[FrameHeaderSize:], body)
-	return out, nil
-}
-
-// Decoder reassembles frames from a byte stream (handles sticky packets).
-type Decoder struct {
-	buf []byte
-}
-
-// NewDecoder creates a frame decoder.
-func NewDecoder() *Decoder { return &Decoder{} }
-
-// Feed appends data and returns complete frames.
-func (d *Decoder) Feed(data []byte) ([]Frame, error) {
-	d.buf = append(d.buf, data...)
-	var frames []Frame
-	for {
-		if len(d.buf) < FrameHeaderSize {
-			break
-		}
-		n := int(binary.BigEndian.Uint32(d.buf[:FrameHeaderSize]))
-		if n <= 0 || n > MaxFrameSize {
-			return nil, fmt.Errorf("invalid frame length: %d", n)
-		}
-		total := FrameHeaderSize + n
-		if len(d.buf) < total {
-			break
-		}
-		body := d.buf[FrameHeaderSize:total]
-		d.buf = d.buf[total:]
-		f := Frame{Type: body[0], Payload: nil}
-		if len(body) > 1 {
-			f.Payload = append([]byte(nil), body[1:]...)
-		}
-		frames = append(frames, f)
-	}
-	return frames, nil
-}
-
-// Conn wraps a TLS connection with framing, heartbeat, and queue.
+// Conn 封装 TLS 连接上的分帧、心跳、发送队列与状态机。
+//
+// 字段：
+//   cfg — 心跳/超时/队列/MTU 配置副本。
+//   raw — 底层 net.Conn（Dial 或 Accept 所得）。
+//   tls — TLS 会话；读写均经此层。
+//   decoder — 粘包拆帧解码器。
+//   state — 连接生命周期（State，atomic）。
+//   mu — 保护 onData/onClose 回调指针。
+//   sendQ — 待发编码帧队列；满则 SendRaw 失败。
+//   onData — 收到 Data/Handshake 帧时的回调。
+//   onClose — Close 或读写出错时的回调。
+//   lastHB — 最近一次收到对端活跃帧的时间戳（纳秒，atomic）。
+//   closed — Close 时关闭，通知 read/write/heartbeat 协程退出。
+//   closeOnce — 保证 Close 只执行一次。
+//
+// 并发：内部启动 readLoop、writeLoop、heartbeatLoop；须通过 Close 停止。
 type Conn struct {
 	cfg       Config
 	raw       net.Conn
@@ -185,7 +114,11 @@ type Conn struct {
 	closeOnce sync.Once
 }
 
-// Dial connects to addr with TLS and starts reader/writer loops.
+// Dial 以 TLS 连接 addr 并启动读/写/心跳协程（客户端出站）。
+//
+// 参数：addr — host:port；tlsCfg 非 nil；onData/onClose 可为 nil。
+// 返回：*Conn 已 StateConnected；err 为 TCP 或 TLS 握手失败。
+// 副作用：启动 3 个 goroutine；失败时不留泄漏连接。
 func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onClose func(error)) (*Conn, error) {
 	if cfg.MaxQueueSize <= 0 {
 		cfg.MaxQueueSize = 256
@@ -220,7 +153,10 @@ func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onCl
 	return c, nil
 }
 
-// AcceptConn wraps an accepted TLS connection.
+// AcceptConn 包装已 Accept 的 TLS 连接并启动读写循环（服务端入站）。
+//
+// 参数：tlsConn — 已完成 TLS 握手的连接；回调同 Dial。
+// 返回：*Conn 已 StateConnected；不负责关闭底层 net.Conn（Close 时关）。
 func AcceptConn(tlsConn *tls.Conn, cfg Config, onData func([]byte), onClose func(error)) *Conn {
 	if cfg.MaxQueueSize <= 0 {
 		cfg.MaxQueueSize = 256
@@ -244,7 +180,7 @@ func AcceptConn(tlsConn *tls.Conn, cfg Config, onData func([]byte), onClose func
 
 func (c *Conn) setState(s State) { c.state.Store(int32(s)) }
 
-// State returns current connection state.
+// State 返回当前连接生命周期状态（atomic 读取）。
 func (c *Conn) State() State { return State(c.state.Load()) }
 
 func (c *Conn) touchHB() { c.lastHB.Store(time.Now().UnixNano()) }
@@ -293,7 +229,10 @@ func (c *Conn) Send(payload []byte) error {
 	return c.SendRaw(FrameTypeData, payload)
 }
 
-// Close initiates graceful close.
+// Close 发起优雅关闭：置 Disconnecting、关闭 closed channel、关 TLS、触发 onClose。
+//
+// 返回：TLS Close 的错误（仅首次调用有效）；重复调用安全。
+// 副作用：read/write/heartbeat 协程退出；State 变为 Closed。
 func (c *Conn) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
@@ -320,6 +259,7 @@ func (c *Conn) readLoop() {
 			return
 		default:
 		}
+		// --- 阶段 1：带读超时的 TLS Read ---
 		_ = c.tls.SetReadDeadline(time.Now().Add(c.cfg.HeartbeatTimeout))
 		n, err := c.tls.Read(buf)
 		if err != nil {
@@ -328,11 +268,13 @@ func (c *Conn) readLoop() {
 			}
 			return
 		}
+		// --- 阶段 2：粘包拆帧 ---
 		frames, err := c.decoder.Feed(buf[:n])
 		if err != nil {
 			logger.Error("frame decode error: %v", err)
 			return
 		}
+		// --- 阶段 3：按帧类型分发（心跳刷新 / 回调 onData） ---
 		for _, f := range frames {
 			switch f.Type {
 			case FrameTypeHeartbeat, FrameTypeMTUProbe:
@@ -364,6 +306,7 @@ func (c *Conn) writeLoop() {
 		case <-c.closed:
 			return
 		case frame := <-c.sendQ:
+			// --- 阶段 1：带写超时的 TLS Write ---
 			_ = c.tls.SetWriteDeadline(time.Now().Add(c.cfg.WriteTimeout))
 			if _, err := c.tls.Write(frame); err != nil {
 				logger.Warn("transport write error: %v", err)
@@ -382,11 +325,13 @@ func (c *Conn) heartbeatLoop() {
 		case <-c.closed:
 			return
 		case <-ticker.C:
+			// --- 阶段 1：入队心跳帧 ---
 			frame, _ := EncodeFrame(FrameTypeHeartbeat, nil)
 			select {
 			case c.sendQ <- frame:
 			default:
 			}
+			// --- 阶段 2：检查对端静默超时 ---
 			last := time.Unix(0, c.lastHB.Load())
 			if time.Since(last) > c.cfg.HeartbeatTimeout {
 				logger.Warn("heartbeat timeout, closing connection")
@@ -397,108 +342,24 @@ func (c *Conn) heartbeatLoop() {
 	}
 }
 
-// ReconnectClient manages automatic reconnection with exponential backoff.
-type ReconnectClient struct {
-	cfg       Config
-	addr      string
-	tlsCfg    *tls.Config
-	onData    func([]byte)
-	onConnect func(*Conn)
-	mu        sync.Mutex
-	conn      *Conn
-	stop      chan struct{}
-	once      sync.Once
-}
-
-// NewReconnectClient creates a client that auto-reconnects.
-func NewReconnectClient(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onConnect func(*Conn)) *ReconnectClient {
-	return &ReconnectClient{
-		cfg:       cfg,
-		addr:      addr,
-		tlsCfg:    tlsCfg,
-		onData:    onData,
-		onConnect: onConnect,
-		stop:      make(chan struct{}),
-	}
-}
-
-// Start begins the reconnect loop.
-func (r *ReconnectClient) Start() {
-	go r.loop()
-}
-
-func (r *ReconnectClient) loop() {
-	backoff := r.cfg.EffectiveReconnectInitial()
-	maxBackoff := r.cfg.EffectiveReconnectMax()
-	dialTO := r.cfg.EffectiveDialTimeout()
-	for {
-		select {
-		case <-r.stop:
-			return
-		default:
-		}
-		conn, err := Dial(r.addr, r.tlsCfg, r.cfg, r.onData, func(err error) {
-			logger.Info("transport disconnected from %s", r.addr)
-		})
-		if err != nil {
-			logger.Warn("reconnect failed: %v, retry in %s dial_timeout=%s backoff=%s", err, backoff, dialTO, backoff)
-			time.Sleep(backoff)
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-			continue
-		}
-		backoff = r.cfg.EffectiveReconnectInitial()
-		r.mu.Lock()
-		r.conn = conn
-		r.mu.Unlock()
-		if r.onConnect != nil {
-			r.onConnect(conn)
-		}
-		// Wait until connection closes
-		for conn.State() != StateClosed && conn.State() != StateDisconnected {
-			time.Sleep(100 * time.Millisecond)
-			select {
-			case <-r.stop:
-				conn.Close()
-				return
-			default:
-			}
-		}
-		// 曾 Connected 后断开：立即重拨（短暂停顿），避免再等一整轮退避。
-		pause := AfterDisconnectPause()
-		logger.Info("will reconnect to %s in %s (after disconnect) dial_timeout=%s", r.addr, pause, dialTO)
-		time.Sleep(pause)
-		backoff = r.cfg.EffectiveReconnectInitial()
-	}
-}
-
-// Stop stops reconnection.
-func (r *ReconnectClient) Stop() {
-	r.once.Do(func() { close(r.stop) })
-	r.mu.Lock()
-	if r.conn != nil {
-		r.conn.Close()
-	}
-	r.mu.Unlock()
-}
-
-// Conn returns the active connection (may be nil).
-func (r *ReconnectClient) Conn() *Conn {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.conn
-}
-
-// Server listens for TLS connections.
+// Server TLS 入站监听器：acceptLoop 接受连接并交给 onConn。
+//
+// 字段：
+//   cfg — 传给 AcceptConn 的心跳/队列配置。
+//   listener — tls.Listen 所得。
+//   onConn — 每建立一条 TLS 连接时的回调（tunnel 握手入口）。
 type Server struct {
 	cfg      Config
 	listener net.Listener
 	onConn   func(*Conn)
 }
 
-// ListenTLS starts a TLS listener.
+// ListenTLS 在 addr 上启动 TLS 监听并接受客户端连接。
+//
+// 参数：addr — host:port；tlsCfg — 服务端证书；cfg — 心跳/队列参数；onConn — 每接受一条 TLS 连接后回调（通常进入握手）。
+// 返回：*Server 已在后台 acceptLoop；err 常见为地址占用或证书无效。
+// 副作用：启动 goroutine 接受连接；日志记录 listening 地址。
+// 并发：acceptLoop 与调用方并行；Stop 时须 Server.Close。
 func ListenTLS(addr string, tlsCfg *tls.Config, cfg Config, onConn func(*Conn)) (*Server, error) {
 	ln, err := tls.Listen("tcp", addr, tlsCfg)
 	if err != nil {
@@ -531,7 +392,7 @@ func (s *Server) acceptLoop() {
 	}
 }
 
-// Close stops the server listener.
+// Close 关闭 TLS 监听器；acceptLoop 将因 Accept 错误退出。
 func (s *Server) Close() error {
 	return s.listener.Close()
 }
@@ -541,7 +402,9 @@ func (s *Server) Addr() net.Addr {
 	return s.listener.Addr()
 }
 
-// ProbeMTU sends an MTU probe frame.
+// ProbeMTU 发送 MTU 探测帧（FrameTypeMTUProbe），用于路径 MTU 发现。
+//
+// 参数：size — 探测载荷字节数；队列满时返回 error 并打 Warn 日志。
 func (c *Conn) ProbeMTU(size int) error {
 	payload := make([]byte, size)
 	frame, err := EncodeFrame(FrameTypeMTUProbe, payload)

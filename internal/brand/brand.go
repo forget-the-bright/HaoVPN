@@ -1,4 +1,3 @@
-// Package brand 集中 HaoVPN 产品名与默认路径常量，避免散落硬编码。
 package brand
 
 const (

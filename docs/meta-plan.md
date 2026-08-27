@@ -632,3 +632,24 @@ listen_hosts 含 0.0.0.0 → 按配置监听；风险由配置者承担，启动
 对外演示主线（一句话）：
 **安全** — 默认非公网管理，误配 0.0.0.0 须显式勾选并自担风险 → **简单** — 一个文件拷过去就能跑 → **快** — 5 分钟部署，10 秒连上，8 秒重连
 ```
+
+---
+
+## 目录变更（2026-08 架构重构）
+
+v1.0 规划正文中的目录树为历史快照。重构后新增/调整的模块见 **[architecture.md](architecture.md)**（CODEMAP），主要包括：
+
+| 新增/调整 | 说明 |
+|-----------|------|
+| `cmd/client-gui` | Fyne 桌面客户端 |
+| `internal/clientapp` | CLI/GUI 共用拨号引擎 |
+| `internal/serverapp` | 服务端启动编排（原 cmd/server 主体逻辑） |
+| `internal/netutil` | CIDR/监听/MTU/IP 匹配等纯函数 |
+| `internal/winnet` | Windows 网卡 LUID/netsh 公共层 |
+| `internal/vpnaccount` | Web 开户与 IP 模式（从 api 抽出） |
+| `internal/singleinstance` | 客户端单实例锁 |
+| `internal/credentials` | Windows DPAPI 凭据 |
+| `internal/logstore` | WebUI 结构化历史日志库 |
+| `internal/brand` | 产品名与路径常量 |
+
+各 `internal/*` 包均有中文 `doc.go`；默认值与 transport 映射已收敛到 `config.ApplyDefaults` 与 `transport.FromClientConfig`。

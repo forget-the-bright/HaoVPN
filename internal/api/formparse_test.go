@@ -41,7 +41,7 @@ func TestLoginMultipartForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), pool, nil, time.Now(), "pk-test")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "pk-test")
 
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)

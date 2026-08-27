@@ -24,7 +24,7 @@ func TestCSRFBlocksPOST(t *testing.T) {
 	_ = ensureTestAdmin(store, authSvc, "admin", "changeme123")
 	token, _, _ := authSvc.Login("admin", "changeme123", "127.0.0.1")
 	cfg := &config.ServerConfig{Server: config.ServerSection{Listen: "127.0.0.1:8443"}}
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), nil, nil, time.Now(), "pk")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "pk")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "session", Value: token})

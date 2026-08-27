@@ -36,7 +36,7 @@ func newTestAPI(t *testing.T) (*httptest.Server, *http.Client, []*http.Cookie, s
 	}
 	pool, _ := ippool.New(cfg.VPN.Subnet)
 	pool.Reserve(cfg.VPN.GatewayIP)
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), pool, nil, time.Now(), "pk")
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "pk")
 	ts := httptest.NewServer(srv.Handler())
 	client := &http.Client{}
 	login, err := client.Post(ts.URL+"/api/v1/login", "application/x-www-form-urlencoded",

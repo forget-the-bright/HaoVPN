@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"haovpn/internal/config"
+	"haovpn/internal/netutil"
 )
 
 // TestLoadServerGeneratesDefault 验证首次启动自动生成带注释的 server.yaml
@@ -84,4 +85,18 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestClientApplyDefaults(t *testing.T) {
+	cfg := &config.ClientConfig{}
+	cfg.ApplyDefaults()
+	if cfg.Tun.MTU != netutil.DefaultMTU {
+		t.Fatalf("mtu=%d", cfg.Tun.MTU)
+	}
+	if cfg.Server.HeartbeatIntervalSec != 15 {
+		t.Fatalf("heartbeat=%d", cfg.Server.HeartbeatIntervalSec)
+	}
+	if cfg.Log.File == "" {
+		t.Fatal("log file empty")
+	}
 }

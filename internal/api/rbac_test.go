@@ -40,7 +40,7 @@ func TestWebLoginNonAdminForbidden(t *testing.T) {
 
 	cfg := &config.ServerConfig{API: config.APISection{Port: 8080}}
 	srv := api.NewServer(cfg, store, auth.New(store, 5, 60, 3600), audit.New(store),
-		sessionmgr.New(store), nil, nil, time.Now(), "pk")
+		sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "pk")
 
 	body := "username=engineer&password=engpass123"
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", io.NopCloser(strings.NewReader(body)))
@@ -68,7 +68,7 @@ func TestWebLoginAdminOK(t *testing.T) {
 
 	cfg := &config.ServerConfig{API: config.APISection{Port: 8080, SessionTTLSec: 3600}}
 	srv := api.NewServer(cfg, store, authSvc, audit.New(store),
-		sessionmgr.New(store), nil, nil, time.Now(), "pk")
+		sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "pk")
 
 	body := "username=admin&password=adminpass12"
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", io.NopCloser(strings.NewReader(body)))
@@ -95,7 +95,7 @@ func TestMustChangePasswordBlocksAPI(t *testing.T) {
 
 	cfg := &config.ServerConfig{API: config.APISection{Port: 8080, SessionTTLSec: 3600}}
 	srv := api.NewServer(cfg, store, authSvc, audit.New(store),
-		sessionmgr.New(store), nil, nil, time.Now(), "pk")
+		sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "pk")
 
 	body := "username=admin&password=adminpass12"
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", io.NopCloser(strings.NewReader(body)))

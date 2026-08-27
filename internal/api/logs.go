@@ -3,17 +3,19 @@ package api
 import (
 	"fmt"
 	"os"
-	"strconv"
+
+	"haovpn/internal/paginate"
 )
 
 // readLogTail 从文件末尾读取最多 tail 行（大文件只读尾部块，避免全文扫描）。
+//
+// 参数：path — live.log 或滚动日志路径；tail — 最大行数（内部 clamp 2000）。
+// 返回：lines 按时间顺序；truncated 表示文件过大仅读了尾部；不存在时空切片。
 func readLogTail(path string, tail int) (lines []string, truncated bool, err error) {
 	if tail <= 0 {
 		tail = 200
 	}
-	if tail > 2000 {
-		tail = 2000
-	}
+	tail = paginate.ClampLimit(tail, 200, 2000)
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -64,17 +66,14 @@ func readLogTail(path string, tail int) (lines []string, truncated bool, err err
 	return parts, truncated, nil
 }
 
+// parseLogTailQuery 解析 ?tail= 查询参数并限制在 [200, 2000]。
 func parseLogTailQuery(q string) int {
-	if q == "" {
-		return 200
-	}
-	n, err := strconv.Atoi(q)
-	if err != nil || n <= 0 {
-		return 200
-	}
-	return n
+	return paginate.ClampLimit(parseIntDefault(q, 200), 200, 2000)
 }
 
+// findFirstNewline 返回字符串中首个 \n 的下标；无换行时返回 -1。
+//
+// 用于从大文件尾部块截断不完整的首行。
 func findFirstNewline(s string) int {
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\n' {
@@ -84,6 +83,7 @@ func findFirstNewline(s string) int {
 	return -1
 }
 
+// splitKeepEmpty 按 \n 分割字符串并保留空行（日志尾块解析用）。
 func splitKeepEmpty(s string) []string {
 	var out []string
 	start := 0
