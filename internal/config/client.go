@@ -14,18 +14,17 @@ import (
 // 各 YAML 段职责：
 //   Server — 隧道 TLS 连接目标与传输计时；
 //   Tun — 本地 Wintun/TUN 接口参数；
-//   Auth — Web/隧道账号密码（优先于纯私钥模式）；
-//   Peer — 密钥与 yaml 兼容分流项（运行时以握手推送为准）；
+//   Auth — 隧道账号密码（remember_password 可选明文写回）；
 //   Security — Kill-switch 等客户端安全选项；
 //   Reconnect — 断线指数退避；
 //   Log — 日志级别与滚动文件路径。
 //
-// ApplyDefaults 填充缺省；Validate 在连接前校验；握手可覆盖 Peer 段 vpn_ip、gateway、allowed_ips 等。
+// vpn_ip / allowed_ips / gateway / 私钥均由握手下发，client.yaml 不含 peer 段。
+// ApplyDefaults 填充缺省；Validate 在连接前校验。
 type ClientConfig struct {
 	Server    ClientServerSection    `yaml:"server"`    // 服务端地址、TLS、传输心跳/拨号超时
 	Tun       ClientTunSection       `yaml:"tun"`       // 本地 TUN 网卡名、MTU、DNS 策略
-	Auth      ClientAuthSection      `yaml:"auth"`      // Web/隧道账号密码（优先于纯私钥）
-	Peer      ClientPeerSection      `yaml:"peer"`      // 密钥与 yaml 兼容分流（握手优先）
+	Auth      ClientAuthSection      `yaml:"auth"`      // 隧道账号密码
 	Security  ClientSecuritySection  `yaml:"security"`  // Kill-switch 等客户端安全选项
 	Reconnect ReconnectSection       `yaml:"reconnect"` // 断线指数退避重连
 	Log       LogSection             `yaml:"log"`       // 日志级别与文件路径
@@ -72,29 +71,19 @@ func (t ClientTunSection) DNSFromPolicyEnabled() bool {
 
 // ClientSecuritySection 客户端安全选项（Windows WFP 杀开关等）。
 //
-// kill_switch 默认 false；true 时断线阻断 AllowedIPs 出站（须 Windows）。
+// kill_switch 仅由 client.yaml 配置，GUI 登录窗不提供开关；true 时断线阻断 AllowedIPs 出站（须 Windows 管理员）。
 type ClientSecuritySection struct {
 	KillSwitch bool `yaml:"kill_switch"` // 断线时阻断 AllowedIPs 外出站；默认 false
 }
 
 // ClientAuthSection 隧道/Web 登录凭据。
 //
-// Validate 要求 username 非空（或环境变量 HAOVPN_USER）；密码推荐 HAOVPN_PASSWORD 而非写进 yaml。
+// remember_password 为 true 时 GUI 会将 password 明文写回 client.yaml；CLI 也可直接填写 password 免交互。
+// ResolveAuth 优先级：yaml auth > 环境变量 HAOVPN_USER / HAOVPN_PASSWORD。
 type ClientAuthSection struct {
-	Username string `yaml:"username"` // 登录名；Validate 要求非空（或 HAOVPN_USER）
-	Password string `yaml:"password"` // 可选；更推荐环境变量 HAOVPN_PASSWORD
-}
-
-// ClientPeerSection VPN 身份与 yaml 兼容分流项。
-//
-// 账号密码模式下 private_key 由服务端下发；运行时 allowed_ips、vpn_ip、gateway 以握手为准。
-type ClientPeerSection struct {
-	PrivateKey      string   `yaml:"private_key"`       // 客户端私钥；账号密码模式下由服务端下发
-	PublicKey       string   `yaml:"public_key"`        // 客户端公钥；可选，通常由私钥推导
-	ServerPublicKey string   `yaml:"server_public_key"` // 服务端公钥；握手可覆盖
-	VPNIP           string   `yaml:"vpn_ip"`            // yaml 静态 IP；动态账号由握手分配
-	GatewayIP       string   `yaml:"gateway_ip"`        // 路由下一跳；优先握手 gateway_ip
-	AllowedIPs      []string `yaml:"allowed_ips"`       // yaml 分流；握手 allowed_ips 覆盖
+	Username         string `yaml:"username"`          // 登录名；Validate 要求非空（或 HAOVPN_USER）
+	RememberPassword bool   `yaml:"remember_password"` // GUI「记住密码」；true 时 SaveClient 写入 password
+	Password         string `yaml:"password,omitempty"` // remember_password=true 时可存明文；false 时 SaveClient 清空
 }
 
 // ReconnectSection 断线后指数退避重连参数（映射 transport.Config）。
@@ -140,7 +129,7 @@ func (c *ClientConfig) ApplyDefaults() {
 
 // Validate 校验客户端配置必填项与安全策略。
 //
-// 要求 server.address、auth.username、TLS CA（或非 insecure）；校验 peer.allowed_ips 非全隧道。
+// 要求 server.address、auth.username、TLS CA（或非 insecure）。
 // 返回：字段名含中文说明的 error。
 func (c *ClientConfig) Validate() error {
 	c.ApplyDefaults()
@@ -153,9 +142,6 @@ func (c *ClientConfig) Validate() error {
 	hasAuthUser := strings.TrimSpace(c.Auth.Username) != ""
 	if !hasAuthUser {
 		return fmt.Errorf("配置错误: 须配置 auth.username（账号密码登录）")
-	}
-	if err := netutil.ValidateNoFullTunnel(c.Peer.AllowedIPs); err != nil {
-		return fmt.Errorf("配置错误: peer.allowed_ips %w", err)
 	}
 	if !c.Server.TLS.InsecureSkipVerify && strings.TrimSpace(c.Server.TLS.CAFile) == "" {
 		return fmt.Errorf("配置错误: 须配置 server.tls.ca_file，或显式 insecure_skip_verify: true")
@@ -176,24 +162,4 @@ func (c *ClientConfig) ResolveAuth() (username, password string) {
 		password = os.Getenv(brand.EnvPassword)
 	}
 	return username, password
-}
-
-// ResolveGatewayFor 解析路由下一跳：yaml gateway_ip 优先，否则按 vpnIP 推断 .1。
-//
-// 参数：vpnIP 为空时使用本段 VPNIP 字段。
-func (p *ClientPeerSection) ResolveGatewayFor(vpnIP string) string {
-	ip := vpnIP
-	if strings.TrimSpace(ip) == "" {
-		ip = p.VPNIP
-	}
-	return netutil.ResolveGateway("", p.GatewayIP, ip)
-}
-
-// PreferGateway 合并握手与 yaml 网关：握手 gateway_ip > yaml > InferGatewayFromVPNIP。
-func PreferGateway(handshakeGW, vpnIP string, peer *ClientPeerSection) string {
-	yamlGW := ""
-	if peer != nil {
-		yamlGW = peer.GatewayIP
-	}
-	return netutil.ResolveGateway(handshakeGW, yamlGW, vpnIP)
 }

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"haovpn/internal/timeutil"
 )
 
 // TestQueryAndPrune 验证写入、分页查询与保留清理。
@@ -29,7 +31,7 @@ func TestQueryAndPrune(t *testing.T) {
 	}
 
 	old := time.Now().Add(-48 * time.Hour)
-	_, _ = s.db.Exec(`UPDATE log_entries SET ts=? WHERE id=1`, old.Format("2006-01-02 15:04:05"))
+	_, _ = s.db.Exec(`UPDATE log_entries SET ts=? WHERE id=1`, timeutil.FormatUTC(old))
 	n, err := s.Prune(time.Now().Add(-24 * time.Hour))
 	if err != nil {
 		t.Fatal(err)

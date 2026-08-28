@@ -27,8 +27,7 @@ func InferGatewayFromVPNIP(vpnIP string) string {
 
 // ResolveGateway 解析客户端路由下一跳网关地址。
 //
-// 优先级：握手 gateway_ip > yaml gateway_ip > InferGatewayFromVPNIP(vpnIP)。
-// 参数：任一段为空则尝试下一段。
+// 优先级：握手 gateway_ip > InferGatewayFromVPNIP(vpnIP)。yamlGW 参数保留供兼容调用，客户端 yaml 不再使用。
 func ResolveGateway(handshakeGW, yamlGW, vpnIP string) string {
 	if g := strings.TrimSpace(handshakeGW); g != "" {
 		return g

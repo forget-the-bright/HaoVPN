@@ -148,6 +148,7 @@ dist/
 | [dev-acceptance.ps1](dev-acceptance.ps1) | **smoke**（无管理员，`require_tun=false`）— 通过 ≠ 可交付 |
 | [dev-field-gate.ps1](dev-field-gate.ps1) | **field 硬门禁**（TUN+NAT+PLC+服务，须 `-PlcHost`） |
 | [test-wintun-restart.ps1](test-wintun-restart.ps1) | Wintun 连续启停 3 轮，检查 live.log 与孤儿网卡（须管理员） |
+| [test-client-single-instance.ps1](test-client-single-instance.ps1) | CLI 重复启动自动化测试（GUI 双开须手工确认无空白窗） |
 
 ```powershell
 # smoke（开发日常）

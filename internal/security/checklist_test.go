@@ -30,12 +30,12 @@ func TestSecurityChecklist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 8. 默认分流禁止 0.0.0.0/0
+	// 8. 客户端 yaml 含 legacy peer 段仍可加载（策略由握手下发，peer 已废弃）
 	clientPath := filepath.Join(dir, "client.yaml")
-	writeYAML(clientPath, clientBadTunnelYAML())
+	writeYAML(clientPath, clientLegacyPeerYAML())
 	_, _, err = config.LoadClient(clientPath)
-	if err == nil || !strings.Contains(err.Error(), "0.0.0.0/0") {
-		t.Fatalf("应拒绝全隧道: %v", err)
+	if err != nil {
+		t.Fatalf("legacy peer 应被忽略: %v", err)
 	}
 
 	// 7. 日志脱敏
@@ -68,7 +68,7 @@ log: { level: "info", file: "./s.log" }
 `
 }
 
-func clientBadTunnelYAML() string {
+func clientLegacyPeerYAML() string {
 	return `
 server: { address: "127.0.0.1:8443", tls: { ca_file: "./certs/server.crt", insecure_skip_verify: false } }
 auth: { username: "eng" }

@@ -53,15 +53,9 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	// --- 阶段 1：校验 vpn_ip 并记录配置覆盖警告 ---
+	// --- 阶段 1：校验 vpn_ip ---
 	if policy.VPNIP == "" {
 		return fmt.Errorf("握手未下发 vpn_ip")
-	}
-	if rt.cfg.Peer.VPNIP != "" && rt.cfg.Peer.VPNIP != policy.VPNIP {
-		logger.Warn("配置 vpn_ip=%s 与握手应答 %s 不一致，以服务端为准", rt.cfg.Peer.VPNIP, policy.VPNIP)
-	}
-	if len(rt.cfg.Peer.AllowedIPs) > 0 {
-		logger.Warn("配置 allowed_ips 将被握手应答覆盖（服务端权威）")
 	}
 
 	mtu := netutil.ResolveMTU(policy.MTU, rt.cfg.Tun.MTU)
@@ -90,7 +84,7 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 	}
 
 	// --- 阶段 3：添加网关路由与 AllowedIPs 分流路由 ---
-	gw := config.PreferGateway(policy.GatewayIP, policy.VPNIP, &rt.cfg.Peer)
+	gw := netutil.ResolveGateway(policy.GatewayIP, "", policy.VPNIP)
 	rt.gateway = gw
 	tunName := rt.tunDev.Name()
 	if gw != "" {
@@ -153,7 +147,7 @@ func (rt *runtime) clearRoutesOnlyLocked() {
 	tunName := rt.tunDev.Name()
 	gw := rt.gateway
 	if gw == "" {
-		gw = config.PreferGateway("", rt.vpnIP, &rt.cfg.Peer)
+		gw = netutil.ResolveGateway("", "", rt.vpnIP)
 	}
 	for _, cidr := range rt.routes {
 		_ = netstack.DelClientRoute(cidr, tunName, gw)

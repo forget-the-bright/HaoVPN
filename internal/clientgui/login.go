@@ -6,12 +6,11 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
-	"haovpn/internal/brand"
 	"haovpn/internal/clientapp"
+	"haovpn/internal/config"
 	"haovpn/internal/platform"
 	"haovpn/internal/version"
 )
@@ -20,11 +19,7 @@ import (
 func (u *uiApp) showLogin(elevHint string) {
 	u.cfg = u.loadOrCreateConfig()
 	if err := u.cfg.Log.InitGlobal(); err != nil {
-		a := u.app
-		w := a.NewWindow(brand.Name)
-		dialog.ShowError(err, w)
-		w.Show()
-		a.Run()
+		showFatalErrorOnApp(u.app, err)
 		return
 	}
 
@@ -41,8 +36,11 @@ func (u *uiApp) showLogin(elevHint string) {
 	u.userEntry.SetPlaceHolder("账号")
 	u.passEntry = widget.NewPasswordEntry()
 	u.passEntry.SetPlaceHolder("密码")
-	u.killSwitch = widget.NewCheck("断线阻断工控网段（杀开关）", nil)
-	u.killSwitch.SetChecked(u.cfg.Security.KillSwitch)
+	if u.cfg.Auth.RememberPassword && u.cfg.Auth.Password != "" {
+		u.passEntry.SetText(u.cfg.Auth.Password)
+	}
+	u.rememberPass = widget.NewCheck("记住密码", nil)
+	u.rememberPass.SetChecked(u.cfg.Auth.RememberPassword)
 	u.errLbl = widget.NewLabel("")
 	u.errLbl.Wrapping = fyne.TextWrapWord
 	if elevHint != "" {
@@ -61,7 +59,7 @@ func (u *uiApp) showLogin(elevHint string) {
 		widget.NewLabel("服务器"), u.serverEntry,
 		widget.NewLabel("账号"), u.userEntry,
 		widget.NewLabel("密码"), u.passEntry,
-		widget.NewLabel(""), u.killSwitch,
+		widget.NewLabel(""), u.rememberPass,
 	)
 	content := container.NewVBox(
 		layout.NewSpacer(),
@@ -74,6 +72,8 @@ func (u *uiApp) showLogin(elevHint string) {
 		layout.NewSpacer(),
 	)
 	w.SetContent(container.NewPadded(content))
+	w.CenterOnScreen()
+	w.SetCloseIntercept(func() { w.Hide() })
 	w.Show()
 }
 
@@ -96,7 +96,12 @@ func (u *uiApp) tryConnect() {
 	}
 	u.cfg.Server.Address = addr
 	u.cfg.Auth.Username = user
-	u.cfg.Security.KillSwitch = u.killSwitch.Checked
+	u.cfg.Auth.RememberPassword = u.rememberPass.Checked
+	if u.rememberPass.Checked {
+		u.cfg.Auth.Password = pass
+	} else {
+		u.cfg.Auth.Password = ""
+	}
 	u.cfg.ApplyDefaults()
 	if err := u.cfg.Validate(); err != nil {
 		u.errLbl.SetText(err.Error())
@@ -112,7 +117,12 @@ func (u *uiApp) tryConnect() {
 		u.errLbl.SetText(err.Error())
 		return
 	}
+	if err := config.SaveClient(u.configPath, u.cfg); err != nil {
+		u.errLbl.SetText("连接成功但保存配置失败: " + err.Error())
+		return
+	}
 	u.errLbl.SetText("")
 	u.loginWin.Hide()
+	u.refreshTrayMenu()
 	u.showMain()
 }

@@ -7,12 +7,12 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"unsafe"
 
 	"haovpn/internal/brand"
 	"haovpn/internal/logger"
+	"haovpn/internal/platform"
 )
 
 type linuxDevice struct {
@@ -59,11 +59,11 @@ func openPlatform(cfg Config) (Device, error) {
 	// 必须真正配 IP 并 UP，否则路由/转发无效
 	if out, err := exec.Command("ip", "addr", "replace", fmt.Sprintf("%s/%d", ip, ones), "dev", actualName).CombinedOutput(); err != nil {
 		syscall.Close(fd)
-		return nil, fmt.Errorf("ip addr: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, platform.CommandOutputError("ip addr", out, err)
 	}
 	if out, err := exec.Command("ip", "link", "set", "dev", actualName, "up", "mtu", fmt.Sprintf("%d", cfg.MTU)).CombinedOutput(); err != nil {
 		syscall.Close(fd)
-		return nil, fmt.Errorf("ip link up: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, platform.CommandOutputError("ip link up", out, err)
 	}
 	file := os.NewFile(uintptr(fd), "/dev/net/tun")
 	dev := &linuxDevice{name: actualName, mtu: cfg.MTU, fd: file, ip: ip}

@@ -38,7 +38,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			Q: q.Get("q"), Enabled: enabled, UseEnabled: useEnabled, Limit: limit, Offset: offset,
 		})
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		onlineOnly := q.Get("online") == "1" || q.Get("online") == "true"
@@ -66,7 +66,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		requestedIP := strings.TrimSpace(r.FormValue("vpn_ip"))
 		hash, err := auth.HashPassword(password)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		res, err := s.vpnSvc.ProvisionWebAccount(vpnaccount.ProvisionInput{
@@ -79,7 +79,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			KeyEnc:       s.keyEnc,
 		})
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		id, vpnIP := res.UserID, res.VPNIP
@@ -103,7 +103,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(path, "/")
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效 ID"})
+		writeAPIError(w, http.StatusBadRequest, "无效 ID")
 		return
 	}
 	se, _ := s.sessionFromRequest(r)
@@ -134,7 +134,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodDelete:
 		if err := s.vpnSvc.DeleteAccount(id); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		s.audit.Log(&se.UserID, "account_delete", "user", &id, clientIP(r), nil)
@@ -144,7 +144,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		action := r.FormValue("action")
 		if action == "disable" {
 			if err := s.store.SetUserEnabled(id, false); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeAPIError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 			s.sessions.KickUser(id)
@@ -152,7 +152,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			s.audit.Log(&se.UserID, "user_disable", "user", &id, clientIP(r), nil)
 		} else if action == "enable" {
 			if err := s.store.SetUserEnabled(id, true); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				writeAPIError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 			s.audit.Log(&se.UserID, "user_enable", "user", &id, clientIP(r), nil)
@@ -175,12 +175,12 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 		VPNIP      *string   `json:"vpn_ip"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效 JSON"})
+		writeAPIError(w, http.StatusBadRequest, "无效 JSON")
 		return
 	}
 	u, err := s.store.GetUserByID(id)
 	if err != nil || !u.HasVPN() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "账号不存在或无 VPN 身份"})
+		writeAPIError(w, http.StatusNotFound, "账号不存在或无 VPN 身份")
 		return
 	}
 	plan, err := s.vpnSvc.PlanVPNPatch(u, vpnaccount.VPNPatchInput{
@@ -190,7 +190,7 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 		VPNIP:      body.VPNIP,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	newIP, newMode, allowed, leaseSec := plan.NewIP, plan.NewMode, plan.AllowedIPs, plan.IPLeaseSec
@@ -200,11 +200,11 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 
 	pv, err := s.store.IncrementPolicyVer(id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := s.store.UpdateVPNFields(id, newIP, allowed, newMode, leaseSec, pv); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.sessions.KickUser(id)
@@ -223,16 +223,16 @@ func (s *Server) handleUserPasswordReset(w http.ResponseWriter, r *http.Request,
 	newPass := r.FormValue("new_password")
 	hash, err := auth.HashPassword(newPass)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	u, err := s.store.GetUserByID(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "账号不存在"})
+		writeAPIError(w, http.StatusNotFound, "账号不存在")
 		return
 	}
 	if err := s.store.UpdateUserPassword(id, hash, true); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "更新失败"})
+		writeAPIError(w, http.StatusInternalServerError, "更新失败")
 		return
 	}
 	s.sessions.KickUser(id)
@@ -266,7 +266,7 @@ func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id 
 	}
 	zipBytes, err := buildAccountExportZip(s.cfg, u, plainKey, s.serverPK)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.audit.Log(&se.UserID, "config_export", "user", &id, clientIP(r), map[string]string{"format": "zip"})

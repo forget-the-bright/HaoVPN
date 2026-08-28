@@ -309,6 +309,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	creds := e.creds
 	e.mu.Unlock()
 
+	// --- 阶段 1：隧道账号密码握手 ---
 	hs := tunnel.NewClientHandshake()
 	user := strings.TrimSpace(creds.Username)
 	pass := creds.Password
@@ -326,12 +327,13 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	}
 	logger.Info("隧道鉴权应答收到 elapsed=%s", time.Since(hsStart))
 
+	// --- 阶段 2：建立隧道加密会话（私钥优先用握手下发） ---
 	priv := strings.TrimSpace(hsRes.ClientPrivateKey)
 	if priv == "" {
 		priv = strings.TrimSpace(creds.PrivateKey)
 	}
 	if priv == "" {
-		logger.Warn("握手未下发私钥且配置无 private_key")
+		logger.Warn("握手未下发私钥且无内存回退私钥")
 		conn.Close()
 		return
 	}
@@ -369,6 +371,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	e.sessionPriv = priv
 	e.activeMu.Unlock()
 
+	// --- 阶段 3：按握手策略开 TUN/路由/DNS；成功后再拆杀开关 ---
 	policyStart := time.Now()
 	if err := e.rt.applyPolicy(hsRes.Policy); err != nil {
 		logger.Warn("应用服务端策略失败: %v elapsed=%s", err, time.Since(policyStart))

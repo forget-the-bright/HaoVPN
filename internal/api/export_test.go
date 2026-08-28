@@ -30,7 +30,7 @@ func TestBuildClientExportYAML(t *testing.T) {
 		name string
 		ok   bool
 	}{
-		{"含 auth.username", strings.Contains(out, `username: "engineer1"`)},
+		{"不含 peer 段", !strings.Contains(out, "\npeer:") && !strings.HasPrefix(strings.TrimSpace(out), "peer:")},
 		{"不含 private_key", !strings.Contains(out, `private_key:`)},
 		{"不含 vpn_ip（握手下发）", !strings.Contains(out, `vpn_ip:`)},
 		{"不含 allowed_ips（握手下发）", !strings.Contains(out, `allowed_ips:`)},
@@ -41,6 +41,7 @@ func TestBuildClientExportYAML(t *testing.T) {
 		{"不含误导性 127.0.0.1 隧道地址", !strings.Contains(out, `address: "127.0.0.1:8443"`)},
 		{"不含 admin 密码", !strings.Contains(out, "changeme")},
 		{"含心跳超时", strings.Contains(out, `heartbeat_timeout_sec: 90`)},
+		{"含 auth.username", strings.Contains(out, `username: "engineer1"`)},
 	}
 	for _, c := range checks {
 		if !c.ok {

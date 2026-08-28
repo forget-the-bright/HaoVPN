@@ -7,9 +7,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
-	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"haovpn/internal/clientapp"
@@ -36,10 +34,10 @@ type uiApp struct {
 	logLines  []string
 	logSyncing bool // 程序 SetText 时忽略 OnChanged，防止用户编辑污染
 
-	serverEntry *widget.Entry
+	serverEntry  *widget.Entry
 	userEntry   *widget.Entry
 	passEntry   *widget.Entry
-	killSwitch  *widget.Check
+	rememberPass *widget.Check
 	errLbl      *widget.Label
 	cfgPathLbl  *widget.Label
 
@@ -84,20 +82,7 @@ func (u *uiApp) showMain() {
 		}
 	}
 
-	reconnectBtn := widget.NewButton("重新连接", func() {
-		if u.eng == nil {
-			return
-		}
-		creds := clientapp.Credentials{
-			Username: strings.TrimSpace(u.userEntry.Text),
-			Password: u.passEntry.Text,
-		}
-		u.eng.Stop()
-		u.eng = clientapp.NewEngine(u.cfg)
-		u.eng.SetCredentials(creds)
-		_ = u.eng.Start()
-		u.appendLog("手动重新连接…")
-	})
+	reconnectBtn := widget.NewButton("重新连接", func() { u.reconnectVPN() })
 	logoutBtn := widget.NewButton("退出登录", func() { u.doLogout() })
 	saveSvcBtn := widget.NewButton("保存供服务使用", func() {
 		user := strings.TrimSpace(u.userEntry.Text)
@@ -112,30 +97,15 @@ func (u *uiApp) showMain() {
 		}
 		u.appendLog("已保存 Windows 服务凭据")
 	})
-	quitBtn := widget.NewButton("退出程序", func() {
-		u.shutdown()
-		u.app.Quit()
-	})
+	quitBtn := widget.NewButton("退出程序", func() { u.quitApp() })
 
 	top := container.NewVBox(u.statusLbl, u.vpnIPLbl, widget.NewSeparator())
 	btns := container.NewHBox(reconnectBtn, logoutBtn, saveSvcBtn, layout.NewSpacer(), quitBtn)
 	w.SetContent(container.NewBorder(top, btns, nil, nil, container.NewPadded(u.logEntry)))
 	w.SetCloseIntercept(func() { w.Hide() })
+	w.CenterOnScreen()
 
-	if desk, ok := u.app.(desktop.App); ok {
-		desk.SetSystemTrayIcon(theme.ComputerIcon())
-		m := fyne.NewMenu("HaoVPN",
-			fyne.NewMenuItem("显示主窗口", func() { w.Show() }),
-			fyne.NewMenuItem("重新连接", func() { reconnectBtn.OnTapped() }),
-			fyne.NewMenuItemSeparator(),
-			fyne.NewMenuItem("退出登录", func() { u.doLogout() }),
-			fyne.NewMenuItem("退出", func() {
-				u.shutdown()
-				u.app.Quit()
-			}),
-		)
-		desk.SetSystemTrayMenu(m)
-	}
+	u.refreshTrayMenu()
 
 	w.Show()
 	u.startPoll()
@@ -153,52 +123,47 @@ func (u *uiApp) doLogout() {
 		u.mainWin.Close()
 		u.mainWin = nil
 	}
-	if u.passEntry != nil {
+	if u.passEntry != nil && !u.cfg.Auth.RememberPassword {
 		u.passEntry.SetText("")
 	}
 	if u.loginWin != nil {
 		u.loginWin.Show()
+		u.loginWin.CenterOnScreen()
 	} else {
 		u.showLogin("")
 	}
+	u.refreshTrayMenu()
 }
 
-// startPoll 后台定时刷新连接状态与 VPN IP（500ms）。
+// startPoll 后台定时刷新连接状态与 VPN IP（500ms）；停止信号走 safeutil.RunTickerStop。
 func (u *uiApp) startPoll() {
 	u.stopPoll()
 	u.pollStop = make(chan struct{})
 	stop := u.pollStop
 	safeutil.GoSafe("gui-status-poll", func() {
-		t := time.NewTicker(500 * time.Millisecond)
-		defer t.Stop()
-		for {
-			select {
-			case <-stop:
+		safeutil.RunTickerStop(stop, 500*time.Millisecond, func() {
+			if u.eng == nil || u.statusLbl == nil {
 				return
-			case <-t.C:
-				if u.eng == nil || u.statusLbl == nil {
-					continue
-				}
-				st := u.eng.State()
-				ip := u.eng.VPNIP()
-				errMsg := u.eng.LastError()
-				ksOK := u.eng.KillSwitchOK()
-				fyne.Do(func() {
-					txt := "状态: " + st.String()
-					if !ksOK && errMsg != "" {
-						txt += " | " + errMsg
-					} else if errMsg != "" && st != clientapp.StateConnected {
-						txt += " | " + errMsg
-					}
-					u.statusLbl.SetText(txt)
-					if ip != "" {
-						u.vpnIPLbl.SetText("VPN IP: " + ip)
-					} else {
-						u.vpnIPLbl.SetText("VPN IP: —")
-					}
-				})
 			}
-		}
+			st := u.eng.State()
+			ip := u.eng.VPNIP()
+			errMsg := u.eng.LastError()
+			ksOK := u.eng.KillSwitchOK()
+			fyne.Do(func() {
+				txt := "状态: " + st.String()
+				if !ksOK && errMsg != "" {
+					txt += " | " + errMsg
+				} else if errMsg != "" && st != clientapp.StateConnected {
+					txt += " | " + errMsg
+				}
+				u.statusLbl.SetText(txt)
+				if ip != "" {
+					u.vpnIPLbl.SetText("VPN IP: " + ip)
+				} else {
+					u.vpnIPLbl.SetText("VPN IP: —")
+				}
+			})
+		})
 	})
 }
 

@@ -54,18 +54,24 @@
 
 | 现象 | 处理 |
 |------|------|
-| 登录窗连不上 | 检查 address、账号密码；看主窗日志区；登录窗显示「配置: …」路径 |
+| 重复启动提示后留空白窗 | 旧版单实例失败未 Quit parent Window | 升级含 `clientgui.ShowFatalNotice` 的版本；点确定后应自动退出 |
+| 多个 gui.exe 僵尸进程 / 重复 UAC 后无窗 | 旧版文件锁 + UAC 隔离；或 Quit 未 Exit | 升级含 localhost TCP 单实例版本；临时 `Stop-Process -Name haovpn-client-gui -Force` |
+| 已在运行提示 | 单实例锁占用（CLI/GUI/服务共用） | 托盘「退出」或结束已有 `haovpn-client`/`haovpn-client-gui` 进程 |
 | 找不到配置 | 未传 `-c` 时按 **exe 同目录 `client.yaml`** → 当前目录；双击 exe 建议把 yaml 放在 `bin\` 旁 |
 | TUN 失败 / 提示须管理员 | 非管理员会弹 UAC；拒绝则登录窗中文提示；同意后以提权实例继续 |
 | 日志区字看不清 | 已用可读主题（深色字）；请用新版 GUI |
 | 启动多一个黑控制台 | 新版 GUI 以 `-H windowsgui` 构建，应无控制台；CLI `haovpn-client.exe` 仍有控制台属正常 |
-| 关窗后进程还在 | 正常：最小化到托盘；托盘选「退出」 |
+| 关窗后进程还在 | 正常：登录窗/主窗关窗仅 Hide，托盘仍在；须托盘「退出」或主窗「退出程序」 |
+| 未登录无托盘 | 旧版托盘仅登录后出现 | 升级本版：启动即托盘，「显示登录窗口」可恢复 |
 | 旧 TUN 网卡残留 | 网络连接中禁用旧 `myvpn0` 适配器 |
-| 需重新登录 | 托盘或主窗「退出登录」；密码不保存在 yaml |
+| 需重新登录 | 托盘或主窗「退出登录」；未勾选「记住密码」时密码框清空 |
+| 记住密码 | 登录窗勾选后 patch 写回 `client.yaml`（保留其它段注释）；`auth.remember_password` + `auth.password` |
+| client.yaml 注释消失 / 含 peer | 旧版全量 Marshal 覆盖 | 升级本版 SaveClient；legacy `peer:` 会在 GUI 写回时删除（策略由握手下发，勿手配） |
+| 杀开关 | 仅 `client.yaml` → `security.kill_switch`；GUI 登录窗无此项 |
 | TLS 证书 / SAN / CA | 见 [deploy.md § TLS 证书](deploy.md) |
-| DNS / 杀开关 / 服务凭据 | 见 [deploy.md](deploy.md) 对应章节 |
+| DNS / 服务凭据 | 见 [deploy.md](deploy.md) 对应章节 |
 
-CLI 等效：`auth.username` + `HAOVPN_PASSWORD` 或 GUI 输入密码。
+CLI 等效：`auth.username` + yaml 内 `auth.password` 或 `HAOVPN_PASSWORD` 或 GUI 输入密码。
 
 ---
 

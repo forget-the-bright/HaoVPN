@@ -291,6 +291,15 @@ cd C:\haovpn-client
 
 首次连接时会在 **exe 同目录** 生成 `wintun.dll`（内嵌释放）；请保证该目录可写。
 
+**GUI 登录窗**：填写服务器/账号/密码；可勾选「记住密码」（明文写入 `client.yaml` 的 `auth.password`，须限制文件权限勿提交 git）。**杀开关**不在登录窗配置，请在 yaml 设置：
+
+```yaml
+security:
+  kill_switch: true   # Windows 专用，须管理员；断线/重连期间 WFP 阻断 allowed_ips 出站
+```
+
+CLI 若 yaml 已含 `auth.password`，可无 `HAOVPN_PASSWORD` 直连。
+
 ### 5.3 Linux
 
 ```bash

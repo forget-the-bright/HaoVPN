@@ -81,7 +81,7 @@ type DatabaseSection struct {
 	Path                          string `yaml:"path"`                            // 数据库文件；Validate 必填
 	EncryptionKey                 string `yaml:"encryption_key"`                  // 64 字符 hex（32 字节 AES-256）；可选
 	EncryptionKeyFile             string `yaml:"encryption_key_file"`             // 密钥文件；默认 data/.haovpn-key
-	AuditRetentionDays            int    `yaml:"audit_retention_days"`            // 审计日志保留天；默认 netutil.DefaultRetentionDays
+	AuditRetentionDays            int    `yaml:"audit_retention_days"`            // 审计日志保留天；默认 DefaultRetentionDays
 	ConnectionEventsRetentionDays int    `yaml:"connection_events_retention_days"` // 连接事件保留天；默认同上
 }
 
@@ -143,14 +143,14 @@ func (c *ServerConfig) ApplyDefaults() {
 		c.API.ListenHosts = []string{"127.0.0.1"}
 	}
 	if c.Database.AuditRetentionDays <= 0 {
-		c.Database.AuditRetentionDays = netutil.DefaultRetentionDays
+		c.Database.AuditRetentionDays = DefaultRetentionDays
 	}
 	if c.Database.ConnectionEventsRetentionDays <= 0 {
-		c.Database.ConnectionEventsRetentionDays = netutil.DefaultRetentionDays
+		c.Database.ConnectionEventsRetentionDays = DefaultRetentionDays
 	}
 	// 旧 yaml 缺 history_retention_days 时为 0，默认启用 90 天；设为 -1 可关闭结构化历史库
 	if c.Log.HistoryRetentionDays == 0 {
-		c.Log.HistoryRetentionDays = netutil.DefaultRetentionDays
+		c.Log.HistoryRetentionDays = DefaultRetentionDays
 	}
 }
 

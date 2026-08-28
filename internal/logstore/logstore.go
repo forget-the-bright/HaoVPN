@@ -11,6 +11,7 @@ import (
 
 	"haovpn/internal/logger"
 	"haovpn/internal/paginate"
+	"haovpn/internal/timeutil"
 )
 
 // Entry 单条结构化历史日志记录，对应 log_entries 表一行。
@@ -156,7 +157,7 @@ func (s *Store) writerLoop() {
 
 func (s *Store) insertOne(p pending) error {
 	_, err := s.db.Exec(`INSERT INTO log_entries(ts, level, line) VALUES(?,?,?)`,
-		p.ts.Format("2006-01-02 15:04:05"), p.level, p.line)
+		timeutil.FormatUTC(p.ts), p.level, p.line)
 	return err
 }
 
@@ -181,7 +182,7 @@ func (s *Store) Query(q Query) ([]Entry, int, error) {
 	}
 	if !q.Since.IsZero() {
 		where = append(where, "ts>=?")
-		args = append(args, q.Since.UTC().Format("2006-01-02 15:04:05"))
+		args = append(args, timeutil.FormatUTC(q.Since))
 	}
 	wsql := strings.Join(where, " AND ")
 
@@ -205,7 +206,7 @@ func (s *Store) Query(q Query) ([]Entry, int, error) {
 		if err := rows.Scan(&e.ID, &ts, &e.Level, &e.Line); err != nil {
 			return nil, 0, err
 		}
-		e.Ts, _ = time.Parse("2006-01-02 15:04:05", ts)
+		e.Ts = timeutil.ParseUTC(ts)
 		out = append(out, e)
 	}
 	return out, total, rows.Err()
@@ -217,7 +218,7 @@ func (s *Store) Query(q Query) ([]Entry, int, error) {
 // 返回：实际删除行数与 err。
 // 副作用：DELETE FROM log_entries；不可恢复。
 func (s *Store) Prune(cutoff time.Time) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM log_entries WHERE ts < ?`, cutoff.UTC().Format("2006-01-02 15:04:05"))
+	res, err := s.db.Exec(`DELETE FROM log_entries WHERE ts < ?`, timeutil.FormatUTC(cutoff))
 	if err != nil {
 		return 0, err
 	}

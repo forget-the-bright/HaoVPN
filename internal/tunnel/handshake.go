@@ -184,11 +184,8 @@ func LoadOrCreateServerKeys(dir string) (crypto.KeyPair, error) {
 	if err != nil {
 		return crypto.KeyPair{}, err
 	}
-	if err := fileutil.EnsureParentDir(path, 0o700); err != nil {
-		return crypto.KeyPair{}, err
-	}
 	raw, _ := json.Marshal(ServerKeyFile{PublicKey: kp.PublicKey, PrivateKey: kp.PrivateKey})
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	if err := fileutil.WriteFileAtomic(path, raw, 0o600); err != nil {
 		return crypto.KeyPair{}, err
 	}
 	return kp, nil

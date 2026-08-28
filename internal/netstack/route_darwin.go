@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
-	"strings"
+
+	"haovpn/internal/platform"
 )
 
 func enableIPForwardPlatform() error {
 	cmd := exec.Command("sysctl", "-w", "net.inet.ip.forwarding=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("sysctl forwarding: %w: %s", err, strings.TrimSpace(string(out)))
+		return platform.CommandOutputError("sysctl forwarding", out, err)
 	}
 	return nil
 }
@@ -43,8 +44,9 @@ func addClientRoutePlatform(cidr, tunName, gateway string) error {
 		cmd2 := exec.Command("route", "-n", "add", "-net", cidr, "-interface", tunName)
 		out2, err2 := cmd2.CombinedOutput()
 		if err2 != nil {
-			return fmt.Errorf("route add %s: %w / %w: %s %s", cidr, err, err2,
-				strings.TrimSpace(string(out)), strings.TrimSpace(string(out2)))
+			return fmt.Errorf("%w / %w",
+				platform.CommandOutputError("route add "+cidr, out, err),
+				platform.CommandOutputError("route add -interface "+cidr, out2, err2))
 		}
 	}
 	return nil

@@ -52,10 +52,7 @@ func SaveService(username, password string) error {
 	if err != nil {
 		return fmt.Errorf("加密失败（须以管理员运行以写入本机凭据）: %w", err)
 	}
-	if err := fileutil.EnsureParentDir(credPath(), 0o700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(credPath(), enc, 0o600); err != nil {
+	if err := fileutil.WriteFileAtomic(credPath(), enc, 0o600); err != nil {
 		return fmt.Errorf("写入凭据失败（须管理员）: %w", err)
 	}
 	logger.Info("已保存服务凭据（LocalMachine DPAPI） path=%s user=%s", credPath(), username)

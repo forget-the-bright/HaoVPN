@@ -17,6 +17,7 @@ func Run(configPath string, elevHint string) {
 		a.Settings().SetTheme(AppTheme)
 	}
 	ui := newUI(a, configPath)
+	ui.installTray()
 	ui.showLogin(elevHint)
 	a.Run()
 	ui.shutdown()

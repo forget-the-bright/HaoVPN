@@ -2,115 +2,84 @@ package singleinstance
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-
-	"haovpn/internal/brand"
-	"haovpn/internal/fileutil"
+	"net"
+	"sync"
+	"time"
 )
 
-// Lock 持有进程级互斥锁；进程退出或 Release 后释放。
+// Lock 持有单实例协调监听；进程退出或 Release 后释放。
 type Lock struct {
-	path string
-	file *os.File
+	listener net.Listener
+	stop     chan struct{}
+	wg       sync.WaitGroup
 }
 
-// AcquireClient 尝试获取客户端单实例锁。已被占用时返回 ErrAlreadyRunning。
+// AcquireClient 尝试成为唯一客户端实例（127.0.0.1 协调口 Listen）。
 func AcquireClient() (*Lock, error) {
-	path, err := lockPath()
+	if ClientAlreadyRunning() {
+		return nil, ErrAlreadyRunning
+	}
+	ln, err := net.Listen("tcp", coordAddr())
 	if err != nil {
-		return nil, err
-	}
-	if err := fileutil.EnsureParentDir(path, 0o755); err != nil {
-		return nil, fmt.Errorf("创建锁目录: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("打开锁文件: %w", err)
-	}
-	if err := tryLock(f); err != nil {
-		_ = f.Close()
-		if isWouldBlock(err) {
+		if ClientAlreadyRunning() {
 			return nil, ErrAlreadyRunning
 		}
-		return nil, err
+		return nil, fmt.Errorf("单实例监听 %s: %w", coordAddr(), err)
 	}
-	if err := writePID(f); err != nil {
-		unlock(f)
-		_ = f.Close()
-		return nil, err
-	}
-	return &Lock{path: path, file: f}, nil
+	lock := &Lock{listener: ln, stop: make(chan struct{})}
+	lock.wg.Add(1)
+	go lock.acceptLoop()
+	return lock, nil
 }
 
-// Release 释放单实例锁。
+// acceptLoop 接受探测连接并立即关闭，避免 Listen  backlog 堆积。
+func (l *Lock) acceptLoop() {
+	defer l.wg.Done()
+	for {
+		conn, err := l.listener.Accept()
+		if err != nil {
+			select {
+			case <-l.stop:
+				return
+			default:
+			}
+			return
+		}
+		_ = conn.Close()
+	}
+}
+
+// Release 关闭协调监听。
 func (l *Lock) Release() {
-	if l == nil || l.file == nil {
+	if l == nil {
 		return
 	}
-	unlock(l.file)
-	_ = l.file.Close()
-	l.file = nil
+	if l.stop != nil {
+		close(l.stop)
+	}
+	if l.listener != nil {
+		_ = l.listener.Close()
+	}
+	l.wg.Wait()
+	l.listener = nil
 }
 
 // ErrAlreadyRunning 表示已有客户端实例在运行。
 var ErrAlreadyRunning = fmt.Errorf("HaoVPN 客户端已在运行")
 
+// ClientAlreadyRunning 探测协调口是否已有实例在监听（短超时 Dial）。
+//
+// 跨平台：Windows 上非管理员可探测管理员 Listen 的 127.0.0.1 端口，避免重复 UAC。
+func ClientAlreadyRunning() bool {
+	conn, err := net.DialTimeout("tcp", coordAddr(), 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 // AlreadyRunningMessage 返回面向用户的提示文案。
 func AlreadyRunningMessage() string {
-	if pid, ok := readOtherPID(); ok {
-		return fmt.Sprintf("HaoVPN 客户端已在运行（PID %d）。请先退出已有实例再启动。", pid)
-	}
 	return "HaoVPN 客户端已在运行。请先退出已有实例再启动。"
-}
-
-func lockPath() (string, error) {
-	// Windows 服务与 GUI 均可能以 SYSTEM/管理员运行，ProgramData 各身份可见。
-	if dir := os.Getenv("PROGRAMDATA"); dir != "" {
-		return filepath.Join(dir, brand.CredDirName, "client.lock"), nil
-	}
-	// Linux/macOS：优先 XDG 运行时目录，避免 /tmp 被其他用户干扰。
-	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return filepath.Join(dir, "haovpn-client.lock"), nil
-	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "haovpn-client.lock"), nil
-	}
-	return filepath.Join(cache, brand.CredDirName, "client.lock"), nil
-}
-
-func writePID(f *os.File) error {
-	if err := f.Truncate(0); err != nil {
-		return fmt.Errorf("清空锁文件: %w", err)
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return fmt.Errorf("定位锁文件: %w", err)
-	}
-	_, err := fmt.Fprintf(f, "%d\n", os.Getpid())
-	return err
-}
-
-func readOtherPID() (int, bool) {
-	path, err := lockPath()
-	if err != nil {
-		return 0, false
-	}
-	b, err := os.ReadFile(path)
-	if err != nil || len(b) == 0 {
-		return 0, false
-	}
-	line := string(b)
-	for i, c := range line {
-		if c == '\n' || c == '\r' {
-			line = line[:i]
-			break
-		}
-	}
-	pid, err := strconv.Atoi(line)
-	if err != nil || pid <= 0 {
-		return 0, false
-	}
-	return pid, true
 }

@@ -15,12 +15,12 @@ import (
 func (s *Server) handleCSRF(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie("session")
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "未登录"})
+		writeAPIError(w, http.StatusUnauthorized, "未登录")
 		return
 	}
 	token := s.auth.GetCSRF(c.Value)
 	if token == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "会话无效"})
+		writeAPIError(w, http.StatusUnauthorized, "会话无效")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"csrf_token": token})
@@ -49,7 +49,7 @@ func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.store.ListMonitorAccountRows()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	online := map[int64]bool{}
@@ -68,9 +68,7 @@ func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		item := readmodel.MonitorRowToItem(row, isOnline)
 		if isOnline {
-			if sess, ok := s.sessions.GetSession(row.ID); ok {
-				readmodel.MergeLiveSessionStats(item, sess.RxBytes.Load(), sess.TxBytes.Load(), netutil.IPNetsToStrings(sess.AllowedIPs))
-			}
+			s.mergeLiveMonitorStats(item, row.ID)
 		}
 		items = append(items, item)
 	}
@@ -90,7 +88,7 @@ func (s *Server) handleMonitorEvents(w http.ResponseWriter, r *http.Request) {
 		UserID: userID, EventType: q.Get("event_type"), Limit: limit, Offset: offset,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	type eventView struct {
@@ -137,10 +135,19 @@ func (s *Server) buildAccountMonitorItemFromRow(userID int64, online bool) map[s
 		row.RemoteAddr = st.RemoteAddr
 	}
 	item := readmodel.MonitorRowToItem(row, online)
-	if sess, ok := s.sessions.GetSession(userID); ok && online {
-		readmodel.MergeLiveSessionStats(item, sess.RxBytes.Load(), sess.TxBytes.Load(), netutil.IPNetsToStrings(sess.AllowedIPs))
+	if online {
+		s.mergeLiveMonitorStats(item, userID)
 	}
 	return item
+}
+
+// mergeLiveMonitorStats 将内存会话的 Rx/Tx/AllowedIPs 合并进监控 item（在线时）。
+func (s *Server) mergeLiveMonitorStats(item map[string]any, userID int64) {
+	sess, ok := s.sessions.GetSession(userID)
+	if !ok {
+		return
+	}
+	readmodel.MergeLiveSessionStats(item, sess.RxBytes.Load(), sess.TxBytes.Load(), netutil.IPNetsToStrings(sess.AllowedIPs))
 }
 
 // containsFold 判断 s 是否包含 sub（ASCII 大小写不敏感）。

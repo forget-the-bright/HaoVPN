@@ -585,6 +585,7 @@ log:
 ### 客户端 `client.yaml` 结构（示意）
 ```yaml
 # HaoVPN 客户端配置
+# vpn_ip / allowed_ips / gateway / 私钥均由握手下发，不含 peer 段
 
 server:
   address: "vpn.example.com:8443"
@@ -596,13 +597,13 @@ tun:
   name: "haovpn0"
   mtu: 1420
 
-peer:
-  # 由服务端导出或管理员下发
-  private_key: ""
-  public_key: ""
-  vpn_ip: "10.88.0.2"
-  allowed_ips:
-    - "192.168.1.0/24"
+auth:
+  username: "engineer1"
+  remember_password: false
+  # password:  # GUI 记住密码或 HAOVPN_PASSWORD
+
+security:
+  kill_switch: false
 
 reconnect:
   initial_sec: 1

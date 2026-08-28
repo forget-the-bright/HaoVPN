@@ -221,20 +221,14 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit := clampLimit(parseIntDefault(q.Get("limit"), 50), 50, 500)
 	offset := parseIntDefault(q.Get("offset"), 0)
-	var since time.Time
-	if t := strings.TrimSpace(q.Get("since")); t != "" {
-		if parsed, err := time.Parse(time.RFC3339, t); err == nil {
-			since = parsed
-		}
-	}
 	logs, total, err := s.store.ListAuditLogsFiltered(readmodel.AuditListFilter{
 		Action: q.Get("action"),
-		Since:  since,
+		Since:  parseSinceQuery(r),
 		Limit:  limit,
 		Offset: offset,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -284,18 +278,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		limit := tail
 		offset := parseIntDefault(q.Get("offset"), 0)
-		var since time.Time
-		if t := strings.TrimSpace(q.Get("since")); t != "" {
-			if parsed, err := time.Parse(time.RFC3339, t); err == nil {
-				since = parsed
-			}
-		}
 		items, total, err := s.logStore.Query(logstore.Query{
-			Level: q.Get("level"), Keyword: q.Get("q"), Since: since,
+			Level: q.Get("level"), Keyword: q.Get("q"), Since: parseSinceQuery(r),
 			Limit: limit, Offset: offset,
 		})
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		var lines []string
@@ -316,7 +304,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		lines, truncated, err := readLogTail(path, tail)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

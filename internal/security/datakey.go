@@ -35,6 +35,7 @@ func LoadOrCreateDataKey(dbCfg config.DatabaseSection, dataDir string) (*KeyEnc,
 	if keyPath == "" {
 		keyPath = filepath.Join(dataDir, defaultKeyFileName)
 	}
+	// WriteFileAtomic 会 EnsureParentDir；此处提前创建 0700 目录语义与历史一致（密钥目录更严）。
 	if err := fileutil.EnsureParentDir(keyPath, 0o700); err != nil {
 		return nil, fmt.Errorf("create key dir: %w", err)
 	}
@@ -49,7 +50,7 @@ func LoadOrCreateDataKey(dbCfg config.DatabaseSection, dataDir string) (*KeyEnc,
 			return nil, fmt.Errorf("generate key: %w", err)
 		}
 		hexStr := hex.EncodeToString(key)
-		if err := os.WriteFile(keyPath, []byte(hexStr+"\n"), 0o600); err != nil {
+		if err := fileutil.WriteFileAtomic(keyPath, []byte(hexStr+"\n"), 0o600); err != nil {
 			return nil, fmt.Errorf("write key file: %w", err)
 		}
 		logger.Info("已生成数据库字段加密密钥: %s（请备份；丢失将无法解密已存私钥）", keyPath)

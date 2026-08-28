@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/platform"
 )
 
 func enableIPForwardPlatform() error {
@@ -38,7 +39,7 @@ func setupNATPlatform(vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outbound
 		"-s", vpnSubnet, "-d", lanCIDR, "-j", "MASQUERADE")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("iptables MASQUERADE: %w: %s", err, strings.TrimSpace(string(out)))
+		return platform.CommandOutputError("iptables MASQUERADE", out, err)
 	}
 	return nil
 }
@@ -61,7 +62,7 @@ func addClientRoutePlatform(cidr, tunName, gateway string) error {
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ip route replace %s: %w: %s", cidr, err, strings.TrimSpace(string(out)))
+		return platform.CommandOutputError("ip route replace "+cidr, out, err)
 	}
 	return nil
 }

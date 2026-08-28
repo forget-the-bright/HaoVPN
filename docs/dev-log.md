@@ -6,7 +6,138 @@
 
 ---
 
-*最后更新：2026-08-27 · 架构第六轮*
+*最后更新：2026-08-28 · 架构解耦第七轮*
+
+---
+
+## 2026-08-28 · 架构解耦第七轮（高内聚 · 低耦合）
+
+### 动机
+
+在已有六轮解耦基础上，消除重复 helper、敏感写盘非原子、YAML 导出与模板漂移、胖文件阅读负担，并修正文档中 GUI/单实例路径漂移。
+
+### 完成
+
+**叶子工具**
+
+- `fileutil.WriteFileAtomic` / `ExecutableDir`；配置、凭据、数据密钥、隧道私钥、wintun.dll 接入原子写。
+- 新建 `timeutil`（SQLite UTC layout）；`persist`/`logstore` 共用；`maintenance` 补 `doc.go`。
+
+**统一已有 helper**
+
+- API：`parseSinceQuery`、`writeAPIError`；monitor live 合并抽 helper。
+- `platform.CommandOutputError`（linux/darwin route/tun）。
+- GUI：`safeutil.RunTickerStop`；`AlreadyRunningMessage` 回退文案。
+
+**配置**
+
+- `config.BuildClientExportYAML` / `ExportServerAddress`；`api/export` 薄封装。
+- `DefaultRetentionDays` 从 `netutil` 迁至 `config`。
+
+**同包拆分（导出 API 不变）**
+
+- `auth`：service / password / login / tunnel_login / session / lockout。
+- `persist`：store / users / audit_store / session_store。
+- `sessionmgr`：manager / register / kick / route / stats。
+- `clientapp`：补充阶段注释与 doc 关联（未强行切碎 engine）。
+
+**文档**
+
+- 更新 `docs/architecture.md`、`internal/README.md`、`cmd/README.md`、`记忆.md`。
+
+### 验证
+
+```powershell
+go test ./...
+.\scripts\build-local.ps1
+```
+
+---
+
+## 2026-08-28 · GUI 托盘、登录窗居中、提示框样式
+
+### 完成
+
+- **提示框**：单实例等致命提示改为自定义小窗（无 dialog 套娃）；窗口标题 `HaoVPN`，内容区单独 headline。
+- **登录窗**：`CenterOnScreen`；关窗 `Hide` 不退出。
+- **托盘**：`tray.go` — 启动即 `installTray`；未登录菜单「显示登录窗口/退出」；已登录含重新连接/退出登录。
+- **退出**：仅托盘「退出」与主窗「退出程序」调用 `quitApp`。
+
+---
+
+## 2026-08-28 · 单实例改 localhost TCP 协调（跨平台 / UAC）
+
+### 问题
+
+- 文件锁在 Windows UAC 场景下，非管理员未必能感知管理员实例 → 重复弹 UAC、提权后 Fyne 提示不可见、进程残留。
+
+### 修复
+
+- `singleinstance` 改为 **127.0.0.1 哈希端口 Listen/Dial**（跨平台；Windows 不受提权隔离影响）。
+- GUI：`ClientAlreadyRunning` **UAC 前 + 提权后各探测一次**；通过则 `ShowFatalNotice` + `os.Exit`。
+- 单测：`TestProbeBeforeUACScenario` 等覆盖 Probe/Acquire/Release。
+
+---
+
+## 2026-08-28 · GUI 单实例僵尸进程 + SaveClient 注释/废除 peer
+
+### 完成
+
+**单实例**
+
+- **根因**：`ShowFatalNotice` 仅 `a.Quit()`，Windows 上 GLFW 线程残留；UAC 先于抢锁导致重复双击 spawn 多个 elevated 子进程。
+- **修复**：`runFatalDialog` 后 `os.Exit(0)`；`ClientAlreadyRunning()` UAC 前快检；提权成功 `os.Exit(0)`。
+- **单测**：`HAOVPN_GUI_SKIP_DIALOG=1` 供子进程跳过对话框；`gui_dup_test`（环境不可 exec 时 Skip）。
+
+**SaveClient / peer**
+
+- **SaveClient** 改 `yaml.Node` 局部 patch：保留未改段中文注释；只更新 `server.address` + `auth.*`；写盘时删除 legacy `peer` 键。
+- **废除 client.yaml peer 段**：vpn_ip/allowed_ips/gateway/私钥均由握手下发；删 `ClientPeerSection`/`PreferGateway`；runtime 用 `netutil.ResolveGateway(握手, "", vpnIP)`。
+- 旧 yaml 含 `peer:` → Load 忽略；GUI 连接写回时自动剥离。
+
+### 验证
+
+- `go test ./internal/config/... ./internal/singleinstance/... ./internal/clientapp/...` ✅
+- GUI 重复启动 / 记密码注释：须 Windows 手工验收
+
+---
+
+## 2026-08-28 · GUI 记住密码；杀开关仅 yaml
+
+### 完成
+
+- **杀开关**：登录窗移除「断线阻断工控网段」勾选；仅 `client.yaml` → `security.kill_switch` 控制（须 Windows 管理员）。
+- **记住密码**：登录窗新增勾选；true 时 `config.SaveClient` 将 `auth.password` 明文写回 yaml（0600），下次预填。
+- **配置**：`ClientAuthSection.RememberPassword`；`internal/config/client_save.go` + 单测；扩展 `clientYAMLTemplate` 中文注释。
+- **退出登录**：`RememberPassword=true` 时保留密码框内容；否则清空（与改前一致）。
+
+### 安全提示
+
+- 明文密码适合本机专用包；含密码的 `client.yaml` 勿提交 git，权限建议 0600。
+- 「保存供 Windows 服务使用」（DPAPI）与「记住密码」（yaml）相互独立。
+
+### 验证
+
+- `go test ./internal/config/...` ✅
+- GUI 手工：勾选记住密码 → yaml 含 password；取消勾选 → password 清空；`kill_switch: true` 时断线行为与改前 yaml 一致
+
+---
+
+## 2026-08-28 · GUI 单实例重复启动空白窗修复
+
+### 完成
+
+- **根因**：`client-gui` 单实例锁失败时 `ShowInformation` + `w.Show()`，对话框点确定后 parent 空白窗未关。
+- **修复**：`internal/clientgui/notice.go` — `ShowFatalNotice` / `ShowFatalError`；`NewInformation` + `SetOnClosed` → `Quit`；parent 不 Show。
+- **login 早期失败**：日志 `InitGlobal` 失败改 `showFatalErrorOnApp`，同样无空白窗。
+- **CLI**：行为不变（stderr + exit 1）；新增 `internal/singleinstance/cli_dup_test.go` 子进程验证。
+- **脚本**：`scripts/test-client-single-instance.ps1`。
+
+### 验证
+
+- `go test ./internal/singleinstance/... -run TestCLIAlreadyRunningExit` ✅
+- `go test ./...` + `build-local.ps1` ✅
+- GUI 双开：须手工确认点确定后无残留窗
 
 ---
 

@@ -100,21 +100,20 @@ tun:
 # 账号密码隧道登录（OpenVPN 风格）；也可环境变量 HAOVPN_USER / HAOVPN_PASSWORD
 auth:
   username: ""
-  # password: ""  # 不推荐明文；优先交互或环境变量
-
-peer:
-  # 旧导出可含私钥；新流程由握手下发，以下均可省略
-  # private_key / server_public_key / gateway_ip / vpn_ip / allowed_ips
-  private_key: ""
-  public_key: ""
-  server_public_key: ""
+  # remember_password：GUI「记住密码」勾选状态；true 时下方 password 会写入本文件
+  remember_password: false
+  # password：仅 remember_password=true 时由 GUI 写入明文；CLI 也可填写以免每次输入
+  # 注意：含密码时本文件为敏感信息，请限制权限（0600）且勿提交 git
+  # password: ""
 
 reconnect:
   initial_sec: 1
   max_sec: 3
 
 security:
-  # 断线时阻断 AllowedIPs 出站（Windows，需管理员）
+  # 杀开关 kill_switch（Windows 专用，须管理员；GUI 登录窗不提供开关，仅改本文件）
+  # true：VPN 断线/重连期间，用 WFP 阻断 allowed_ips 工控网段明文出站，防路由清除后泄漏
+  # false：断线仅清 TUN 路由，不额外阻断（默认，多数现场够用）
   kill_switch: false
 
 log:

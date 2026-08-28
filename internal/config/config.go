@@ -39,17 +39,14 @@ func LoadClient(path string) (*ClientConfig, bool, error) {
 	return loadYAML(path, clientYAMLTemplate, func(c *ClientConfig) error { return c.Validate() })
 }
 
-// ensureFile 若配置文件不存在，创建父目录并写入带注释的默认模板。
+// ensureFile 若配置文件不存在，创建父目录并以原子写写入带注释的默认模板。
 func ensureFile(path, template string) (created bool, err error) {
 	if _, err := os.Stat(path); err == nil {
 		return false, nil
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	if err := fileutil.EnsureParentDir(path, 0o755); err != nil {
-		return false, fmt.Errorf("创建配置目录: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(template), 0o600); err != nil {
+	if err := fileutil.WriteFileAtomic(path, []byte(template), 0o600); err != nil {
 		return false, fmt.Errorf("写入默认配置 %s: %w", path, err)
 	}
 	return true, nil

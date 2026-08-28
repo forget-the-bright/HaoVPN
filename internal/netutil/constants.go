@@ -5,7 +5,8 @@ package netutil
 // 与 client.yaml / server.yaml 模板及 ApplyDefaults 一致；握手 policy 可覆盖。
 const DefaultMTU = 1420
 
-// 传输层、重连与审计保留的秒级/天级默认值（config.ApplyDefaults 与 GUI 内存配置共用）。
+// 传输层与重连的秒级默认值（config.ApplyDefaults 与 GUI 内存配置共用）。
+// 保留天数默认见 config.DefaultRetentionDays（非网络常量，勿放入本包）。
 const (
 	// DefaultHeartbeatIntervalSec 客户端/服务端心跳发送间隔（秒）。
 	DefaultHeartbeatIntervalSec = 15
@@ -17,8 +18,6 @@ const (
 	DefaultReconnectInitialSec = 1
 	// DefaultReconnectMaxSec 指数退避重连间隔上限（秒）。
 	DefaultReconnectMaxSec = 3
-	// DefaultRetentionDays 审计日志、连接事件与 history 库默认保留天数。
-	DefaultRetentionDays = 90
 )
 
 // TunReadBufferExtra TUN Read 循环在 MTU 之外额外预留的字节数。

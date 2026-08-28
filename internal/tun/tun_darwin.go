@@ -7,11 +7,11 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"unsafe"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/platform"
 )
 
 const (
@@ -49,7 +49,7 @@ func openPlatform(cfg Config) (Device, error) {
 		cmd := exec.Command("ifconfig", name, "inet", ip.String(), ip.String(), "netmask", net.IP(ipNet.Mask).String(), "mtu", fmt.Sprintf("%d", cfg.MTU), "up")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			file.Close()
-			return nil, fmt.Errorf("ifconfig %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+			return nil, platform.CommandOutputError("ifconfig "+name, out, err)
 		}
 		logger.Info("darwin utun %s created, ip=%s/%d mtu=%d", name, ip, ones, cfg.MTU)
 		return &darwinDevice{name: name, mtu: cfg.MTU, ip: ip, fd: file}, nil

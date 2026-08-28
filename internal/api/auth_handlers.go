@@ -15,19 +15,19 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		se, ok := s.sessionFromRequest(r)
 		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "未登录"})
+			writeAPIError(w, http.StatusUnauthorized, "未登录")
 			return
 		}
 		if u, err := s.store.GetUserByID(se.UserID); err == nil && u.MustChangePassword {
 			allowed := r.URL.Path == "/api/v1/password" || r.URL.Path == "/api/v1/logout"
 			if !allowed {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "须先修改密码"})
+				writeAPIError(w, http.StatusForbidden, "须先修改密码")
 				return
 			}
 		}
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete {
 			if !s.validateCSRF(r) {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "CSRF token 无效"})
+				writeAPIError(w, http.StatusForbidden, "CSRF token 无效")
 				return
 			}
 		}
@@ -86,13 +86,13 @@ func (s *Server) validateCSRF(r *http.Request) bool {
 // 副作用：写入会话 Cookie（HttpOnly、SameSite=Lax）；登录接口豁免 CSRF。
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST only"})
+		writeAPIError(w, http.StatusMethodNotAllowed, "POST only")
 		return
 	}
 	if err := parseRequestForm(r); err != nil {
 		ip := clientIP(r)
 		logger.Warn("登录表单解析失败 ip=%s ct=%q err=%v", ip, r.Header.Get("Content-Type"), err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid form data"})
+		writeAPIError(w, http.StatusBadRequest, "invalid form data")
 		return
 	}
 	username := r.FormValue("username")
@@ -101,7 +101,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	token, user, err := s.auth.Login(username, password, ip)
 	if err != nil {
 		s.audit.Log(nil, "login_failed", "user", nil, ip, map[string]string{"username": username})
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	csrf := s.auth.GetCSRF(token)
@@ -155,11 +155,11 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	newPass := r.FormValue("new_password")
 	hash, err := auth.HashPassword(newPass)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := s.store.UpdateUserPassword(se.UserID, hash, true); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "更新失败"})
+		writeAPIError(w, http.StatusInternalServerError, "更新失败")
 		return
 	}
 	s.audit.Log(&se.UserID, "change_password", "user", &se.UserID, clientIP(r), nil)
