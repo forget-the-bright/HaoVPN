@@ -2,9 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"haovpn/internal/auth"
 	"haovpn/internal/vpnaccount"
@@ -26,14 +26,14 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 		AllowedIPs: body.AllowedIPs, IPMode: body.IPMode, IPLeaseSec: body.IPLeaseSec, VPNIP: body.VPNIP,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "不存在") {
+		if errors.Is(err, vpnaccount.ErrAccountNotFound) {
 			writeAPIError(w, http.StatusNotFound, err.Error())
 			return
 		}
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.audit.Log(&se.UserID, "policy_change_kick", "user", &id, clientIP(r), map[string]string{
+	s.audit.Log(&se.UserID, "policy_change_kick", "user", &id, s.clientIP(r), map[string]string{
 		"policy_ver": fmt.Sprintf("%d", result.PolicyVer), "vpn_ip": result.NewIP, "ip_mode": result.NewMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -43,18 +43,21 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 
 // handleUserPasswordReset 管理员重置指定账号登录密码。
 func (s *Server) handleUserPasswordReset(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
-	_ = parseRequestForm(r)
+	if err := parseRequestForm(r); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+	u, err := s.store.GetUserByID(id)
+	if err != nil || u == nil {
+		writeAPIError(w, http.StatusNotFound, vpnaccount.ErrAccountNotFound.Error())
+		return
+	}
 	newPass := r.FormValue("new_password")
 	if err := s.auth.ResetPasswordByAdmin(id, newPass); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	u, err := s.store.GetUserByID(id)
-	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "账号不存在")
-		return
-	}
 	s.sessions.KickUser(id)
-	s.audit.Log(&se.UserID, "admin_reset_password", "user", &id, clientIP(r), map[string]string{"username": u.Username})
+	s.audit.Log(&se.UserID, "admin_reset_password", "user", &id, s.clientIP(r), map[string]string{"username": u.Username})
 	writeOK(w)
 }

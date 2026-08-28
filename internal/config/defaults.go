@@ -59,6 +59,11 @@ api:
   login_max_attempts: 5
   login_lockout_sec: 900
   session_ttl_sec: 28800
+  # 信任的反代源 CIDR；仅当请求 RemoteAddr 命中时才解析 X-Forwarded-For（防锁定绕过）
+  # 生产默认留空；内网 nginx 反代示例：["127.0.0.1/32", "10.0.0.0/8"]
+  trusted_proxy_cidrs: []
+  # HTTPS 终止或全站 TLS 时可设 true，Session Cookie 加 Secure 标志
+  secure_cookies: false
 
 security:
   tunnel_allowed_source_ips: []
@@ -66,7 +71,7 @@ security:
 
 admin:
   username: "admin"
-  password: "changeme"
+  password: "changeme12"
   # sync_password_from_config: true  # 仅 home 开发，生产务必 false
 
 log:

@@ -82,6 +82,10 @@ Write-Host ""
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
 Copy-Item (Join-Path $Root "VERSION") (Join-Path $Out "VERSION")
+foreach ($legal in @("LICENSE", "NOTICE")) {
+    $src = Join-Path $Root $legal
+    if (Test-Path $src) { Copy-Item $src (Join-Path $Out $legal) }
+}
 
 $artifacts = [System.Collections.Generic.List[object]]::new()
 

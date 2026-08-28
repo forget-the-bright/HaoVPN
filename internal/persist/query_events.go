@@ -1,6 +1,7 @@
 package persist
 
 import (
+	"database/sql"
 	"strings"
 	"time"
 
@@ -26,33 +27,29 @@ func (s *Store) ListConnectionEventsFiltered(f readmodel.ConnectionEventFilter) 
 		args = append(args, et)
 	}
 	wsql := strings.Join(where, " AND ")
-
-	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM connection_events ce WHERE `+wsql, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-
-	qargs := append(append([]any{}, args...), f.Limit, f.Offset)
-	rows, err := s.db.Query(`SELECT ce.id, ce.user_id, COALESCE(u.username,''), ce.event_type, ce.remote_addr, ce.detail_json, ce.created_at
+	var out []readmodel.ConnectionEventRow
+	total, err := s.queryPageTotal(
+		`SELECT COUNT(*) FROM connection_events ce WHERE `+wsql,
+		`SELECT ce.id, ce.user_id, COALESCE(u.username,''), ce.event_type, ce.remote_addr, ce.detail_json, ce.created_at
 		FROM connection_events ce
 		LEFT JOIN users u ON u.id = ce.user_id
-		WHERE `+wsql+` ORDER BY ce.id DESC LIMIT ? OFFSET ?`, qargs...)
+		WHERE `+wsql+` ORDER BY ce.id DESC LIMIT ? OFFSET ?`,
+		args, f.Limit, f.Offset,
+		func(rows *sql.Rows) error {
+			var r readmodel.ConnectionEventRow
+			var created string
+			if err := rows.Scan(&r.ID, &r.UserID, &r.Username, &r.EventType, &r.RemoteAddr, &r.DetailJSON, &created); err != nil {
+				return err
+			}
+			r.CreatedAt = timeutil.ParseUTC(created)
+			out = append(out, r)
+			return nil
+		},
+	)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
-
-	var out []readmodel.ConnectionEventRow
-	for rows.Next() {
-		var r readmodel.ConnectionEventRow
-		var created string
-		if err := rows.Scan(&r.ID, &r.UserID, &r.Username, &r.EventType, &r.RemoteAddr, &r.DetailJSON, &created); err != nil {
-			return nil, 0, err
-		}
-		r.CreatedAt = timeutil.ParseUTC(created)
-		out = append(out, r)
-	}
-	return out, total, rows.Err()
+	return out, total, nil
 }
 
 // PruneConnectionEvents 删除早于 cutoff 的连接事件。

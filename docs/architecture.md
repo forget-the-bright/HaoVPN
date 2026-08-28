@@ -2,7 +2,7 @@
 
 本文是重构后的**包导航单一来源**：分层、依赖规则、改代码去哪找。
 
-> 架构解耦第九轮（2026-08-28）：HTTP/分页助手统一、clientIP→HostFromAddr、DefaultIPLeaseSec、handler_listen / query_* 拆分、maintenance GoSafe、全局文档对齐。
+> 架构解耦第十一轮（2026-08-28）：vpnaccount `releaseDynamicIP`、PlanVPNPatch 归 patch.go、ErrAccountNotFound 对齐、users 列表 `onlineUserSet`、审计补测。第十轮摘要见 [dev-log.md](dev-log.md)。
 
 ---
 
@@ -40,13 +40,16 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | 改密 / 须改密检查 | `auth/password_ops.go`（`ChangePassword`、`MustChangePassword`、`ResetPasswordByAdmin`） |
 | 分页 limit/offset / bool 查询 | `paginate/parse.go`（`ParseLimitOffset`、`ParseBoolQuery`）、`clamp.go` |
 | 默认 IP 租约秒数 | `persist/constants.go`（`DefaultIPLeaseSec`，与 schema 同源） |
+| 客户端 IP / 反代 XFF | `api/httputil.go`（`resolveClientIP`、`api.trusted_proxy_cidrs`） |
+| 日志脱敏 | `logger/redact.go`；`security.Redact` 委托 |
+| 密码强度 | `auth/password.go`（`ValidatePasswordStrength`） |
 | 审计/连接事件/日志保留 | `maintenance/retention.go`；默认天数 `config.DefaultRetentionDays` |
 | 监控 online/accounts/events | `api/monitor_handler.go`；JOIN `persist/query_monitor.go` |
 | 用户/审计/事件列表 SQL | `persist/query_users.go`、`query_audit.go`、`query_events.go` |
 | 改握手/策略下发 | `tunnel/handshake.go`, `server_handler.go` |
 | 客户端拨号/重连 | `clientapp/engine_lifecycle.go`, `engine_connect.go`, `runtime.go` |
 | 桌面 GUI（Fyne） | `internal/clientgui/`（入口 `cmd/client-gui` 仅 flag/UAC/主题） |
-| 服务端启动流程 | `serverapp/engine.go`、`engine_shutdown.go` |
+| 服务端启动流程 | `serverapp/engine.go`、`engine_boot.go`、`engine_shutdown.go` |
 | YAML 默认值/校验 | `config/client.go`、`server.go` |
 | 默认 TLS 证书路径 | `config/paths.go`（`DefaultServerCertPath`、`ResolveServerCertPath`） |
 | 导出客户端 YAML | `config/client_export.go`；ZIP 在 `api/export_zip.go`；HTTP 附件 `writeAttachment` |
@@ -82,7 +85,7 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 |----|------|----------|------|
 | **clientapp** | CLI/GUI 共用拨号引擎 | `engine_state.go`, `engine_lifecycle.go`, `engine_connect.go`, `runtime.go`, `credentials.go` | config, transport, tunnel, netstack |
 | **clientgui** | Fyne 桌面 UI | `run.go`, `login.go`, `app.go`, `tray.go`, `notice.go` | clientapp, config, singleinstance |
-| **serverapp** | 服务端启动编排 | `engine.go`, `engine_shutdown.go` | api, tunnel, tun, netstack, vpnaccount, maintenance |
+| **serverapp** | 服务端启动编排 | `engine.go`, `engine_boot.go`, `engine_shutdown.go` | api, tunnel, tun, netstack, vpnaccount, maintenance |
 | **api** | HTTP 管理 API + WebUI | `handler.go`, `handler_routes.go`, `handler_ops.go`, `handler_listen.go`, `auth_handlers.go`, `users_*.go`, `monitor_handler.go`, `httputil.go`, `export_zip.go` | auth, vpnaccount, persist, readmodel, config, netutil |
 | **readmodel** | Web/API 读模型 DTO | `types.go`, `monitor.go`, `audit.go` | timeutil |
 | **paginate** | 分页 / bool 查询 | `clamp.go`, `parse.go`（含 `ParseLimitOffset`） | — |
@@ -192,8 +195,8 @@ serverapp.New(cfg, path).Run()
 |------|------|
 | fileutil / timeutil / paginate | 各包 `*_test.go`（含 `ParseLimitOffset`） |
 | config 导出 YAML / 路径 | `client_export_test.go` |
-| persist monitor JOIN | `query_monitor_test.go` |
-| api 导出兼容 / clientIP / harness | `export_test.go`、`httputil_test.go`、`testutil_test.go` |
+| persist monitor JOIN | `query_monitor_test.go`、`query_page_test.go` |
+| api 导出兼容 / clientIP / harness | `export_zip_test.go`、`httputil_test.go`、`security_test.go`、`testutil_test.go` |
 | auth / vpnaccount / sessionmgr | 各包 `*_test.go`（拆文件后同包符号不变） |
 | 全量 | `go test ./...`；本机构建 `.\scripts\build-local.ps1` |
 

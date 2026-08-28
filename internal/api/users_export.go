@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -16,8 +17,11 @@ import (
 // 返回：User、明文私钥；无 VPN 配置或解密失败时 error（供 handler 映射 404/500）。
 func (s *Server) loadExportAccount(id int64) (*persist.User, string, error) {
 	u, err := s.store.GetUserByID(id)
-	if err != nil || !u.HasVPN() {
-		return nil, "", fmt.Errorf("账号不存在或无 VPN 配置")
+	if err != nil {
+		return nil, "", err
+	}
+	if u == nil || !u.HasVPN() {
+		return nil, "", vpnaccount.ErrAccountNotFound
 	}
 	plainKey, err := vpnaccount.OpenAccountPrivateKey(u, s.keyEnc)
 	if err != nil {
@@ -32,7 +36,11 @@ func (s *Server) loadExportAccount(id int64) (*persist.User, string, error) {
 func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
 	u, plainKey, err := s.loadExportAccount(id)
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, vpnaccount.ErrAccountNotFound) {
+			writeAPIError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	zipBytes, err := buildAccountExportZip(s.cfg, u, plainKey, s.serverPK)
@@ -40,7 +48,7 @@ func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id 
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit.Log(&se.UserID, "config_export", "user", &id, clientIP(r), map[string]string{"format": "zip"})
+	s.audit.Log(&se.UserID, "config_export", "user", &id, s.clientIP(r), map[string]string{"format": "zip"})
 	writeAttachment(w, "application/zip", fmt.Sprintf("haovpn-client-%s.zip", u.Username), zipBytes)
 }
 
@@ -50,11 +58,15 @@ func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id 
 func (s *Server) handleUserExportYAML(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
 	u, _, err := s.loadExportAccount(id)
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, vpnaccount.ErrAccountNotFound) {
+			writeAPIError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	caFile := config.ResolveServerCertPath(s.cfg)
 	yaml := config.BuildClientExportYAML(s.cfg.Server.Listen, u.Username, caFile, s.cfg.VPN.MTU)
-	s.audit.Log(&se.UserID, "config_export", "user", &id, clientIP(r), nil)
+	s.audit.Log(&se.UserID, "config_export", "user", &id, s.clientIP(r), nil)
 	writeAttachment(w, "application/x-yaml", fmt.Sprintf("client-%s.yaml", u.Username), []byte(yaml))
 }

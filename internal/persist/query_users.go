@@ -36,28 +36,24 @@ func (s *Store) ListUsersPage(f readmodel.UserListFilter) ([]readmodel.UserListI
 		}
 	}
 	wsql := strings.Join(where, " AND ")
-
-	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE `+wsql, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-
-	qargs := append(append([]any{}, args...), f.Limit, f.Offset)
-	rows, err := s.db.Query(`SELECT `+userListCols+` FROM users WHERE `+wsql+` ORDER BY id LIMIT ? OFFSET ?`, qargs...)
+	var out []readmodel.UserListItem
+	total, err := s.queryPageTotal(
+		`SELECT COUNT(*) FROM users WHERE `+wsql,
+		`SELECT `+userListCols+` FROM users WHERE `+wsql+` ORDER BY id LIMIT ? OFFSET ?`,
+		args, f.Limit, f.Offset,
+		func(rows *sql.Rows) error {
+			item, err := scanUserListItem(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, item)
+			return nil
+		},
+	)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
-
-	var out []readmodel.UserListItem
-	for rows.Next() {
-		item, err := scanUserListItem(rows)
-		if err != nil {
-			return nil, 0, err
-		}
-		out = append(out, item)
-	}
-	return out, total, rows.Err()
+	return out, total, nil
 }
 
 func scanUserListItem(row scannable) (readmodel.UserListItem, error) {

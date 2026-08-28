@@ -6,104 +6,162 @@
 
 > 仓库目录名可能仍为 `go-vpn`（本地路径），Go 模块名为 **`haovpn`**。
 
-## 环境要求（开发）
+---
 
-| 项目 | 版本 |
-|------|------|
-| 操作系统 | Windows（主开发环境） |
-| PowerShell | **7+**（`pwsh`） |
-| Go | **1.26** |
-| Git | 仅开发者本人提交 |
+## 许可证与商用
 
-<img width="1763" height="784" alt="cb73137c2081732be81e5532aba43324" src="https://github.com/user-attachments/assets/47d97a5a-3302-4f29-b2ac-cededca1f132" />
-<img width="1920" height="911" alt="5b58e6664ab2dbe9fbe8ab8cd0e6d983" src="https://github.com/user-attachments/assets/695ff1b1-fabc-477a-ae24-c4ae0c9ca1e7" />
-<img width="1920" height="911" alt="3aa7b55047cbb9c92f70eccf75ab517e" src="https://github.com/user-attachments/assets/1ba9ac62-6ff7-4912-b301-0d4cdf1c4bad" />
+- 个人/内网非商用：**可免费**使用官方源码与二进制。
+- **禁止**未经许可修改源码、做衍生项目或再分发。
+- **商用**须联系作者获取书面付费授权。详见 [LICENSE](LICENSE) 与 [docs/licensing.md](docs/licensing.md)。
 
-## 快速开始
+---
+
+## 5 分钟部署（服务端）
+
+### 1. 获取二进制
+
+从 [dist/](dist/) 发版包解压，或本机构建：
 
 ```powershell
 .\scripts\build-local.ps1
-
-# 服务端
-.\bin\haovpn-server.exe -c .\home\server.yaml
-
-# 客户端 CLI
-.\bin\haovpn-client.exe -c client.yaml
-
-# 客户端 GUI（推荐）
-.\bin\haovpn-client-gui.exe
 ```
 
-- 管理页面默认：`http://127.0.0.1:8080`
-- 隧道端口默认：`8443`
+产物在 `bin/haovpn-server.exe`（Windows）或对应平台二进制。
 
-进度与变更见 [docs/dev-log.md](docs/dev-log.md)。
+### 2. 首次启动
+
+```powershell
+mkdir home -Force
+.\bin\haovpn-server.exe -c .\home\server.yaml
+```
+
+首次运行会自动生成：
+
+- `server.yaml`（带中文注释）
+- `./certs/` 自签 TLS 证书
+- `./data/haovpn.db` SQLite 数据库
+
+默认管理口：`http://127.0.0.1:8080`（仅本机；TUN 启动后会追加 VPN 网卡 IP）  
+隧道端口：`8443`
+
+### 3. 首次登录改密
+
+1. 浏览器打开 `http://127.0.0.1:8080`
+2. 默认账号 `admin` / 初始密码见 `server.yaml` 中 `admin.password`（模板默认 `changeme12`，**务必立即修改**）
+3. 按提示修改管理员密码
+
+### 4. 开户并导出工程师配置
+
+1. WebUI → **账号** → 新建账号（自动生成密钥与 VPN IP）
+2. 点击 **下载 ZIP**，发给现场工程师
+3. 工程师解压后运行客户端（见下节）
+
+详细拓扑、frp、Linux systemd 见 [docs/deploy.md](docs/deploy.md)。
+
+---
+
+## 工程师接入（客户端）
+
+### GUI（Windows 推荐）
+
+```powershell
+.\haovpn-client-gui.exe
+```
+
+导入 ZIP 或填写 `client.yaml` 后连接。策略（`vpn_ip` / `allowed_ips`）由**握手下发**，无需手改。
+
+### CLI
+
+```powershell
+.\haovpn-client.exe -c client.yaml
+```
+
+### Windows 服务（开机自连）
+
+```powershell
+.\haovpn-client.exe --service install
+.\haovpn-client.exe --service start
+```
+
+---
+
+## 典型现场拓扑（frp）
+
+```
+工程师 PC ──TLS:8443──► VPS/frp ──► 现场 haovpn-server ──► 工控网 PLC
+                              │
+管理页仅本机/VPN内 :8080 ◄────┘（不要经 frp 暴露管理口）
+```
+
+- **8443**：隧道，可走 frp 反向映射  
+- **8080**：管理 API/WebUI，默认不暴露公网（`allow_public_bind: false`）
+
+---
+
+## 配置要点
+
+| 项 | 生产建议 |
+|----|----------|
+| `api.allow_public_bind` | `false` |
+| `api.listen_hosts` | `["127.0.0.1"]` + TUN IP |
+| `api.trusted_proxy_cidrs` | 留空（防 XFF 绕过登录锁定）；反代后填反代 IP |
+| `security.enforce_split_tunnel` | `true` |
+| `admin.password` | 首次启动后立即修改 |
+| TLS 证书 | 生产替换自签证书 |
+
+上线前核对 [docs/security-hardening.md](docs/security-hardening.md)。
+
+---
+
+## 环境要求
+
+| 角色 | 要求 |
+|------|------|
+| 服务端 | Linux/Windows/macOS；TUN 权限（Windows 管理员 / Linux CAP_NET_ADMIN） |
+| 客户端 | 同上；Windows 单 exe 内嵌 Wintun |
+| 开发 | Windows + **pwsh 7+** + **Go 1.26** |
+
+---
 
 ## 构建与发版
 
 | 场景 | 命令 | 产物 |
 |------|------|------|
-| 本机日常 | `.\scripts\build-local.ps1` | `bin/`（当前 Windows 架构） |
-| 全平台发版 | `.\scripts\build-release.ps1` | `dist/`（6 平台 zip + manifest） |
-| 公司机测试包 | `.\scripts\pack-company-client-test.ps1` | `dist/haovpn-company-client-test-*.zip` |
+| 本机日常 | `.\scripts\build-local.ps1` | `bin/` |
+| 全平台发版 | `.\scripts\build-release.ps1` | `dist/`（含 LICENSE、NOTICE） |
+
+发版前请核对 [docs/licensing.md](docs/licensing.md) 与 [docs/security-hardening.md](docs/security-hardening.md) §9（LICENSE/NOTICE 随包分发、联系邮箱已填写）。
 
 发版前由开发者手动改 [VERSION](VERSION)，详见 [docs/versioning.md](docs/versioning.md)。
 
-### `dist/` 目录（`build-release`）
+### Windows 与 Wintun
 
-```
-dist/
-├── VERSION
-├── manifest.json
-├── HaoVPN-<ver>-linux-amd64.zip
-├── linux-amd64/
-│   ├── haovpn-server
-│   └── haovpn-client
-├── windows-amd64/
-│   ├── haovpn-server.exe      # 内嵌 wintun，见下
-│   ├── haovpn-client.exe
-│   └── haovpn-client-gui.exe  # 仅 Windows zip
-└── …（linux-arm64、windows-arm64、darwin-amd64、darwin-arm64）
-```
+- 客户端/服务端 Windows 二进制内嵌 Wintun；首次建 TUN 时在 exe 同目录释放 `wintun.dll`（目录须可写）。
+- 构建前运行 `.\scripts\install-wintun.ps1`（`build-local` 会自动调用）。
 
-- 默认 **6 平台 × 2 二进制 = 12 个文件** + 6 个 zip + `manifest.json`（平台列表见 `scripts/platforms.txt`）。
-- **Windows zip**（`windows-amd64`）含 **`haovpn-client-gui.exe`**；`windows-arm64` zip 在本机 amd64 构建时不含 GUI（Fyne CGO 须同架构），ARM64 本机构建 release 时会带上。
-- **Windows zip 内不再单独附带 `wintun.dll`**：已 `go:embed` 进 exe，首次创建 TUN 时释放到 exe 同目录。
-
-### Windows 与 Wintun（单 exe 分发）
-
-| 二进制 | 是否内嵌 Wintun | 说明 |
-|--------|-----------------|------|
-| `haovpn-client.exe` / `haovpn-client-gui.exe` | ✅ | 工程师 PC 拨号 |
-| `haovpn-server.exe`（Windows） | ✅ | 服务端也要建 TUN/NAT，走同一套 `internal/tun` |
-| Linux / macOS 任意二进制 | — | 使用系统 TUN/utun，无 wintun.dll |
-
-- **分发**：拷贝单个 `.exe` 即可；**首次**连 TUN / 启动带 TUN 的服务端时，会在 **exe 所在目录** 写出 `wintun.dll`（目录须可写）。
-- **构建机**：首次或升级 Wintun 前运行 `.\scripts\install-wintun.ps1`（`build-local` / `build-release` 会自动调用）；DLL 源文件在 `internal/tun/wintundll/`（已 gitignore，不入库）。
-
-脚本细节见 [scripts/README.md](scripts/README.md)；部署见 [docs/deploy.md](docs/deploy.md)。
+---
 
 ## 文档地图
 
 | 文档 | 说明 |
 |------|------|
-| **[记忆.md](记忆.md)** | 接手顺序与当前进度表 |
-| [docs/README.md](docs/README.md) | docs 目录索引 |
-| [docs/development-principles.md](docs/development-principles.md) | 开发原则 |
-| [docs/architecture.md](docs/architecture.md) | **CODEMAP**（包导航、依赖、HTTP 路由表） |
-| [docs/comment-style.md](docs/comment-style.md) | **注释规范** |
-| [cmd/README.md](cmd/README.md) | 三个二进制入口 |
-| [docs/deploy.md](docs/deploy.md) | 部署、配置、验收 |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | 故障排障（现象→处理） |
-| [docs/dev-log.md](docs/dev-log.md) | 开发日志（唯一进度来源） |
-| [scripts/README.md](scripts/README.md) | 构建与测试脚本 |
+| **[记忆.md](记忆.md)** | 接手顺序与进度 |
+| [docs/deploy.md](docs/deploy.md) | **完整部署与验收** |
+| [docs/architecture.md](docs/architecture.md) | CODEMAP |
+| [docs/licensing.md](docs/licensing.md) | 商用授权说明 |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | 故障排障 |
+| [docs/dev-log.md](docs/dev-log.md) | 开发日志 |
+| [internal/README.md](internal/README.md) | 包索引 |
 
-规划存档：[docs/meta-plan.md](docs/meta-plan.md)（进度以 dev-log 为准）。
+---
 
 ## 技术栈
 
 Go 1.26 · TUN/Wintun/utun · wireguard-go 密码学 · TLS-TCP · SQLite · YAML
 
-## 许可证
+---
 
-待定
+## 故障与支持
+
+常见问题见 [docs/troubleshooting.md](docs/troubleshooting.md)。  
+进度与变更见 [docs/dev-log.md](docs/dev-log.md)。

@@ -6,6 +6,27 @@ import (
 	"haovpn/internal/timeutil"
 )
 
+// scanAuditRow 从 audit_logs 查询结果集扫描单行 AuditEntry。
+func scanAuditRow(rows *sql.Rows) (AuditEntry, error) {
+	var e AuditEntry
+	var actor sql.NullInt64
+	var target sql.NullInt64
+	var created string
+	if err := rows.Scan(&e.ID, &actor, &e.Action, &e.TargetType, &target, &e.ClientIP, &e.DetailJSON, &created); err != nil {
+		return e, err
+	}
+	if actor.Valid {
+		v := actor.Int64
+		e.ActorUserID = &v
+	}
+	if target.Valid {
+		v := target.Int64
+		e.TargetID = &v
+	}
+	e.CreatedAt = timeutil.ParseUTC(created)
+	return e, nil
+}
+
 // scanAuditRows 从 audit_logs 查询结果集扫描多行 AuditEntry。
 //
 // 参数：rows — 须为 SELECT id, actor_user_id, action, target_type, target_id, client_ip, detail_json, created_at。
@@ -13,22 +34,10 @@ import (
 func scanAuditRows(rows *sql.Rows) ([]AuditEntry, error) {
 	var out []AuditEntry
 	for rows.Next() {
-		var e AuditEntry
-		var actor sql.NullInt64
-		var target sql.NullInt64
-		var created string
-		if err := rows.Scan(&e.ID, &actor, &e.Action, &e.TargetType, &target, &e.ClientIP, &e.DetailJSON, &created); err != nil {
+		e, err := scanAuditRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		if actor.Valid {
-			v := actor.Int64
-			e.ActorUserID = &v
-		}
-		if target.Valid {
-			v := target.Int64
-			e.TargetID = &v
-		}
-		e.CreatedAt = timeutil.ParseUTC(created)
 		out = append(out, e)
 	}
 	return out, rows.Err()

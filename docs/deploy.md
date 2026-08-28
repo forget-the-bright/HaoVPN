@@ -365,6 +365,14 @@ api:
 
 见 [meta-plan.md](meta-plan.md)「安全测试」9 项，或 [security-hardening.md](security-hardening.md)。
 
+**meta-plan #3 网络隔离**（无 CI 自动化，须现场手工）：
+
+1. 确认 `api.allow_public_bind: false`，`listen_hosts` 不含 `0.0.0.0`/`::`。
+2. 从**非本机、非 VPN 网段**的机器执行：`curl -m 3 http://<服务端IP>:8080/api/v1/health`
+3. 期望：**连接失败或超时**（管理口不可达）。
+
+发版前授权核对见 [licensing.md](licensing.md)「发版前检查清单」。
+
 快速脚本（代码落地后）：
 
 ```bash

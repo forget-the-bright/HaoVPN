@@ -251,6 +251,7 @@ func (l *Logger) log(lv Level, skip int, format string, args ...any) {
 		name = l.prefix + " " + name
 	}
 	line := fmt.Sprintf("[%s] %s", name, msg)
+	line = RedactSensitive(line)
 
 	if lv >= LevelWarn {
 		RecordRecent(line)

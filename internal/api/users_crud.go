@@ -38,20 +38,24 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		onlineOnly, _ := paginate.ParseBoolQuery(q.Get("online"))
+		online := s.onlineUserSet()
 		var out []readmodel.UserListAccountView
 		for _, u := range items {
-			_, online := s.sessions.GetSession(u.ID)
-			if onlineOnly && !online {
+			isOnline := online[u.ID]
+			if onlineOnly && !isOnline {
 				continue
 			}
-			out = append(out, readmodel.UserListItemToAccountView(u, online))
+			out = append(out, readmodel.UserListItemToAccountView(u, isOnline))
 		}
 		if onlineOnly {
 			total = len(out)
 		}
 		writePage(w, http.StatusOK, out, total, limit, offset)
 	case http.MethodPost:
-		_ = parseRequestForm(r)
+		if err := parseRequestForm(r); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid form data")
+			return
+		}
 		username := r.FormValue("username")
 		password := r.FormValue("password")
 		ipMode := r.FormValue("ip_mode")
@@ -75,13 +79,13 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		id, vpnIP := res.UserID, res.VPNIP
 		se, _ := s.sessionFromRequest(r)
-		s.audit.Log(&se.UserID, "account_create", "user", &id, clientIP(r), map[string]string{"username": username, "vpn_ip": vpnIP})
+		s.audit.Log(&se.UserID, "account_create", "user", &id, s.clientIP(r), map[string]string{"username": username, "vpn_ip": vpnIP})
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": id, "username": username, "vpn_ip": vpnIP, "ip_mode": ipMode,
 			"policy_ver": 1, "export_zip_url": fmt.Sprintf("/api/v1/users/%d/export.zip", id),
 		})
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, nil)
+		writeMethodNotAllowed(w)
 	}
 }
 
@@ -106,7 +110,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) > 1 && parts[1] == "kick" && r.Method == http.MethodPost {
 		s.sessions.KickUser(id)
-		s.audit.Log(&se.UserID, "kick_account", "user", &id, clientIP(r), nil)
+		s.audit.Log(&se.UserID, "kick_account", "user", &id, s.clientIP(r), nil)
 		writeOK(w)
 		return
 	}
@@ -125,10 +129,13 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.audit.Log(&se.UserID, "account_delete", "user", &id, clientIP(r), nil)
+		s.audit.Log(&se.UserID, "account_delete", "user", &id, s.clientIP(r), nil)
 		writeOK(w)
 	case http.MethodPost:
-		_ = parseRequestForm(r)
+		if err := parseRequestForm(r); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid form data")
+			return
+		}
 		action := r.FormValue("action")
 		if action == "disable" {
 			if err := s.vpnSvc.SetAccountEnabled(id, false); err != nil {
@@ -136,16 +143,16 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			logger.Info("账号已禁用并踢线: user_id=%d", id)
-			s.audit.Log(&se.UserID, "user_disable", "user", &id, clientIP(r), nil)
+			s.audit.Log(&se.UserID, "user_disable", "user", &id, s.clientIP(r), nil)
 		} else if action == "enable" {
 			if err := s.vpnSvc.SetAccountEnabled(id, true); err != nil {
 				writeAPIError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			s.audit.Log(&se.UserID, "user_enable", "user", &id, clientIP(r), nil)
+			s.audit.Log(&se.UserID, "user_enable", "user", &id, s.clientIP(r), nil)
 		}
 		writeOK(w)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, nil)
+		writeMethodNotAllowed(w)
 	}
 }

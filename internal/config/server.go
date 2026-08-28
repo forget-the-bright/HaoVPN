@@ -92,9 +92,11 @@ type APISection struct {
 	ListenHosts      []string `yaml:"listen_hosts"`       // 绑定地址列表；默认 127.0.0.1
 	Port             int      `yaml:"port"`               // 端口；Validate 须 1–65535
 	AllowPublicBind  bool     `yaml:"allow_public_bind"`  // 含 0.0.0.0/:: 时须显式 true
-	LoginMaxAttempts int      `yaml:"login_max_attempts"` // 登录失败上限；0 用内置默认
-	LoginLockoutSec  int      `yaml:"login_lockout_sec"`  // 锁定时长秒
-	SessionTTLSec    int      `yaml:"session_ttl_sec"`    // Web 会话 Cookie 有效期秒
+	LoginMaxAttempts     int      `yaml:"login_max_attempts"`      // 登录失败上限；0 用内置默认
+	LoginLockoutSec      int      `yaml:"login_lockout_sec"`       // 锁定时长秒
+	SessionTTLSec        int      `yaml:"session_ttl_sec"`         // Web 会话 Cookie 有效期秒
+	TrustedProxyCIDRs    []string `yaml:"trusted_proxy_cidrs"`   // 信任反代 CIDR；空则 clientIP 仅用 RemoteAddr（防 XFF 绕过锁定）
+	SecureCookies        bool     `yaml:"secure_cookies"`          // true 或 HTTPS 请求时 Session Cookie 设 Secure
 }
 
 // SecuritySection 隧道接入源 IP 限制与客户端分流策略。
@@ -189,6 +191,9 @@ func (c *ServerConfig) Validate() error {
 		return fmt.Errorf("配置错误: %w", err)
 	}
 	if err := netutil.ValidateCIDRList("security.tunnel_allowed_source_ips", c.Security.TunnelAllowedSourceIPs); err != nil {
+		return fmt.Errorf("配置错误: %w", err)
+	}
+	if err := netutil.ValidateCIDRList("api.trusted_proxy_cidrs", c.API.TrustedProxyCIDRs); err != nil {
 		return fmt.Errorf("配置错误: %w", err)
 	}
 	if _, _, err := net.SplitHostPort(c.Server.Listen); err != nil {

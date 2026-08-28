@@ -74,7 +74,9 @@ func (s *Server) validateCSRF(r *http.Request) bool {
 	}
 	token := r.Header.Get("X-CSRF-Token")
 	if token == "" {
-		_ = parseRequestForm(r)
+		if err := parseRequestForm(r); err != nil {
+			return false
+		}
 		token = r.FormValue("csrf_token")
 	}
 	return s.auth.ValidateCSRF(c.Value, token)
@@ -86,18 +88,18 @@ func (s *Server) validateCSRF(r *http.Request) bool {
 // 副作用：写入会话 Cookie（HttpOnly、SameSite=Lax）；登录接口豁免 CSRF。
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, "POST only")
+		writeMethodNotAllowed(w)
 		return
 	}
 	if err := parseRequestForm(r); err != nil {
-		ip := clientIP(r)
+		ip := s.clientIP(r)
 		logger.Warn("登录表单解析失败 ip=%s ct=%q err=%v", ip, r.Header.Get("Content-Type"), err)
 		writeAPIError(w, http.StatusBadRequest, "invalid form data")
 		return
 	}
 	username := r.FormValue("username")
 	password := r.FormValue("password")
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	token, user, err := s.auth.Login(username, password, ip)
 	if err != nil {
 		s.audit.Log(nil, "login_failed", "user", nil, ip, map[string]string{"username": username})
@@ -105,14 +107,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	csrf := s.auth.GetCSRF(token)
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:     "session",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   s.cfg.API.SessionTTLSec,
-	})
+	}
+	if s.cfg.API.SecureCookies || r.TLS != nil {
+		cookie.Secure = true
+	}
+	http.SetCookie(w, cookie)
 	s.audit.Log(&user.ID, "login", "user", &user.ID, ip, nil)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                   true,
@@ -129,7 +135,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		se, ok := s.auth.ValidateSession(c.Value)
 		if ok {
 			uid := se.UserID
-			s.audit.Log(&uid, "logout", "user", &uid, clientIP(r), nil)
+			s.audit.Log(&uid, "logout", "user", &uid, s.clientIP(r), nil)
 		}
 		s.auth.Logout(c.Value)
 	}
@@ -143,21 +149,24 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // 副作用：更新 DB 密码哈希、写审计 change_password。
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, nil)
+		writeMethodNotAllowed(w)
 		return
 	}
 	se, ok := s.sessionFromRequest(r)
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, nil)
+		writeAPIError(w, http.StatusUnauthorized, "未登录")
 		return
 	}
-	_ = parseRequestForm(r)
+	if err := parseRequestForm(r); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
 	newPass := r.FormValue("new_password")
 	if err := s.auth.ChangePassword(se.UserID, newPass); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.audit.Log(&se.UserID, "change_password", "user", &se.UserID, clientIP(r), nil)
+	s.audit.Log(&se.UserID, "change_password", "user", &se.UserID, s.clientIP(r), nil)
 	writeOK(w)
 }
 

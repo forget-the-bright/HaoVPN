@@ -125,6 +125,34 @@ func TestDynamicLeaseNoCrossUserCollision(t *testing.T) {
 	}
 }
 
+// TestDeleteAccountDynamicSession 删除 dynamic_session 账号应释放 IP 占用。
+func TestDeleteAccountDynamicSession(t *testing.T) {
+	svc, store, pool := testSvc(t)
+	defer store.Close()
+	hash, _ := auth.HashPassword("pass12345")
+	id, err := store.CreateVPNAccount(persist.User{
+		Username: "del-dyn", PasswordHash: hash, PublicKey: "pk-del", PrivateKeyEnc: "priv",
+		IPMode: persist.IPModeDynamicSession, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := store.GetUserByID(id)
+	ip, err := svc.EnsureVPNIP(u)
+	if err != nil || ip == "" {
+		t.Fatalf("allocate: %v %s", err, ip)
+	}
+	if err := svc.DeleteAccount(id); err != nil {
+		t.Fatal(err)
+	}
+	if pool.IsAllocated(ip) {
+		t.Fatal("删除 dynamic_session 账号后 IP 应回池")
+	}
+	if _, err := store.GetUserByID(id); err == nil {
+		t.Fatal("users 行应已删除")
+	}
+}
+
 // TestDefaultAllowedIPs 空账号策略解析为服务端模板。
 func TestDefaultAllowedIPs(t *testing.T) {
 	svc, store, _ := testSvc(t)

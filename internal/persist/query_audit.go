@@ -1,6 +1,7 @@
 package persist
 
 import (
+	"database/sql"
 	"strings"
 	"time"
 
@@ -28,21 +29,25 @@ func (s *Store) ListAuditLogsFiltered(f readmodel.AuditListFilter) ([]AuditEntry
 		args = append(args, timeutil.FormatUTC(f.Since))
 	}
 	wsql := strings.Join(where, " AND ")
-
-	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE `+wsql, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-
-	qargs := append(append([]any{}, args...), f.Limit, f.Offset)
-	rows, err := s.db.Query(`SELECT id, actor_user_id, action, target_type, target_id, client_ip, detail_json, created_at
-		FROM audit_logs WHERE `+wsql+` ORDER BY id DESC LIMIT ? OFFSET ?`, qargs...)
+	var out []AuditEntry
+	total, err := s.queryPageTotal(
+		`SELECT COUNT(*) FROM audit_logs WHERE `+wsql,
+		`SELECT id, actor_user_id, action, target_type, target_id, client_ip, detail_json, created_at
+		FROM audit_logs WHERE `+wsql+` ORDER BY id DESC LIMIT ? OFFSET ?`,
+		args, f.Limit, f.Offset,
+		func(rows *sql.Rows) error {
+			e, err := scanAuditRow(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, e)
+			return nil
+		},
+	)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
-	out, err := scanAuditRows(rows)
-	return out, total, err
+	return out, total, nil
 }
 
 // PruneAuditLogs 删除早于 cutoff 的审计记录。

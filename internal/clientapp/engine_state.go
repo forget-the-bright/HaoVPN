@@ -20,6 +20,7 @@ const (
 	StateReconnecting
 )
 
+// String 返回连接状态的中文描述，供 GUI/CLI 展示。
 func (s State) String() string {
 	switch s {
 	case StateIdle:
@@ -37,8 +38,11 @@ func (s State) String() string {
 
 // Credentials 隧道登录凭据，由 CLI/GUI 经 SetCredentials 写入 Engine。
 type Credentials struct {
-	Username   string
-	Password   string
+	// Username Web/VPN 合一账号名，握手时发送给服务端。
+	Username string
+	// Password 隧道登录密码（非 Web Session）。
+	Password string
+	// PrivateKey 客户端隧道私钥（Base64）；GUI 记住密码模式或 zip 导入后填入。
 	PrivateKey string
 }
 

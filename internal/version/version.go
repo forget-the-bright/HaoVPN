@@ -30,5 +30,6 @@ func Info() map[string]string {
 		"version":    Version,
 		"commit":     Commit,
 		"build_time": BuildTime,
+		"license":    "see LICENSE",
 	}
 }

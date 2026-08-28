@@ -1,0 +1,64 @@
+HaoVPN Source-Available License
+
+Copyright (c) 2026 HaoVPN Project Author. All rights reserved.
+
+IMPORTANT: This is a custom license, not an OSI-approved open-source license.
+The copyright holder must review and may amend this text before distribution.
+
+---
+
+1. Definitions
+
+   "Software" means the HaoVPN source code, documentation, and official
+   pre-built binaries distributed by the copyright holder.
+
+   "Commercial Use" means use of the Software, or deployment of the Software
+   to provide services to third parties, in connection with any activity
+   intended for or directed toward commercial advantage or monetary
+   compensation, including but not limited to: selling access, SaaS/hosting
+   for a fee, bundling into a paid product, or internal use by a for-profit
+   entity beyond reasonable evaluation.
+
+2. Grant — Personal and Internal Non-Commercial Use
+
+   You may download, compile, and run the Software free of charge for:
+
+   - personal, educational, or non-commercial research use;
+   - internal use within a single organization on private networks, provided
+     such use is not Commercial Use as defined above.
+
+3. Restrictions
+
+   Without prior written authorization from the copyright holder, you may NOT:
+
+   - modify the Software source code and distribute modified versions;
+   - create derivative works based on the Software and distribute them;
+   - redistribute the Software or substantial portions thereof;
+   - remove or alter copyright or license notices;
+   - use the Software for Commercial Use.
+
+4. Commercial Authorization
+
+   Any Commercial Use requires a separate written license agreement and
+   payment as determined by the copyright holder. Contact the author to
+   obtain commercial authorization. See docs/licensing.md for guidance.
+
+5. Third-Party Components
+
+   The Software incorporates third-party open-source components listed in
+   NOTICE. Those components remain subject to their respective licenses.
+
+6. Disclaimer
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE.
+
+7. Contact
+
+   For commercial licensing inquiries, contact the copyright holder:
+   [helloworldwh@163.com]

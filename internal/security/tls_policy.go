@@ -3,7 +3,6 @@ package security
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"regexp"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
@@ -43,20 +42,6 @@ func ClientTLSConfigWithRootCAs(rootCAs *x509.CertPool, insecureSkipVerify bool)
 	return cfg
 }
 
-// ClientTLSConfig 基于 TLSConfig 生成客户端 TLS，可选挂载 CA 与跳过校验开关。
-//
-// 参数：caPool 非 nil 时将其 RootCAs 复制到 cfg；insecureSkipVerify 仅开发/内网慎用。
-// 返回：可直接用于 tls.Dial 的 *tls.Config。
-// 副作用：无。
-func ClientTLSConfig(caPool *tls.Config, insecureSkipVerify bool) *tls.Config {
-	cfg := TLSConfig(tls.Certificate{}, false)
-	cfg.InsecureSkipVerify = insecureSkipVerify
-	if caPool != nil {
-		cfg.RootCAs = caPool.RootCAs
-	}
-	return cfg
-}
-
 // BindCheck 校验管理 API 监听地址是否符合 allow_public_bind 策略。
 //
 // 参数：listenHosts 为配置中的 host 列表；allowPublic false 时禁止公网/0.0.0.0 绑定。
@@ -72,22 +57,11 @@ func BindCheck(listenHosts []string, allowPublic bool) error {
 	return nil
 }
 
-var (
-	rePassword = regexp.MustCompile(`(?i)(password|passwd|secret|token|private_key)\s*[:=]\s*\S+`)
-	reKey      = regexp.MustCompile(`(?i)[A-Za-z0-9+/]{40,}={0,2}`)
-)
-
 // Redact 从日志或 API 响应字符串中脱敏密码、token 与疑似密钥材料。
 //
-// 参数：s 原始文本；过长（>200）时额外匹配 base64 样长串。
-// 返回：替换为 [REDACTED] / [REDACTED_KEY] 后的副本；不修改原串。
-// 副作用：无；纯正则替换。
+// 实现委托 logger.RedactSensitive，避免 logger↔security 循环依赖。
 func Redact(s string) string {
-	s = rePassword.ReplaceAllString(s, "$1=[REDACTED]")
-	if len(s) > 200 {
-		s = reKey.ReplaceAllString(s, "[REDACTED_KEY]")
-	}
-	return s
+	return logger.RedactSensitive(s)
 }
 
 // SecurityHeaders 返回 Web 管理端推荐的 HTTP 安全响应头。

@@ -63,6 +63,21 @@ netutil / winnet / fileutil / timeutil / paginate / readmodel / security / confi
 
 ---
 
+## 第十一轮架构要点（2026-08-28）
+
+- **vpnaccount**：`releaseDynamicIP`；`PlanVPNPatch` 在 `patch.go`；`ErrAccountNotFound` 统一。
+- **api**：`users_crud` 复用 `onlineUserSet()`；导出/重置密码 404 语义对齐。
+- **审计**：logs API redaction、Cookie HttpOnly/SameSite、public bind WARN、form 400 补测。
+- **授权**：[docs/licensing.md](../docs/licensing.md) 发版前检查清单（法律层，无运行时校验）。
+
+## 第十轮架构要点（2026-08-28）
+
+- **persist**：`query_page.go`（`queryPageTotal`）；删 `ListAuditLogs`。
+- **serverapp**：`engine_boot.go` 分阶段启动；`engine.go` 仅串联。
+- **api**：`writeMethodNotAllowed`、`dataplaneSnapshot`、`buildMonitorItems`；`s.clientIP` + `trusted_proxy_cidrs`。
+- **安全**：`logger.RedactSensitive`；密码强度；Secure Cookie；禁用账号握手测试。
+- **授权**：[LICENSE](../LICENSE)、[docs/licensing.md](../docs/licensing.md)。
+
 ## 第九轮架构要点（2026-08-28）
 
 - **叶子工具**：`paginate.ParseLimitOffset`；`clientIP`→`netutil.HostFromAddr`；删未用 `FormatListenAddrs`；`persist.DefaultIPLeaseSec`。

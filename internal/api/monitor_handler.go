@@ -19,15 +19,7 @@ func (s *Server) handleMonitorOnline(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var items []map[string]any
-	for _, row := range rows {
-		if !online[row.ID] {
-			continue
-		}
-		item := readmodel.MonitorRowToItem(row, true)
-		s.mergeLiveMonitorStats(item, row.ID)
-		items = append(items, item)
-	}
+	items := s.buildMonitorItems(rows, true, online)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -44,19 +36,7 @@ func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	online := s.onlineUserSet()
-
-	var items []map[string]any
-	for _, row := range rows {
-		isOnline := online[row.ID]
-		if onlineOnly && !isOnline {
-			continue
-		}
-		item := readmodel.MonitorRowToItem(row, isOnline)
-		if isOnline {
-			s.mergeLiveMonitorStats(item, row.ID)
-		}
-		items = append(items, item)
-	}
+	items := s.buildMonitorItems(rows, onlineOnly, online)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 }
 
@@ -80,6 +60,23 @@ func (s *Server) handleMonitorEvents(w http.ResponseWriter, r *http.Request) {
 		out[i] = readmodel.ConnectionEventToView(row)
 	}
 	writePage(w, http.StatusOK, out, total, limit, offset)
+}
+
+// buildMonitorItems 将 JOIN 行转为监控 JSON item，可选仅在线与合并 live 统计。
+func (s *Server) buildMonitorItems(rows []readmodel.MonitorAccountRow, onlineOnly bool, online map[int64]bool) []map[string]any {
+	var items []map[string]any
+	for _, row := range rows {
+		isOnline := online[row.ID]
+		if onlineOnly && !isOnline {
+			continue
+		}
+		item := readmodel.MonitorRowToItem(row, isOnline)
+		if isOnline {
+			s.mergeLiveMonitorStats(item, row.ID)
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 // onlineUserSet 将会话管理器在线列表转为 map，便于监控页 O(1) 判定。

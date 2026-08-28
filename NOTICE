@@ -1,0 +1,22 @@
+HaoVPN Third-Party Notices
+
+This product includes software developed by third parties under the
+licenses listed below. Full license texts are available in the respective
+project repositories.
+
+Direct dependencies (see go.mod):
+
+- fyne.io/fyne/v2 — BSD-3-Clause
+- golang.org/x/crypto — BSD-3-Clause
+- golang.org/x/sys — BSD-3-Clause
+- golang.zx2c4.com/wintun — MIT
+- golang.zx2c4.com/wireguard — MIT
+- gopkg.in/natefinch/lumberjack.v2 — MIT
+- gopkg.in/yaml.v3 — MIT / Apache-2.0
+- modernc.org/sqlite — BSD-3-Clause
+
+Wintun (Windows TUN driver) is embedded or released alongside Windows
+binaries per its license terms.
+
+This file is provided for attribution purposes only and does not modify
+the HaoVPN Source-Available License in LICENSE.

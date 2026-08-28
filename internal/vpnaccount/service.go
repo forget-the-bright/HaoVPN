@@ -104,11 +104,7 @@ func (s *Service) ReleaseOnDisconnect(userID int64, vpnIP, ipMode string) {
 	}
 	switch ipMode {
 	case persist.IPModeDynamicSession:
-		s.Pool.Release(vpnIP)
-		_ = s.Store.ReleaseIPAllocation(vpnIP)
-		if s.OnUnregisterIP != nil {
-			s.OnUnregisterIP(vpnIP)
-		}
+		s.releaseDynamicIP(vpnIP)
 	case persist.IPModeDynamicLease:
 		u, _ := s.Store.GetUserByID(userID)
 		leaseSec := persist.DefaultIPLeaseSec
@@ -143,12 +139,26 @@ func (s *Service) StartLeaseCleaner(stop <-chan struct{}) {
 			if n > 0 {
 				logger.Info("已清理 %d 个过期租约 IP", n)
 				for _, ip := range ips {
-					s.Pool.Release(ip)
-					if s.OnUnregisterIP != nil {
-						s.OnUnregisterIP(ip)
-					}
+					s.releaseDynamicIP(ip)
 				}
 			}
 		})
 	})
+}
+
+// releaseDynamicIP 释放 dynamic_session / 租约过期等非 fixed 模式的 IP 占用。
+//
+// 参数：vpnIP — 要回收到池中的地址；空则跳过。
+// 副作用：Pool.Release、ReleaseIPAllocation、OnUnregisterIP；Pool 为 nil 时仅更新 Store。
+func (s *Service) releaseDynamicIP(vpnIP string) {
+	if vpnIP == "" {
+		return
+	}
+	if s.Pool != nil {
+		s.Pool.Release(vpnIP)
+	}
+	_ = s.Store.ReleaseIPAllocation(vpnIP)
+	if s.OnUnregisterIP != nil {
+		s.OnUnregisterIP(vpnIP)
+	}
 }

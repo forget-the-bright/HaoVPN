@@ -6,7 +6,99 @@
 
 ---
 
-*最后更新：2026-08-28 · 架构解耦第九轮*
+*最后更新：2026-08-28 · 架构第十一轮*
+
+---
+
+## 2026-08-28 · 第十一轮：架构收敛 + 审计闭环 + 文档治理 + 法律层授权
+
+### 动机
+
+第十轮后剩余 polish：IP 释放重复逻辑、审计测试补洞、文档漂移、发版授权流程完善（无运行时 license 校验）。
+
+### 架构收敛
+
+- `vpnaccount.releaseDynamicIP`：`DeleteAccount` / `ReleaseOnDisconnect` / 租约清理统一。
+- `PlanVPNPatch`、`VPNPatchInput`、`VPNPatchPlan` 移至 `patch.go`；`delete.go` 仅删号。
+- `users_export` / `users_vpn` 统一 `ErrAccountNotFound` → HTTP 404。
+- `users_crud` `?online=` 复用 `onlineUserSet()`。
+- `query_ext_test.go` → `query_page_test.go`。
+
+### 审计闭环
+
+| 项 | 修复/补测 |
+|----|-----------|
+| A1 form 解析 | 登录/改密/重置密码/CSRF form 失败 → 400 |
+| A2 kick DB | `recordDisconnect` 失败打 WARN |
+| S1 logs API | `TestLogsAPIRedactsSensitive` |
+| S3 Cookie | `TestSessionCookieHttpOnlySameSite` |
+| #2 public bind | `TestPublicBindWarnBanner`（security） |
+| A1 回归 | `TestPasswordResetBadForm` |
+
+### 文档与授权
+
+- architecture / deploy（#3 网络隔离手工步骤）/ security-hardening §9 发版前。
+- [docs/licensing.md](licensing.md) 发版前检查清单。
+- NOTICE 与 go.mod 直接依赖一致。
+
+### 验证
+
+```powershell
+go test ./...
+.\scripts\build-local.ps1
+.\scripts\dev-smoke-test.ps1
+.\scripts\dev-security-check.ps1
+```
+
+---
+
+*最后更新：2026-08-28 · 架构第十一轮*
+
+---
+
+## 2026-08-28 · 第十轮：架构收敛 + 全量审计 + 文档治理 + 商用授权（法律层）
+
+### 动机
+
+在第九轮基础上完成剩余重复逻辑收敛、安全审计闭环、全局文档治理与 LICENSE 法律层落地（无运行时 license 校验）。
+
+### 架构收敛
+
+- `persist/query_page.go`：`queryPageTotal`；删 `ListAuditLogs`。
+- `serverapp/engine_boot.go`：分阶段启动；`engine.go` 仅串联。
+- `api`：`writeMethodNotAllowed`、`dataplaneSnapshot`、`buildMonitorItems`；`vpnaccount.ErrAccountNotFound`。
+- 删 `security.ClientTLSConfig`、`api/export_test.go`（重复）。
+
+### 安全审计闭环
+
+| 项 | 修复 |
+|----|------|
+| S1 日志 Redact | `logger.RedactSensitive` 写盘路径；`/api/v1/logs` 返回前脱敏 |
+| S2 XFF 绕过 | 默认仅 `RemoteAddr`；`api.trusted_proxy_cidrs` 可选 |
+| S3 Secure Cookie | `secure_cookies` 或 HTTPS 时设 Secure |
+| S4 密码强度 | ≥8 + 字母数字；默认 admin 模板改为 `changeme12` |
+| S5–S6 测试 | 锁定 5 次 + audit；禁用账号握手拒绝 |
+| S7 form 解析 | 失败返回 400 |
+
+### 文档与授权
+
+- [README.md](../README.md) 独立部署指南；[docs/licensing.md](licensing.md)；[LICENSE](../LICENSE)、[NOTICE](../NOTICE)。
+- 精简 [docs/README.md](README.md)；更新 [security-hardening.md](security-hardening.md)、[architecture.md](architecture.md)。
+
+### 验证
+
+```powershell
+go test ./...
+.\scripts\build-local.ps1
+.\scripts\dev-smoke-test.ps1
+.\scripts\dev-security-check.ps1
+```
+
+均通过。
+
+---
+
+*最后更新：2026-08-28 · 架构第十轮*
 
 ---
 

@@ -45,6 +45,26 @@ func TestSecurityChecklist(t *testing.T) {
 	}
 }
 
+// TestPublicBindWarnBanner allow_public_bind=true 且 wildcard 监听时须打 WARN 横幅（meta-plan #2）。
+func TestPublicBindWarnBanner(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "bind.log")
+	if err := logger.Init(logger.Config{Level: "warn", File: logPath}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	if err := security.BindCheck([]string{"0.0.0.0"}, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "PUBLIC BIND ENABLED") {
+		t.Fatalf("expected WARN banner, log=%q", data)
+	}
+}
+
 func writeYAML(path, content string) {
 	_ = os.WriteFile(path, []byte(content), 0o600)
 }

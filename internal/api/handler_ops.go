@@ -16,8 +16,8 @@ import (
 
 // handleHealth 健康检查（GET /api/v1/health，公开）。
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	dbOK := s.store.DB().Ping() == nil
-	st := health.NewStatus(s.startedAt, s.sessions.OnlineCount(), dbOK, s.tunOK, s.natOK, logger.RecentErrors())
+	dbOK, online, recent := s.dataplaneSnapshot()
+	st := health.NewStatus(s.startedAt, online, dbOK, s.tunOK, s.natOK, recent)
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -45,16 +45,24 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 
 // handleDashboard 仪表盘摘要 JSON（GET /api/v1/dashboard）。
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	dbOK := s.store.DB().Ping() == nil
+	dbOK, online, recent := s.dataplaneSnapshot()
 	writeJSON(w, http.StatusOK, health.DashboardMap(
-		s.startedAt, s.sessions.OnlineCount(), dbOK, s.tunOK, s.natOK, logger.RecentErrors(),
+		s.startedAt, online, dbOK, s.tunOK, s.natOK, recent,
 	))
+}
+
+// dataplaneSnapshot 聚合 DB/在线数/近期错误，供 health 与 dashboard 共用。
+func (s *Server) dataplaneSnapshot() (dbOK bool, online int, recent []string) {
+	dbOK = s.store.DB().Ping() == nil
+	online = s.sessions.OnlineCount()
+	recent = logger.RecentErrors()
+	return dbOK, online, recent
 }
 
 // handleLogs 读取实时或历史日志（GET /api/v1/logs）。
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, nil)
+		writeMethodNotAllowed(w)
 		return
 	}
 	q := r.URL.Query()
@@ -86,6 +94,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		for _, it := range items {
 			lines = append(lines, it.Line)
 		}
+		lines = redactLogLines(lines)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"source": "history", "items": items, "lines": lines,
 			"total": total, "limit": limit, "offset": offset,
@@ -103,6 +112,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		lines = redactLogLines(lines)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"source": source, "lines": lines, "truncated": truncated, "file": path,
 		})
@@ -112,7 +122,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 // handleBackup 下载 SQLite 主库备份（GET /api/v1/backup）。
 func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	se, _ := s.sessionFromRequest(r)
-	s.audit.Log(&se.UserID, "db_backup", "system", nil, clientIP(r), nil)
+	s.audit.Log(&se.UserID, "db_backup", "system", nil, s.clientIP(r), nil)
 	http.ServeFile(w, r, s.cfg.Database.Path)
 }
 

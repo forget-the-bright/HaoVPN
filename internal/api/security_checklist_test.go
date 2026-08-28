@@ -15,6 +15,7 @@ import (
 	"haovpn/internal/crypto"
 	"haovpn/internal/ippool"
 	"haovpn/internal/persist"
+	"haovpn/internal/readmodel"
 	"haovpn/internal/security"
 	"haovpn/internal/sessionmgr"
 )
@@ -56,7 +57,7 @@ func TestSecurityChecklistMetaPlan(t *testing.T) {
 	// #2 allow_public_bind 审计记录
 	auditLog := audit.New(store)
 	api.LogPublicBindAudit(auditLog)
-	logs, err := store.ListAuditLogs(10, 0)
+	logs, _, err := store.ListAuditLogsFiltered(readmodel.AuditListFilter{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,19 +44,23 @@ func (m *Manager) KickUser(userID int64) {
 // recordDisconnect 写入 disconnected 事件并更新 session_stats（保留 reconnect_count）。
 func (m *Manager) recordDisconnect(userID int64, remoteAddr string) {
 	if m.store != nil {
-		_ = m.store.InsertConnectionEvent(userID, "disconnected", remoteAddr, "")
+		if err := m.store.InsertConnectionEvent(userID, "disconnected", remoteAddr, ""); err != nil {
+			logger.Warn("踢线写 connection_events 失败 user_id=%d: %v", userID, err)
+		}
 		now := time.Now()
 		st, _ := m.store.GetSessionStat(userID)
 		rc := 0
 		if st != nil {
 			rc = st.ReconnectCount
 		}
-		_ = m.store.UpsertSessionStat(persist.SessionStat{
+		if err := m.store.UpsertSessionStat(persist.SessionStat{
 			UserID:         userID,
 			LastHeartbeat:  &now,
 			ReconnectCount: rc,
 			RemoteAddr:     remoteAddr,
-		})
+		}); err != nil {
+			logger.Warn("踢线更新 session_stats 失败 user_id=%d: %v", userID, err)
+		}
 	}
 	logger.Info("账号 id=%d 已断开", userID)
 }

@@ -39,7 +39,7 @@ security:
 
 admin:
   username: "admin"
-  password: "changeme"
+  password: "changeme12"
 
 log:
   level: "info"

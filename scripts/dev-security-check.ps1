@@ -38,8 +38,8 @@ if ($text -match '0\.0\.0\.0') {
     Ok "listen_hosts 未绑定 0.0.0.0"
 }
 
-if ($text -match 'password:\s*"?changeme"?') {
-    Warn "admin 密码仍为 changeme"
+if ($text -match 'password:\s*"?changeme(12)?"?(\s|$)') {
+    Warn "admin 密码仍为默认模板值（changeme/changeme12）"
 } else {
     Ok "admin 默认密码已修改或不在配置中"
 }
