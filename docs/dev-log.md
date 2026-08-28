@@ -6,7 +6,98 @@
 
 ---
 
-*最后更新：2026-08-28 · 架构解耦第七轮*
+*最后更新：2026-08-28 · 架构解耦第九轮*
+
+---
+
+## 2026-08-28 · 架构解耦第九轮（高内聚 · 低耦合）
+
+### 动机
+
+在第八轮基础上，消除 API 分页/成功信封样板、clientIP 与 HostFromAddr 漂移、魔法租约秒、死代码、胖文件与 retention 裸 goroutine，并同步全局 CODEMAP。
+
+### 完成
+
+**叶子工具**
+
+- `paginate.ParseLimitOffset`；users/audit/monitor events 统一使用。
+- `api.clientIP` → XFF + `netutil.HostFromAddr`（修 IPv6）；单测 `httputil_test.go`。
+- 删除未使用的 `netutil.FormatListenAddrs`。
+- `persist.DefaultIPLeaseSec`；provision/service/users/session_store/schema 注释对齐。
+
+**HTTP 助手**
+
+- 全面 `writeOK` / `writePage`；新增 `writeAttachment`（ZIP/YAML 导出）。
+- 去掉 `handleLogs` 对 `parseLogTailQuery` 的双重 Clamp。
+- `ip_lease_sec` 用 `ParseIntDefault`；CSRF 迁入 `auth_handlers` 并走 `sessionFromRequest`。
+- `auth.setPassword` 私有复用；`ChangePassword` / `ResetPasswordByAdmin` 语义保留。
+
+**安全与领域**
+
+- `maintenance.StartRetentionLoop` → `safeutil.GoSafe("data-retention")`。
+- `vpnaccount.ValidateAllowedIPs` 注释标明领域别名边界。
+
+**同包拆分**
+
+- `api/handler_listen.go`（监听生命周期）。
+- `persist/query_users.go` / `query_audit.go` / `query_events.go` / `query_monitor.go`（删 `query_ext.go`）。
+
+**文档**
+
+- `docs/architecture.md`（第九轮 CODEMAP + 规则 16/17）、`internal/README.md`、`docs/README.md`、`记忆.md`、本日志。
+
+### 验证
+
+```powershell
+go test ./...
+.\scripts\build-local.ps1
+```
+
+均通过。
+
+### 动机
+
+在第七轮基础上，消除 api 对 persist/sessionmgr 的直接写操作、monitor N+1、重复 helper、胖文件与文档滞后，提升复用与可读性。
+
+### 完成
+
+**叶子工具**
+
+- `paginate.ParseBoolQuery`；api users/monitor 统一使用。
+- `timeutil`：`FormatRFC3339` / `ParseSinceRFC3339`；readmodel/api 迁移。
+- `config.DefaultServerCertPath` / `ResolveServerCertPath`。
+- 删除 `persist/timefmt.go` 垫片与 api `parseIntDefault`/`clampLimit`/`buildClientExportYAML` 薄包装。
+
+**领域边界**
+
+- `vpnaccount.ApplyVPNPatch`、`SetAccountEnabled`（含 OnKickUser）；api 薄 HTTP。
+- `auth.MustChangePassword` / `ChangePassword` / `ResetPasswordByAdmin`。
+- `readmodel.AuditLogView`、`ConnectionEventView`；persist JOIN 事件带 username。
+- monitor online/accounts：`ListMonitorAccountRows(filter)` SQL 筛选，去掉 containsFold 与 N+1。
+
+**同包拆分**
+
+- clientapp：`engine_state` / `engine_lifecycle` / `engine_connect`；`PromptPassword` → credentials。
+- api：`handler_routes` / `handler_ops`；`users_crud` / `users_vpn` / `users_export`。
+- config：`yaml_node.go`；serverapp：`engine_shutdown.go`。
+
+**其余**
+
+- `health.DashboardMap`；clientgui 地址校验收敛到 `cfg.Validate`；api testutil 合并 `fetchCSRF`/`newTestAPI`。
+- 14+ 包 `doc.go` 按 comment-style 补全上游/下游/并发/不变量。
+
+**文档**
+
+- `docs/architecture.md`（第八轮 CODEMAP）、`internal/README.md`（仅 FAQ）、`docs/README.md`、`meta-plan` 目录表、`记忆.md`、本日志。
+
+### 验证
+
+```powershell
+go test ./...
+.\scripts\build-local.ps1
+```
+
+均通过。
 
 ---
 

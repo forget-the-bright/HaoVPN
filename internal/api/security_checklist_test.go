@@ -75,7 +75,9 @@ func TestSecurityChecklistMetaPlan(t *testing.T) {
 	sessMgr := sessionmgr.New(store)
 	var kickedUser int64
 	sessMgr.SetKickHandler(func(id int64) { kickedUser = id })
-	srvKick := api.NewServer(cfg, store, authSvc, audit.New(store), sessMgr, testVPNService(store, pool, cfg), nil, time.Now(), "tunnel-pk")
+	vpnSvcKick := testVPNService(store, pool, cfg)
+	vpnSvcKick.OnKickUser = sessMgr.KickUser
+	srvKick := api.NewServer(cfg, store, authSvc, audit.New(store), sessMgr, vpnSvcKick, nil, time.Now(), "tunnel-pk")
 
 	hash, _ := auth.HashPassword("UserPass1234!")
 	kp, _ := crypto.GenerateKeyPair()

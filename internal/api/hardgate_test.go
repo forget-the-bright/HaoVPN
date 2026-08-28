@@ -205,25 +205,6 @@ func TestLogsAPIContainsMarker(t *testing.T) {
 	}
 }
 
-func fetchCSRF(t *testing.T, client *http.Client, base string, cookies []*http.Cookie) string {
-	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, base+"/api/v1/csrf", nil)
-	for _, c := range cookies {
-		req.AddCookie(c)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	var out map[string]string
-	_ = json.Unmarshal(b, &out)
-	if out["csrf_token"] == "" {
-		t.Fatal(string(b))
-	}
-	return out["csrf_token"]
-}
 
 func itoa64(n int64) string {
 	if n == 0 {

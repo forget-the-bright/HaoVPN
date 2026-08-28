@@ -3,6 +3,8 @@ package persist
 import (
 	"database/sql"
 	"time"
+
+	"haovpn/internal/timeutil"
 )
 
 // InsertConnectionEvent 写入隧道连接/断线/认证失败等事件。
@@ -62,8 +64,8 @@ func (s *Store) GetSessionStat(userID int64) (*SessionStat, error) {
 	if err := row.Scan(&st.UserID, &connAt, &hb, &st.RxBytes, &st.TxBytes, &st.ReconnectCount, &remote); err != nil {
 		return nil, err
 	}
-	st.ConnectedAt = parseSQLiteTimePtr(connAt)
-	st.LastHeartbeat = parseSQLiteTimePtr(hb)
+	st.ConnectedAt = timeutil.ParseUTCPtr(connAt)
+	st.LastHeartbeat = timeutil.ParseUTCPtr(hb)
 	if remote.Valid {
 		st.RemoteAddr = remote.String
 	}
@@ -97,14 +99,14 @@ func scanUser(row scannable) (*User, error) {
 	}
 	u.IPLeaseSec = ipLease
 	if u.IPLeaseSec <= 0 {
-		u.IPLeaseSec = 86400
+		u.IPLeaseSec = DefaultIPLeaseSec
 	}
 	u.PolicyVer = policyVer
 	if u.PolicyVer <= 0 {
 		u.PolicyVer = 1
 	}
-	u.CreatedAt = parseSQLiteTime(created)
-	u.UpdatedAt = parseSQLiteTime(updated)
+	u.CreatedAt = timeutil.ParseUTC(created)
+	u.UpdatedAt = timeutil.ParseUTC(updated)
 	return &u, nil
 }
 
@@ -119,7 +121,7 @@ func timePtrStr(t *time.Time) interface{} {
 	if t == nil {
 		return nil
 	}
-	return formatSQLiteTime(*t)
+	return timeutil.FormatUTC(*t)
 }
 
 func nullStr(s string) interface{} {

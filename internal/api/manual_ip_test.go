@@ -4,59 +4,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"haovpn/internal/api"
-	"haovpn/internal/audit"
-	"haovpn/internal/auth"
-	"haovpn/internal/config"
-	"haovpn/internal/ippool"
-	"haovpn/internal/persist"
-	"haovpn/internal/sessionmgr"
 )
-
-func newTestAPI(t *testing.T) (*httptest.Server, *http.Client, []*http.Cookie, string, *persist.Store) {
-	t.Helper()
-	dir := t.TempDir()
-	store, err := persist.Open(filepath.Join(dir, "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	authSvc := auth.New(store, 5, 60, 3600)
-	_ = ensureTestAdmin(store, authSvc, "admin", "changeme123")
-	cfg := &config.ServerConfig{
-		Server:   config.ServerSection{Listen: "127.0.0.1:8443"},
-		VPN:      config.VPNSection{Subnet: "10.88.0.0/24", GatewayIP: "10.88.0.1", MTU: 1420},
-		API:      config.APISection{Port: 8080, SessionTTLSec: 3600},
-		Security: config.SecuritySection{EnforceSplitTunnel: true},
-	}
-	pool, _ := ippool.New(cfg.VPN.Subnet)
-	pool.Reserve(cfg.VPN.GatewayIP)
-	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "pk")
-	ts := httptest.NewServer(srv.Handler())
-	client := &http.Client{}
-	login, err := client.Post(ts.URL+"/api/v1/login", "application/x-www-form-urlencoded",
-		strings.NewReader("username=admin&password=changeme123"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cookies := login.Cookies()
-	login.Body.Close()
-	csrfReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/csrf", nil)
-	for _, c := range cookies {
-		csrfReq.AddCookie(c)
-	}
-	csrfResp, _ := client.Do(csrfReq)
-	b, _ := io.ReadAll(csrfResp.Body)
-	csrfResp.Body.Close()
-	var out map[string]string
-	_ = json.Unmarshal(b, &out)
-	return ts, client, cookies, out["csrf_token"], store
-}
 
 // TestCreateAccountManualVPNIP fixed 模式可指定 IP。
 func TestCreateAccountManualVPNIP(t *testing.T) {

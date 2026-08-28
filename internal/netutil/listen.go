@@ -58,18 +58,6 @@ func AppendTunListenHost(hosts []string, tunIP string) []string {
 	return append(hosts, tunIP)
 }
 
-// FormatListenAddrs 将 host 列表与端口格式化为日志友好的 "host:port, ..." 字符串。
-func FormatListenAddrs(hosts []string, port int) string {
-	var s string
-	for i, h := range hosts {
-		if i > 0 {
-			s += ", "
-		}
-		s += fmt.Sprintf("%s:%d", h, port)
-	}
-	return s
-}
-
 // ResolveListenAddrs 将 listen_hosts 与端口拼接为 net.Listen 可用的地址列表。
 //
 // 参数：hosts 为空时默认 ["127.0.0.1"]。

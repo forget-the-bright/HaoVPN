@@ -1,12 +1,15 @@
-// Package config 负责 server.yaml / client.yaml 的加载、校验、默认值与首次启动模板生成。
+// Package config 负责 server.yaml / client.yaml 的加载、校验、默认值与导出。
 //
-// 关键 API：
-//   LoadServer / LoadClient — 不存在则原子写模板（fileutil.WriteFileAtomic）
-//   ClientConfig.ApplyDefaults / ServerConfig.ApplyDefaults — 缺省填充
-//   BuildClientExportYAML — 服务端导出客户端 YAML（与模板字段对齐；api 薄封装）
-//   SaveClient — GUI yaml.Node 局部 patch（保留注释、剥离 legacy peer）
-//   ResolveClientConfigPath / LoadClientOrDefaults — exe 旁路径与内存回退
-//   DefaultRetentionDays — 审计/事件/history 默认保留天数
+// 关键文件：
+//   config.go / client.go / server.go — Load、Validate、ApplyDefaults
+//   client_export.go — BuildClientExportYAML
+//   client_yaml_patch.go — SaveClient
+//   yaml_node.go — yaml.Node 局部 patch 原语
+//   paths.go — DefaultServerCertPath、ResolveServerCertPath
+//   retention.go — DefaultRetentionDays
 //
-// 网络校验委托 netutil；TLS 构建在 security；敏感写盘统一原子写。
+// 上游：cmd/*、serverapp、clientapp、clientgui、api 导出。
+// 下游：netutil、fileutil、brand。
+// 并发：配置加载后只读；SaveClient 原子写须避免并发写同一路径。
+// 不变量：敏感写盘经 fileutil.WriteFileAtomic；VERSION 不在此包硬编码。
 package config

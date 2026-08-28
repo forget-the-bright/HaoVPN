@@ -1,4 +1,7 @@
-// Package platform 封装跨平台提权（Windows UAC RelaunchElevated）与无控制台子进程（route/netsh）。
+// Package platform 封装跨平台提权检测与无窗口子进程（route/netsh 等）。
 //
-// Windows 实现见 cmd_windows.go / elevate_windows.go；非 Windows 为 honest stub。
+// 上游：netstack、winnet、cmd/client-gui（UAC）、clientgui（IsAdmin 检查）。
+// 下游：os/exec；Windows 使用 CREATE_NO_WINDOW。
+// 并发：Command 每次新建子进程；无共享可变状态。
+// 不变量：子进程 stderr 经 CommandOutputError 包装为中文可读错误；非 Windows 为 stub。
 package platform

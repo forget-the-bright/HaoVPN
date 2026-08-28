@@ -1,7 +1,6 @@
 package api_test
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -69,7 +68,7 @@ func TestAdminResetUserPassword(t *testing.T) {
 	if loginResp.StatusCode != http.StatusOK {
 		t.Fatalf("login: %d", loginResp.StatusCode)
 	}
-	csrf := fetchCSRFToken(t, client, ts.URL, loginResp.Cookies())
+	csrf := fetchCSRF(t, client, ts.URL, loginResp.Cookies())
 
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/users/"+strconv.FormatInt(userID, 10)+"/password",
 		strings.NewReader("new_password=NewPass123!"))
@@ -121,7 +120,7 @@ func TestAdminResetUserPasswordShort(t *testing.T) {
 	client := &http.Client{}
 	loginResp, _ := client.Post(ts.URL+"/api/v1/login", "application/x-www-form-urlencoded",
 		strings.NewReader("username=admin&password=adminpass12"))
-	csrf := fetchCSRFToken(t, client, ts.URL, loginResp.Cookies())
+	csrf := fetchCSRF(t, client, ts.URL, loginResp.Cookies())
 
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/users/"+strconv.FormatInt(admin.ID, 10)+"/password",
 		strings.NewReader("new_password=short"))
@@ -139,23 +138,4 @@ func TestAdminResetUserPasswordShort(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", resp.StatusCode)
 	}
-}
-
-func fetchCSRFToken(t *testing.T, client *http.Client, base string, cookies []*http.Cookie) string {
-	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, base+"/api/v1/csrf", nil)
-	for _, c := range cookies {
-		req.AddCookie(c)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	var out map[string]string
-	if err := json.Unmarshal(b, &out); err != nil || out["csrf_token"] == "" {
-		t.Fatalf("csrf: %s", b)
-	}
-	return out["csrf_token"]
 }

@@ -12,16 +12,15 @@ import (
 
 // buildAccountExportZip 打包 client.yaml + server.crt + README；缺证书则失败。
 func buildAccountExportZip(cfg *config.ServerConfig, u *persist.User, plainPrivateKey, serverPubKey string) ([]byte, error) {
-	certPath := cfg.Server.TLS.CertFile
-	if certPath == "" {
-		certPath = "./certs/server.crt"
-	}
+	_ = plainPrivateKey
+	_ = serverPubKey
+	certPath := config.ResolveServerCertPath(cfg)
 	pem, err := os.ReadFile(certPath)
 	if err != nil || len(pem) == 0 {
 		return nil, fmt.Errorf("导出失败: 找不到 TLS 证书 %s（请确认服务端已生成证书）", certPath)
 	}
 
-	yaml := buildClientExportYAML(cfg, u, plainPrivateKey, serverPubKey, "./certs/server.crt")
+	yaml := config.BuildClientExportYAML(cfg.Server.Listen, u.Username, config.DefaultServerCertPath, cfg.VPN.MTU)
 
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)

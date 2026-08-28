@@ -1,6 +1,6 @@
 // Package serverapp 服务端进程编排：数据库、隧道、TUN/NAT、管理 API 与优雅关闭。
 //
-// 关键文件：engine.go — Run() 八阶段启动流水线。
+// 关键文件：engine.go — Run() 八阶段启动；engine_shutdown.go — shutdownServer。
 //
 // 上游：cmd/server 加载 config 后调用 Engine.Run()。
 // 下游：api、tunnel、transport、sessionmgr、vpnaccount、persist、netstack、tun。

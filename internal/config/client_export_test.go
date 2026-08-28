@@ -26,6 +26,23 @@ func TestBuildClientExportYAML(t *testing.T) {
 	}
 }
 
+func TestBuildClientExportYAMLDefaultCA(t *testing.T) {
+	out := BuildClientExportYAML("192.168.1.1:8443", "u1", "", 0)
+	if !strings.Contains(out, `ca_file: "`+DefaultServerCertPath+`"`) {
+		t.Fatalf("empty caFile should use default:\n%s", out)
+	}
+}
+
+func TestResolveServerCertPath(t *testing.T) {
+	if got := ResolveServerCertPath(nil); got != DefaultServerCertPath {
+		t.Fatalf("nil cfg: got %q", got)
+	}
+	cfg := &ServerConfig{Server: ServerSection{TLS: TLSSection{CertFile: "/custom.crt"}}}
+	if got := ResolveServerCertPath(cfg); got != "/custom.crt" {
+		t.Fatalf("custom: got %q", got)
+	}
+}
+
 func TestExportServerAddress(t *testing.T) {
 	if got := ExportServerAddress("192.168.1.10:8443"); got != "192.168.1.10:8443" {
 		t.Fatalf("got %q", got)

@@ -1,7 +1,7 @@
 package readmodel
 
 import (
-	"time"
+	"haovpn/internal/timeutil"
 )
 
 // MonitorItem 监控 API 返回的账号摘要（map 键与 WebUI 一致）。
@@ -17,10 +17,10 @@ func MonitorRowToItem(row MonitorAccountRow, online bool) MonitorItem {
 		"reconnect_count": row.ReconnectCount, "remote_addr": row.RemoteAddr,
 	}
 	if row.ConnectedAt != nil {
-		item["connected_at"] = row.ConnectedAt.Format(time.RFC3339)
+		item["connected_at"] = timeutil.FormatRFC3339Ptr(row.ConnectedAt)
 	}
 	if row.LastHeartbeat != nil {
-		item["last_heartbeat"] = row.LastHeartbeat.Format(time.RFC3339)
+		item["last_heartbeat"] = timeutil.FormatRFC3339Ptr(row.LastHeartbeat)
 	}
 	return item
 }

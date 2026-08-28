@@ -283,24 +283,6 @@ func (e *Engine) Run() error {
 
 	// --- 阶段 8：等待关闭信号并优雅 teardown ---
 	<-sd.Context().Done()
-	logger.Info("正在优雅关闭...")
-	for _, srv := range apiServers {
-		_ = srv.Close()
-	}
-	if tunnelSrv != nil {
-		_ = tunnelSrv.Close()
-	}
-	if tunDev != nil {
-		_ = tunDev.Close()
-	}
-	sd.Wait(15 * time.Second)
-	logger.Info("优雅关闭完成")
+	shutdownServer(sd, apiServers, tunnelSrv, tunDev, 15*time.Second)
 	return nil
-}
-
-func tunIPString(dev tun.Device) string {
-	if dev == nil {
-		return ""
-	}
-	return dev.IP().String()
 }

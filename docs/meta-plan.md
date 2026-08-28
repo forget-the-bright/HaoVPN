@@ -638,19 +638,28 @@ listen_hosts 含 0.0.0.0 → 按配置监听；风险由配置者承担，启动
 
 ## 目录变更（2026-08 架构重构）
 
-v1.0 规划正文中的目录树为历史快照。重构后新增/调整的模块见 **[architecture.md](architecture.md)**（CODEMAP），主要包括：
+> **存档说明**：v1.0 规划正文中的目录树与「peer」术语为历史快照（账号已物理合并进 `users`；client.yaml 无 peer 段）。**当前结构以 [architecture.md](architecture.md) 为准。**
+
+重构后新增/调整的模块主要包括：
 
 | 新增/调整 | 说明 |
 |-----------|------|
-| `cmd/client-gui` | Fyne 桌面客户端 |
+| `cmd/client-gui` | Fyne 桌面入口（薄）；UI 在 `internal/clientgui` |
+| `internal/clientgui` | 桌面 GUI（登录/托盘/主窗） |
 | `internal/clientapp` | CLI/GUI 共用拨号引擎 |
-| `internal/serverapp` | 服务端启动编排（原 cmd/server 主体逻辑） |
+| `internal/serverapp` | 服务端启动编排 |
 | `internal/netutil` | CIDR/监听/MTU/IP 匹配等纯函数 |
 | `internal/winnet` | Windows 网卡 LUID/netsh 公共层 |
-| `internal/vpnaccount` | Web 开户与 IP 模式（从 api 抽出） |
-| `internal/singleinstance` | 客户端单实例锁 |
+| `internal/vpnaccount` | Web 开户、IP 模式、PATCH/启禁/删号 |
+| `internal/singleinstance` | 客户端单实例（**127.0.0.1 TCP 协调**，非文件锁） |
 | `internal/credentials` | Windows DPAPI 凭据 |
 | `internal/logstore` | WebUI 结构化历史日志库 |
 | `internal/brand` | 产品名与路径常量 |
+| `internal/paginate` | 分页 / bool / ParseLimitOffset 纯函数 |
+| `internal/maintenance` | 数据保留后台 |
+| `internal/fileutil` | 原子写 / exe 目录 |
+| `internal/timeutil` | SQLite UTC + RFC3339 |
+| `internal/readmodel` | Web/API 读模型 DTO |
+| `internal/platform` | UAC、无窗口子进程 |
 
 各 `internal/*` 包均有中文 `doc.go`；默认值与 transport 映射已收敛到 `config.ApplyDefaults` 与 `transport.FromClientConfig`。

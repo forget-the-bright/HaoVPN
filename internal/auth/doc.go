@@ -2,7 +2,7 @@
 //
 // 关键文件（同包拆分，降低阅读耦合；导出 API 不变）：
 //   service.go — Service、SessionEntry、New
-//   password.go — HashPassword / CheckPassword
+//   password_ops.go — MustChangePassword、ChangePassword、ResetPasswordByAdmin（内部 setPassword 复用）
 //   login.go — EnsureAdmin、Web Login、verifyCredentials
 //   tunnel_login.go — VerifyTunnelLogin（隧道专用，不创建 Web 会话）
 //   session.go — ValidateSession、Logout、CSRF、createSession

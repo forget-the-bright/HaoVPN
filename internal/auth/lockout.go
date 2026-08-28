@@ -6,6 +6,9 @@ import (
 	"haovpn/internal/logger"
 )
 
+// isLocked 判断 clientIP 是否处于登录失败锁定期内。
+//
+// 锁定过期后自动清除条目；未达 maxAttempts 时 Failures 累计但不锁定。
 func (s *Service) isLocked(ip string) bool {
 	s.lockoutsMu.Lock()
 	defer s.lockoutsMu.Unlock()
@@ -24,6 +27,7 @@ func (s *Service) isLocked(ip string) bool {
 	return false
 }
 
+// recordFailure 记录一次登录失败；达 maxAttempts 时设置 LockedUntil。
 func (s *Service) recordFailure(ip string) {
 	s.lockoutsMu.Lock()
 	defer s.lockoutsMu.Unlock()
@@ -36,6 +40,7 @@ func (s *Service) recordFailure(ip string) {
 	s.lockouts[ip] = e
 }
 
+// clearFailures 登录成功后清除该 IP 的失败计数与锁定状态。
 func (s *Service) clearFailures(ip string) {
 	s.lockoutsMu.Lock()
 	delete(s.lockouts, ip)

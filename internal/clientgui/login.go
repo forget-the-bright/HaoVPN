@@ -1,7 +1,6 @@
 package clientgui
 
 import (
-	"net"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -88,10 +87,6 @@ func (u *uiApp) tryConnect() {
 	pass := u.passEntry.Text
 	if addr == "" || user == "" || pass == "" {
 		u.errLbl.SetText("请填写服务器、账号和密码")
-		return
-	}
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		u.errLbl.SetText("服务器地址须为 host:port")
 		return
 	}
 	u.cfg.Server.Address = addr

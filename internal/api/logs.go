@@ -68,7 +68,7 @@ func readLogTail(path string, tail int) (lines []string, truncated bool, err err
 
 // parseLogTailQuery 解析 ?tail= 查询参数并限制在 [200, 2000]。
 func parseLogTailQuery(q string) int {
-	return paginate.ClampLimit(parseIntDefault(q, 200), 200, 2000)
+	return paginate.ClampLimit(paginate.ParseIntDefault(q, 200), 200, 2000)
 }
 
 // findFirstNewline 返回字符串中首个 \n 的下标；无换行时返回 -1。

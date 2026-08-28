@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"haovpn/internal/config"
-	"haovpn/internal/persist"
 )
 
 // TestBuildClientExportYAML 验证导出为账号密码登录模板，不含私钥与策略字段。
@@ -17,14 +16,7 @@ func TestBuildClientExportYAML(t *testing.T) {
 		},
 		VPN: config.VPNSection{MTU: 1420, GatewayIP: "10.88.0.1"},
 	}
-	u := &persist.User{
-		Username:      "engineer1",
-		PrivateKeyEnc: "peer-priv-key-base64",
-		PublicKey:     "peer-pub-key-base64",
-		VPNIP:         "10.88.0.5",
-		AllowedIPs:    []string{"192.168.1.0/24", "10.88.0.0/24"},
-	}
-	out := buildClientExportYAML(cfg, u, "peer-priv-key-base64", "server-tunnel-pub", "./certs/server.crt")
+	out := config.BuildClientExportYAML(cfg.Server.Listen, "engineer1", config.ResolveServerCertPath(cfg), cfg.VPN.MTU)
 
 	checks := []struct {
 		name string

@@ -2,6 +2,8 @@ package persist
 
 import (
 	"database/sql"
+
+	"haovpn/internal/timeutil"
 )
 
 // scanAuditRows 从 audit_logs 查询结果集扫描多行 AuditEntry。
@@ -26,7 +28,7 @@ func scanAuditRows(rows *sql.Rows) ([]AuditEntry, error) {
 			v := target.Int64
 			e.TargetID = &v
 		}
-		e.CreatedAt = parseSQLiteTime(created)
+		e.CreatedAt = timeutil.ParseUTC(created)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -41,7 +43,7 @@ func scanConnectionEventRows(rows *sql.Rows) ([]ConnectionEvent, error) {
 		if err := rows.Scan(&e.ID, &e.UserID, &e.EventType, &e.RemoteAddr, &e.DetailJSON, &created); err != nil {
 			return nil, err
 		}
-		e.CreatedAt = parseSQLiteTime(created)
+		e.CreatedAt = timeutil.ParseUTC(created)
 		out = append(out, e)
 	}
 	return out, rows.Err()

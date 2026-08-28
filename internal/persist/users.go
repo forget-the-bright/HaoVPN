@@ -36,7 +36,7 @@ func (s *Store) CreateVPNAccount(u User) (int64, error) {
 		u.IPMode = IPModeFixed
 	}
 	if u.IPLeaseSec <= 0 {
-		u.IPLeaseSec = 86400
+		u.IPLeaseSec = DefaultIPLeaseSec
 	}
 	if u.PolicyVer <= 0 {
 		u.PolicyVer = 1

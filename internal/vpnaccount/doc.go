@@ -1,7 +1,14 @@
 // Package vpnaccount 封装 VPN 账号 IP 模式与 Web 开户/策略变更业务逻辑。
 //
-// 上游：api（Web 开户/PATCH）、tunnel（握手鉴权后 IP 分配）。
-// 下游：persist（用户表）、ippool（IP 池）、security（私钥加解密）。
-// 并发：Service 方法由 HTTP/隧道 goroutine 调用；依赖 store 线程安全。
-// 不变量：IP 分配与回收须经本包，api 不直接操作 IP 池 SQL；避免 api↔tunnel 循环依赖。
+// 关键文件：
+//   service.go — EnsureVPNIP、DefaultAllowedIPs、租约清理
+//   provision.go — Web 开户 ProvisionWebAccount
+//   patch.go — ApplyVPNPatch（校验+写库+踢线）
+//   enable.go — SetAccountEnabled
+//   delete.go — DeleteAccount、PlanVPNPatch
+//
+// 上游：api（Web 开户/PATCH）、tunnel（握手后 IP 分配）。
+// 下游：persist、ippool、security（私钥）；OnKickUser 由 serverapp 注入 sessionmgr。
+// 并发：Service 无内部锁；同一账号操作由调用方串行或依赖 SQLite 串行。
+// 不变量：IP 分配/回收/PATCH/启禁须经本包；api 不直接 UpdateVPNFields/SetUserEnabled。
 package vpnaccount

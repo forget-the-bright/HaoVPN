@@ -1,9 +1,8 @@
 // Package netstack 管理 TUN 侧路由、DNS 与杀开关（按平台分文件实现）。
 //
-// 子模块划分（同包内按文件名组织，避免 import 循环）：
-//   - route_*.go：分流路由增删（Windows netsh / Linux ip / Darwin route）
-//   - dns_*.go：TUN 接口 DNS 设置
-//   - killswitch_*.go：断线阻断工控网段
-//
-// 依赖 winnet（Windows 网卡解析）与 netutil（CIDR 校验），不直接依赖 tun 包。
+// 关键文件：route_*.go、dns_*.go、killswitch_*.go、common.go。
+// 上游：clientapp runtime、serverapp TUN/NAT Setup。
+// 下游：winnet（Windows 网卡）、netutil（CIDR）、platform（无窗口子进程）。
+// 并发：Setup/Teardown 由调用方串行；路由变更非线程安全须单 goroutine 编排。
+// 不变量：不 import tun；断线杀开关先于清路由（clientapp 编排）。
 package netstack

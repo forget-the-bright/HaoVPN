@@ -111,7 +111,7 @@ func (s *Service) ReleaseOnDisconnect(userID int64, vpnIP, ipMode string) {
 		}
 	case persist.IPModeDynamicLease:
 		u, _ := s.Store.GetUserByID(userID)
-		leaseSec := 86400
+		leaseSec := persist.DefaultIPLeaseSec
 		if u != nil && u.IPLeaseSec > 0 {
 			leaseSec = u.IPLeaseSec
 		}

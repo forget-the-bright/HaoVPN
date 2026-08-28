@@ -57,12 +57,12 @@ func RunDataRetention(store *persist.Store, logs *logstore.Store, cfg *config.Se
 // StartRetentionLoop 启动时执行一次并每日重复数据保留清理。
 //
 // 参数：ctx — 取消时停止 ticker；其余同 RunDataRetention。
-// 副作用：启动 goroutine；阻塞直到 ctx 取消（在 goroutine 内 RunTicker）。
+// 副作用：经 safeutil.GoSafe 启动 goroutine（panic 可恢复）；阻塞直到 ctx 取消。
 func StartRetentionLoop(ctx context.Context, store *persist.Store, logs *logstore.Store, cfg *config.ServerConfig) {
 	RunDataRetention(store, logs, cfg)
-	go func() {
+	safeutil.GoSafe("data-retention", func() {
 		safeutil.RunTicker(ctx, 24*time.Hour, func(context.Context) {
 			RunDataRetention(store, logs, cfg)
 		})
-	}()
+	})
 }

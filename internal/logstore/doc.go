@@ -2,5 +2,6 @@
 //
 // 时间列 layout 统一用 timeutil（与 persist 一致，避免硬编码或反向依赖 persist）。
 // 上游：serverapp 可选启用；api 查询；maintenance 保留清理。
-// 下游：modernc.org/sqlite、paginate、timeutil、logger。
+// 并发：Enqueue 多 goroutine 安全；Query 只读。
+// 不变量：不 import persist；时间格式用 timeutil。
 package logstore

@@ -2,6 +2,7 @@ package clientapp
 
 import (
 	"fmt"
+	"os"
 
 	"haovpn/internal/config"
 	"haovpn/internal/credentials"
@@ -37,4 +38,12 @@ func ResolveCredentials(cfg *config.ClientConfig) (user, password string, err er
 		}
 	}
 	return user, password, nil
+}
+
+// PromptPassword 从终端读取密码（简单 Scanln；无回显需调用方处理）。
+func PromptPassword() (string, error) {
+	fmt.Fprint(os.Stderr, "请输入密码（或设置 HAOVPN_PASSWORD）: ")
+	var s string
+	_, err := fmt.Scanln(&s)
+	return s, err
 }

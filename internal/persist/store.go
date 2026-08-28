@@ -48,7 +48,7 @@ type Store struct {
 //   VPNIP — 分配的隧道内 IPv4；fixed 模式创建时写入，动态模式握手时分配。
 //   AllowedIPs — 客户端分流 CIDR 列表；空时由 persist.ResolveAllowedIPs 回退服务端默认。
 //   IPMode — 分配模式：fixed / dynamic_session / dynamic_lease（见 IPMode* 常量）。
-//   IPLeaseSec — dynamic_lease 租约秒数；≤0 时读写默认 86400。
+//   IPLeaseSec — dynamic_lease 租约秒数；≤0 时读写默认 DefaultIPLeaseSec。
 //   PolicyVer — 策略版本；变更 AllowedIPs 等时递增，握手推送给客户端。
 //   CreatedAt — 记录创建时间（UTC 存库）。
 //   UpdatedAt — 最近更新时间；密码、VPN 字段变更时刷新。

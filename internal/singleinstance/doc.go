@@ -1,5 +1,8 @@
-// Package singleinstance 保证同一台机器上仅有一个 HaoVPN 客户端进程（CLI/GUI/Windows 服务互斥）。
+// Package singleinstance 保证客户端 CLI/GUI 单实例（127.0.0.1 TCP 协调，非文件锁）。
 //
-// 实现：127.0.0.1 固定哈希端口 TCP Listen；重复启动 Dial 成功即表示已有实例。
-// 该方式跨平台，且在 Windows 上不受 UAC 管理员/非管理员隔离影响（优于仅文件锁）。
+// 关键文件：lock.go（Acquire/Release）、coord.go（端口哈希与探测报文）。
+// 上游：cmd/client、cmd/client-gui、clientgui.Run。
+// 下游：net 标准库 TCP。
+// 并发：Acquire 阻塞至获锁或已有实例响应；Release 在进程退出时调用。
+// 不变量：重复启动须提示用户而非静默失败；协调端口由可执行路径哈希派生。
 package singleinstance

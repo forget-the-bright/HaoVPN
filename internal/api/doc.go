@@ -1,16 +1,18 @@
 // Package api 提供 HTTP 管理 API 与 WebUI 路由（默认仅本机 + TUN IP）。
 //
-// 关键文件：
-//   handler.go — Server 类型、路由注册、健康/备份/仪表盘
-//   auth_handlers.go — 登录/登出/改密、requireAuth 中间件
-//   users.go — VPN 账号 CRUD、策略 PATCH、管理员改密、导出
-//   httputil.go — writeJSON、clientIP、分页 clamp
-//   export.go / export_zip.go — 客户端配置导出
-//   monitor_handler.go — 在线监控 API
-//   pages.go — WebUI 页面渲染
+// 关键文件（第九轮同包拆分）：
+//   handler.go — Server、NewServer、Listen/Close
+//   handler_routes.go — routes 注册
+//   handler_ops.go — health/audit/dashboard/logs/backup、LogPublicBindAudit
+//   handler_listen.go — StartAllListeners、FormatBoundAddrs、listenAPI
+//   auth_handlers.go — 登录/登出/改密/CSRF、requireAuth
+//   users_crud.go / users_vpn.go / users_export.go — 账号 CRUD、策略 PATCH、导出
+//   monitor_handler.go — 监控 API（JOIN 无 N+1）
+//   httputil.go — writeJSON/writeOK/writePage/writeAttachment、parseSinceQuery、clientIP
+//   export_zip.go — ZIP 导出
 //
 // 上游：serverapp 启动 Listen；WebUI 浏览器 / 脚本调用 REST。
-// 下游：auth、persist、vpnaccount、sessionmgr、readmodel。
+// 下游：auth、vpnaccount、sessionmgr、persist、readmodel、paginate、timeutil、netutil、config。
 // 并发：HTTP 多 goroutine；依赖 store/auth 各自线程安全。
-// 不变量：写操作须 CSRF；账号/IP 细节经 vpnaccount.Service，不直接操作 IP 池 SQL。
+// 不变量：写操作须 CSRF；VPN 写经 vpnaccount.ApplyVPNPatch/SetAccountEnabled；不直接 UpdateVPNFields。
 package api

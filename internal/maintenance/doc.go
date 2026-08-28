@@ -2,7 +2,7 @@
 //
 // 上游：serverapp 在启动后调用 StartRetentionLoop。
 // 下游：persist、logstore、config、safeutil、logger。
-// 并发：StartRetentionLoop 在独立 goroutine 运行 ticker；RunDataRetention 可被并发调用但通常单线程。
-// 不变量：cfg 为 nil 或 store 为 nil 时 RunDataRetention 直接返回，不 panic。
+// 并发：StartRetentionLoop 经 safeutil.GoSafe 启动独立 goroutine 跑 ticker；RunDataRetention 可被并发调用但通常单线程。
+// 不变量：cfg 为 nil 或 store 为 nil 时 RunDataRetention 直接返回，不 panic；goroutine panic 由 GoSafe 恢复。
 // 关联：保留天数默认值见 config 服务端 Database 段；清理 SQL 在 persist/logstore。
 package maintenance

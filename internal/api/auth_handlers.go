@@ -18,7 +18,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeAPIError(w, http.StatusUnauthorized, "未登录")
 			return
 		}
-		if u, err := s.store.GetUserByID(se.UserID); err == nil && u.MustChangePassword {
+		if u, err := s.auth.MustChangePassword(se.UserID); err == nil && u {
 			allowed := r.URL.Path == "/api/v1/password" || r.URL.Path == "/api/v1/logout"
 			if !allowed {
 				writeAPIError(w, http.StatusForbidden, "须先修改密码")
@@ -45,7 +45,7 @@ func (s *Server) requireAuthPage(next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		if u, err := s.store.GetUserByID(se.UserID); err == nil && u.MustChangePassword {
+		if u, err := s.auth.MustChangePassword(se.UserID); err == nil && u {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
@@ -134,7 +134,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.auth.Logout(c.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeOK(w)
 }
 
 // handleChangePassword 修改当前登录用户密码（POST /api/v1/password）。
@@ -153,15 +153,23 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = parseRequestForm(r)
 	newPass := r.FormValue("new_password")
-	hash, err := auth.HashPassword(newPass)
-	if err != nil {
+	if err := s.auth.ChangePassword(se.UserID, newPass); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.store.UpdateUserPassword(se.UserID, hash, true); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "更新失败")
+	s.audit.Log(&se.UserID, "change_password", "user", &se.UserID, clientIP(r), nil)
+	writeOK(w)
+}
+
+// handleCSRF 返回当前会话的 CSRF Token（GET /api/v1/csrf）。
+//
+// 未登录或会话无效时返回 401；供 WebUI 写操作前刷新 token。
+// 经 sessionFromRequest 校验会话，直接使用 SessionEntry.CSRFToken（与登录路径一致）。
+func (s *Server) handleCSRF(w http.ResponseWriter, r *http.Request) {
+	se, ok := s.sessionFromRequest(r)
+	if !ok || se.CSRFToken == "" {
+		writeAPIError(w, http.StatusUnauthorized, "未登录")
 		return
 	}
-	s.audit.Log(&se.UserID, "change_password", "user", &se.UserID, clientIP(r), nil)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]string{"csrf_token": se.CSRFToken})
 }

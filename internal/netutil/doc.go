@@ -12,7 +12,8 @@
 //   ipmatch.go — IPMatchesRules、ParseCIDROrHost
 //   constants.go — MTU/心跳/重连等传输默认值（保留天数在 config.DefaultRetentionDays）
 //
-// 上游调用方：config（加载校验）、security（TLS ServerName）、tunnel（来源 IP）、
-// netstack（路由/WFP 掩码）、vpnaccount（IP 规范化）、serverapp、api。
-// 与 winnet 区别：本包无 Windows shell/netsh/PowerShell；winnet 专管 Windows 网卡/LUID。
+// 上游：config、security、tunnel、netstack、vpnaccount、serverapp、api、paginate（via api）。
+// 下游：标准库 net；不依赖 config/tun/netstack。
+// 并发：纯函数无状态，可并行调用。
+// 不变量：CIDR/地址纯函数仅在本包；保留天数在 config.DefaultRetentionDays。
 package netutil

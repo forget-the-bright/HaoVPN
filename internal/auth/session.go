@@ -9,6 +9,10 @@ import (
 	"haovpn/internal/persist"
 )
 
+// createSession 为已认证用户签发新 Web 会话 token 与 CSRF。
+//
+// 参数：u — 须非 nil；写入 sessions map 并设置 ExpiresAt=now+sessionTTL。
+// 返回：sessionToken、csrfToken；randomToken 失败时 err 非 nil。
 func (s *Service) createSession(u *persist.User) (string, string, error) {
 	token, err := randomToken()
 	if err != nil {
@@ -80,6 +84,7 @@ func (s *Service) GetCSRF(sessionToken string) string {
 	}
 	return se.CSRFToken
 }
+// randomToken 生成 32 字节随机 hex 串，供 session/CSRF 使用。
 func randomToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

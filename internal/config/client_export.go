@@ -21,7 +21,7 @@ func BuildClientExportYAML(serverListen, username, caFile string, mtu int) strin
 	def := &ClientConfig{}
 	def.ApplyDefaults()
 	if caFile == "" {
-		caFile = "./certs/server.crt"
+		caFile = DefaultServerCertPath
 	}
 	if mtu <= 0 {
 		mtu = netutil.DefaultMTU

@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     vpn_ip TEXT,
     allowed_ips TEXT NOT NULL DEFAULT '[]',
     ip_mode TEXT NOT NULL DEFAULT 'fixed',
+    -- 默认租约秒数与 persist.DefaultIPLeaseSec（86400）同源
     ip_lease_sec INTEGER NOT NULL DEFAULT 86400,
     policy_ver INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),

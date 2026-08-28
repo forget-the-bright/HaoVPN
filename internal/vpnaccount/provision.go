@@ -15,6 +15,8 @@ import (
 //
 // 参数：cidrs — 用户提交的分流网段；禁止 0.0.0.0/0 全隧道。
 // 返回：err 为 netutil.ValidateNoFullTunnel 的错误。
+// 说明：本函数是 vpnaccount 领域别名，委托 netutil；api/Web 开户与 PATCH 须经本入口，
+// 禁止在 api 层直接调用 netutil.ValidateNoFullTunnel，以免账号策略校验散落、语义漂移。
 func ValidateAllowedIPs(cidrs []string) error {
 	return netutil.ValidateNoFullTunnel(cidrs)
 }
@@ -55,7 +57,7 @@ func (s *Service) ValidateManualIP(ip string, allowUserID int64) error {
 //   Username — 登录名；须唯一。
 //   PasswordHash — 已哈希密码；不由本包哈希。
 //   IPMode — fixed / dynamic_session / dynamic_lease；空则 fixed。
-//   IPLeaseSec — 租约秒数；dynamic_lease 用；≤0 时默认 86400。
+//   IPLeaseSec — 租约秒数；dynamic_lease 用；≤0 时默认 persist.DefaultIPLeaseSec。
 //   AllowedIPs — 分流 CIDR；nil 存空数组；须通过 ValidateAllowedIPs。
 //   RequestedIP — fixed 模式可选指定 IP；动态模式须为空。
 //   KeyEnc — 非 nil 时用 AES 密封私钥再入库。
@@ -91,7 +93,7 @@ func (s *Service) ProvisionWebAccount(in ProvisionInput) (ProvisionResult, error
 	}
 	leaseSec := in.IPLeaseSec
 	if leaseSec <= 0 {
-		leaseSec = 86400
+		leaseSec = persist.DefaultIPLeaseSec
 	}
 	allowedIPs := in.AllowedIPs
 	if allowedIPs == nil {
