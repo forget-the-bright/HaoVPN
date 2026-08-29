@@ -16,7 +16,7 @@ func (s *Server) handleMonitorOnline(w http.ResponseWriter, r *http.Request) {
 	online := s.onlineUserSet()
 	rows, err := s.store.ListMonitorAccountRows(readmodel.MonitorAccountFilter{})
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	items := s.buildMonitorItems(rows, true, online)
@@ -32,7 +32,7 @@ func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.store.ListMonitorAccountRows(readmodel.MonitorAccountFilter{NameQuery: q.Get("q")})
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	online := s.onlineUserSet()
@@ -52,7 +52,7 @@ func (s *Server) handleMonitorEvents(w http.ResponseWriter, r *http.Request) {
 		UserID: userID, EventType: q.Get("event_type"), Limit: limit, Offset: offset,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	out := make([]readmodel.ConnectionEventView, len(rows))
@@ -96,3 +96,4 @@ func (s *Server) mergeLiveMonitorStats(item map[string]any, userID int64) {
 	}
 	readmodel.MergeLiveSessionStats(item, sess.RxBytes.Load(), sess.TxBytes.Load(), netutil.IPNetsToStrings(sess.AllowedIPs))
 }
+

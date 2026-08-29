@@ -5,7 +5,9 @@ package winnet
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"haovpn/internal/logger"
 	"haovpn/internal/platform"
 )
 
@@ -182,7 +184,10 @@ if (-not $has) {
 }
 
 // DisableAllICS 关闭本机全部 ICS 共享（via 关闭或 Teardown 时清残留）。
+//
+// 通过 PowerShell COM 枚举连接并 DisableSharing，常见耗时数秒；调用方勿在 UI 线程同步执行。
 func DisableAllICS() {
+	start := time.Now()
 	ps := `
 $ErrorActionPreference = 'SilentlyContinue'
 regsvr32 /s hnetcfg.dll
@@ -192,4 +197,5 @@ foreach ($c in @($net.EnumEveryConnection())) {
 }
 `
 	_ = platform.Command("powershell", "-NoProfile", "-Command", ps).Run()
+	logger.Info("DisableAllICS elapsed=%s", time.Since(start))
 }

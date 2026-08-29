@@ -14,6 +14,7 @@ import (
 	"haovpn/internal/clientgui/icons"
 	"haovpn/internal/config"
 	"haovpn/internal/platform"
+	"haovpn/internal/safeutil"
 	"haovpn/internal/version"
 )
 
@@ -118,16 +119,27 @@ func (u *uiApp) tryConnect() {
 		return
 	}
 
-	if u.eng != nil {
-		u.eng.Stop()
+	if u.getEngine() != nil {
+		if !u.beginEngineOp() {
+			u.errLbl.SetText("正在清理上一连接，请稍候…")
+			return
+		}
+		old := u.takeEngine()
+		u.stopPoll()
+		u.errLbl.SetText("正在清理上一连接…")
+		u.stopEngineAsync(old, func() {
+			u.endEngineOp()
+			u.tryConnect() // 清理完成后再发起本次连接
+		})
+		return
 	}
-	u.eng = clientapp.NewEngine(u.cfg)
-	u.eng.SetFailFast(true) // 登录页：首次失败立即提示，勿空转重连
-	u.eng.SetCredentials(clientapp.Credentials{Username: user, Password: pass})
+	eng := clientapp.NewEngine(u.cfg)
+	eng.SetFailFast(true) // 登录页：首次失败立即提示，勿空转重连
+	eng.SetCredentials(clientapp.Credentials{Username: user, Password: pass})
 	// 鉴权成功进主窗后若 TUN/路由失败，回登录并红字（勿停在「假连接」主界面）
-	u.eng.SetOnDataplaneFailed(func(msg string) {
+	eng.SetOnDataplaneFailed(func(msg string) {
 		fyne.Do(func() {
-			if u.eng == nil {
+			if u.getEngine() == nil {
 				return
 			}
 			u.doLogout()
@@ -136,27 +148,26 @@ func (u *uiApp) tryConnect() {
 			}
 		})
 	})
+	u.setEngine(eng)
 	u.errLbl.SetText("正在连接…")
 	u.applyTray(trayKindConnecting, true)
-	if err := u.eng.Start(); err != nil {
+	if err := eng.Start(); err != nil {
 		u.errLbl.SetText(err.Error())
 		u.applyTray(trayKindError, true)
 		return
 	}
 
-	eng := u.eng
 	// 登录等待期间也轮询托盘状态（主窗尚未创建）
 	u.startPoll()
-	go func() {
+	safeutil.GoSafe("gui-wait-connected", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		err := eng.WaitConnected(ctx)
-		fyne.Do(func() {
-			if u.eng != eng {
-				return // 用户已重新点连接或退出
-			}
-			if err != nil {
-				eng.Stop()
+		if err != nil {
+			// Stop 可能含 ICS 清理，勿在 fyne.Do 里同步执行
+			eng.Stop()
+			fyne.Do(func() {
+				u.clearEngineIf(eng)
 				u.stopPoll()
 				msg := err.Error()
 				if le := eng.LastError(); le != "" {
@@ -167,7 +178,12 @@ func (u *uiApp) tryConnect() {
 				}
 				u.errLbl.SetText(msg)
 				u.applyTray(trayKindError, true)
-				return
+			})
+			return
+		}
+		fyne.Do(func() {
+			if !u.isSameEngine(eng) {
+				return // 用户已重新点连接或退出
 			}
 			if err := config.SaveClient(u.configPath, u.cfg); err != nil {
 				u.errLbl.SetText("连接成功但保存配置失败: " + err.Error())
@@ -178,7 +194,7 @@ func (u *uiApp) tryConnect() {
 			u.applyTray(trayKindConnected, true)
 			u.showMain()
 		})
-	}()
+	})
 }
 
 // parseLocalLANsText 解析 GUI 多行/逗号分隔的本地网段文本。

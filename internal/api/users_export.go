@@ -36,12 +36,12 @@ func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id 
 			writeAPIError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	zipBytes, err := buildAccountExportZip(s.cfg, u)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	s.audit.Log(&se.UserID, "config_export", "user", &id, s.clientIP(r), map[string]string{"format": "zip"})
@@ -58,7 +58,7 @@ func (s *Server) handleUserExportYAML(w http.ResponseWriter, r *http.Request, id
 			writeAPIError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	caFile := config.ResolveServerCertPath(s.cfg)
@@ -66,3 +66,4 @@ func (s *Server) handleUserExportYAML(w http.ResponseWriter, r *http.Request, id
 	s.audit.Log(&se.UserID, "config_export", "user", &id, s.clientIP(r), nil)
 	writeAttachment(w, "application/x-yaml", fmt.Sprintf("client-%s.yaml", u.Username), []byte(yaml))
 }
+

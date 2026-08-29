@@ -26,6 +26,7 @@ import (
 	"haovpn/internal/safeutil"
 	"haovpn/internal/security"
 	"haovpn/internal/sessionmgr"
+	"haovpn/internal/timeutil"
 	"haovpn/internal/transport"
 	"haovpn/internal/tunnel"
 	"haovpn/internal/tun"
@@ -105,6 +106,17 @@ func (e *Engine) bootPersist() (*bootContext, error) {
 		store.Close()
 		return nil, err
 	}
+	leaseStop := make(chan struct{})
+	// 后台定期清理过期 Web 会话与锁定表，避免长跑进程内存增长
+	safeutil.GoSafe("auth-prune", func() {
+		safeutil.RunTickerStop(leaseStop, 5*time.Minute, func() {
+			ns := authSvc.PruneExpiredSessions()
+			nl := authSvc.PruneExpiredLockouts()
+			if ns > 0 || nl > 0 {
+				logger.Info("auth_prune sessions=%d lockouts=%d", ns, nl)
+			}
+		})
+	})
 	auditLog := audit.New(store)
 	if cfg.API.AllowPublicBind {
 		api.LogPublicBindAudit(auditLog)
@@ -119,7 +131,7 @@ func (e *Engine) bootPersist() (*bootContext, error) {
 		authSvc:    authSvc,
 		auditLog:   auditLog,
 		dataDir:    dataDir,
-		leaseStop:  make(chan struct{}),
+		leaseStop:  leaseStop,
 		startedAt:  time.Now(),
 	}, nil
 }
@@ -173,7 +185,7 @@ func bootSession(bc *bootContext) error {
 	}
 	sessMgr.SetAllowAllVPNPeers(allowPeers)
 	if bc.cfg.VPN.ReconnectGraceSec > 0 {
-		sessMgr.SetReconnectGrace(time.Duration(bc.cfg.VPN.ReconnectGraceSec) * time.Second)
+		sessMgr.SetReconnectGrace(timeutil.Seconds(bc.cfg.VPN.ReconnectGraceSec))
 	}
 	if err := sessMgr.LoadVPNIPIndex(); err != nil {
 		return err

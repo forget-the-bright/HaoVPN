@@ -36,6 +36,9 @@ func teardownNATPlatform(vpnSubnet, lanCIDR, tunName string) error {
 	return nil
 }
 
+// disableICSPlatform 非 Windows 无 ICS。
+func disableICSPlatform() {}
+
 func addClientRoutePlatform(cidr, tunName, gateway string) error {
 	cmd := exec.Command("route", "-n", "add", "-net", cidr, gateway)
 	out, err := cmd.CombinedOutput()

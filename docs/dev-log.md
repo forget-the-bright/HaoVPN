@@ -6,10 +6,123 @@
 
 ---
 
-*最后更新：2026-08-29 · ICS SkipAsSource 根因修复（保留 ICS）*
+*最后更新：2026-08-30 · 架构解耦第十四轮*
 
 ---
 
+## 2026-08-30 · 架构解耦第十四轮（叶子工具 + 安全硬化）
+
+### 动机
+
+审计发现：LAN/CIDR 纯函数仍经 `persist` 绕路、`clientapp` 为哨兵依赖 `sessionmgr`、公开 health 泄漏 `recent_errors`、可删末管理员、logout 未强制 POST、GUI `eng` 无锁等。一次收口，不留「下次」。
+
+### 改动摘要
+
+- **netutil**：`NormalizeLANCIDR`/`ValidLANCIDRs`、`NormalizeCIDRList`、`AppendCIDRUnique`；persist 薄包装；clientapp/tunnel 改调 netutil。
+- **auth**：`ErrAccountAlreadyOnline`；sessionmgr 兼容别名；clientapp `fatal_auth` 仅依赖 auth。
+- **安全**：health 公开无 recent_errors；`ErrLastAdmin` + `CountEnabledAdmins`；logout 仅 POST；`ValidateUsername` 下沉 Provision/EnsureAdmin；`writeInternalError`；`?online=1` 分页修正。
+- **api**：`requireMethod`/`parseFormOrError`/`decodeJSONOrForm`/`parsePathID`；peers JSON∪表单走 parseRequestForm。
+- **clientgui**：`getEngine`/`setEngine`/`takeEngine`/`clearEngineIf` 与 `engOpMu` 同锁。
+- **文档**：architecture / internal README / hardening / 记忆 / 本条。
+
+### 验证
+
+```powershell
+go test ./internal/netutil/... ./internal/auth/... ./internal/vpnaccount/... ./internal/clientapp/... ./internal/clientgui/... ./internal/api/... ./internal/health/... -count=1
+go test ./... -count=1   # 若本机 HaoVPN 客户端占锁，singleinstance 失败可忽略
+.\scripts\build-local.ps1
+```
+
+---
+
+## 2026-08-29 · via/ICS 前推迟装分流路由
+
+### 动机
+
+`local_lans` 开启时旧顺序为「装 AllowedIPs → ICS Setup → 清路由再装」，第一次白做且 ICS 常冲掉路由。
+
+### 改动
+
+- `willViaSetupLocked` 预判本次会 Setup 则 `defer_routes`，Setup 成功后再 `clear`+全量安装一次。
+- via 失败且尚未有路由时补装一次便于排障。
+- 日志：`policy_apply defer_routes=...`。
+
+### 验证
+
+```powershell
+go test ./internal/clientapp/... -count=1
+```
+
+---
+
+## 2026-08-29 · GUI 登出/手动重连不卡 UI（ICS 后台清理）
+
+### 动机
+
+配置 `local_lans` 后，退出登录或手动重新连接会在 Fyne UI 线程同步 `Engine.Stop` → ICS `DisableAllICS`（PowerShell COM，常数秒），界面假死。多 LAN 时 Teardown 还对每条 LAN 重复关 ICS。
+
+### 改动
+
+- **clientgui**：`engine_stop.go` 后台 Stop；登出/手动重连/登录失败清理不阻塞 UI；忙状态防连点。
+- **netstack**：`Teardown` 末尾 `disableICSPlatform` **只关一次** ICS。
+- 耗时埋点：`DisableAllICS elapsed=`、`via_exit_teardown elapsed=`、`gui_engine_stop`。
+
+### 验证
+
+```powershell
+go test ./internal/clientgui/... ./internal/clientapp/... ./internal/netstack/... -count=1
+.\scripts\build-local.ps1
+```
+
+---
+
+## 2026-08-29 · 客户端差分重连 + GUI 日志 300 行
+
+### 动机
+
+每次断线都 teardown ICS + 清光分流路由，再握手全量重装；via 机 ICS Setup 耗时长，配置未变时大量工作重复。GUI 日志区过长影响体验。
+
+### 改动摘要
+
+- **临时断线**：`protectForReconnect` 仅启杀开关（若配置），保留 TUN/路由/via/DNS；`Stop`/`dataplaneFailed` 仍 `protectThenClearRoutes` 全清。
+- **增量 applyPolicy**：路由集合差分增删；via 指纹未变跳过 ICS；完全一致 `policy_apply mode=noop`；埋点 `dataplane_keep` / `dataplane_clear`。
+- **policy_diff.go**：规范化 CIDR、routeSetDiff、viaFingerprint、dnsServersEqual。
+- **GUI**：日志 UI 默认保留最近 300 行（磁盘 log 不受限）。
+
+### 验证
+
+```powershell
+go test ./internal/clientapp/... ./internal/clientgui/... -count=1
+go test ./...
+.\scripts\build-local.ps1
+```
+
+重连日志期望（配置未变）：`dataplane_keep reason=reconnect` → `policy_apply mode=noop`（或 `dns_only`）；不应反复 `via_exit_teardown`/`via_exit_setup`。
+
+---
+
+## 2026-08-29 · 架构解耦第十三轮（netutil 收口 + ExitLAN 信任边界 + 管理面硬化 + 审计中文）
+
+### 动机
+
+第十二轮后仍有半抽取重复（CIDR/广播/远端主机）、ExitLAN 可被任意客户端滥用绕过横向隔离、管理面 HTTP 无超时与敏感 GET 下载、审计 WebUI 纯英文码难读。
+
+### 改动摘要
+
+- **netutil**：NormalizeCIDROrHost / ForbidDefaultRoute / ValidateAdvertisedLAN（RFC1918+≥/16）/ IsLimitedBroadcast / NormalizeRemoteHost / CIDRListContainsIP；调用方去重。
+- **ExitLAN**：仅 viaIndex 命中的 via 可 ExitLAN→对端 VPN IP 旁路；过宽 local_lans 记 lan_cidr_reject。
+- **管理面**：HTTP 超时；备份/导出 POST+CSRF；Dashboard requireAuthPage；登录统一文案；Accept 源白名单始终生效；会话滑动+绝对上限+prune；IsAdmin 重查；自动封仅计 rejected。
+- **内聚**：decodeJSONBody、flushSessionStat、RouteOutbound 优先 byIP、route DELETE Warn。
+- **审计 UI**：audit/labels.go；action_zh / target_username；展示 login（登录）、admin (#1)。
+
+### 验证
+
+```powershell
+go test ./...
+.\scripts\build-local.ps1
+```
+
+---
 ## 2026-08-29 · ICS SkipAsSource 根因修复（保留 ICS）
 
 ### 动机
@@ -1197,3 +1310,4 @@ feat: HaoVPN 首版 — 全量重命名、文档治理与 gitignore
 ---
 
 *维护说明：只追加，不删历史；过时内容用删除线或注明「已废弃」*
+

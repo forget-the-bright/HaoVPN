@@ -11,6 +11,9 @@ import (
 // 返回：DB 读写或 HashPassword 失败时 err；用户不存在且 sync 时仅 Warn 跳过。
 // 副作用：可能 CreateUser、UpdateUserPassword；写 Info/Warn 日志。
 func (s *Service) EnsureAdmin(username, password string, syncFromConfig bool) error {
+	if err := ValidateUsername(username); err != nil {
+		return err
+	}
 	n, err := s.store.CountUsers()
 	if err != nil {
 		return err

@@ -17,7 +17,9 @@
 - **API 调用**：页面内联脚本或 `app.js` 的 `HaoVPN.api()` 访问 `/api/v1/*`（须带 Session Cookie + CSRF）。
 - **CSRF**：`HaoVPN.refreshCSRF()` 从 `GET /api/v1/csrf` 取 token，写请求头 `X-CSRF-Token`。
 - **登录改密**：须改密时填当前密码+新密码；成功后跳转 `/login`（服务端已吊销全部 Web Session）。
-- **账号页**：`/users` — 新建、策略编辑（AllowedIPs=经网关 NAT）、**管理员改密**、踢线、导出 ZIP/YAML（导出不含私钥）。
+- **账号页**：`/users` — 新建、策略编辑、管理员改密、踢线、导出 ZIP/YAML（**POST+CSRF**，`downloadPost`；不含私钥）。
+- **审计页**：`/audit` — 动作 `码（中文）`、用户目标 `用户名 (#id)`；字典 `internal/audit/labels.go`。
+- **工具页**：备份数据库为 **POST** `/api/v1/backup`（须 CSRF）。
 - **托管路由页**：`/peers` — 全局互访开关、Managed Routes（`dest via vpn_ip`）、互访白名单；API `/api/v1/peer-routes`、`/peer-access`、`/security/vpn-peers`。
 - **探针页**：`/security` — `security_events` / `ip_blocks`。
 - **静态资源**：`/static/style.css`、`/static/app.js` 由 embed FS 直接 Serve。

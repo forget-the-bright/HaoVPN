@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"haovpn/internal/logger"
-	"haovpn/internal/persist"
 )
 
 // KickUser 强制踢线指定账号。
@@ -51,19 +50,7 @@ func (m *Manager) recordDisconnect(userID int64, remoteAddr string) {
 			logger.Warn("踢线写 connection_events 失败 user_id=%d: %v", userID, err)
 		}
 		now := time.Now()
-		st, _ := m.store.GetSessionStat(userID)
-		rc := 0
-		if st != nil {
-			rc = st.ReconnectCount
-		}
-		if err := m.store.UpsertSessionStat(persist.SessionStat{
-			UserID:         userID,
-			LastHeartbeat:  &now,
-			ReconnectCount: rc,
-			RemoteAddr:     remoteAddr,
-		}); err != nil {
-			logger.Warn("踢线更新 session_stats 失败 user_id=%d: %v", userID, err)
-		}
+		m.flushSessionStat(userID, nil, &now, 0, 0, remoteAddr)
 	}
 	logger.Info("账号 id=%d 已断开", userID)
 }

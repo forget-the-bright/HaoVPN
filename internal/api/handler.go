@@ -90,7 +90,7 @@ func (s *Server) Handler() http.Handler { return s.withMiddleware(s.mux) }
 
 // Listen 在指定地址启动单监听 HTTP 服务。
 func (s *Server) Listen(addr string) error {
-	s.httpServer = &http.Server{Addr: addr, Handler: s.withMiddleware(s.mux)}
+	s.httpServer = newAdminHTTPServer(addr, s.withMiddleware(s.mux))
 	logger.Info("管理 API 监听: %s", addr)
 	return s.httpServer.ListenAndServe()
 }

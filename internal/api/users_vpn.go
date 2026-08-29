@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,8 +18,7 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 		IPLeaseSec int       `json:"ip_lease_sec"`
 		VPNIP      *string   `json:"vpn_ip"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "无效 JSON")
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	result, err := s.vpnSvc.ApplyVPNPatch(id, vpnaccount.VPNPatchInput{

@@ -68,10 +68,12 @@ func (s *Store) ListSecurityEvents(f SecurityEventFilter) ([]SecurityEvent, int,
 	return out, total, nil
 }
 
-// CountSecurityEventsSince 统计某 IP 自 since 以来的事件数（可排除部分 signature）。
+// CountSecurityEventsSince 统计某 IP 自 since 以来 action=rejected 的事件数（可排除部分 signature）。
+//
+// 仅计 rejected，避免解封后残留 auto_banned/banned_hit 等立刻再触发自动封。
 func (s *Store) CountSecurityEventsSince(ip string, since time.Time, excludeSignatures []string) (int, error) {
-	where := []string{"client_ip=?", "created_at>=?"}
-	args := []any{ip, timeutil.FormatUTC(since)}
+	where := []string{"client_ip=?", "created_at>=?", "action=?"}
+	args := []any{ip, timeutil.FormatUTC(since), "rejected"}
 	for _, sig := range excludeSignatures {
 		sig = strings.TrimSpace(sig)
 		if sig == "" {

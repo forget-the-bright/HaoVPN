@@ -2,9 +2,9 @@ package sessionmgr
 
 import (
 	"net"
-	"strings"
 	"time"
 
+	"haovpn/internal/auth"
 	"haovpn/internal/config"
 	"haovpn/internal/crypto"
 	"haovpn/internal/logger"
@@ -25,7 +25,7 @@ import (
 // 返回：allowed 解析失败，或 session_policy=reject_second 且账号已在线（且不满足 grace）时 err 非 nil。
 //
 // 副作用：
-//   - reject_second：已有会话则：同主机 grace 顶替，或对端静默超时（半死）顶替；否则 ErrAccountAlreadyOnline；
+//   - reject_second：已有会话则：同主机 grace 顶替，或对端静默超时（半死）顶替；否则 auth.ErrAccountAlreadyOnline；
 //   - kick_previous：异步 Close 旧连接后注册新会话；
 //   更新 sessions/byIP/vpnIndex/viaIndex；写 connection_events / session_stats。
 //
@@ -92,7 +92,7 @@ func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketC
 				m.mu.Unlock()
 				logger.Info("拒绝第二端登录 user_id=%d old_remote=%s new_remote=%s same_host=%v stale_peer=%v grace=%s",
 					user.ID, old.RemoteAddr, remoteAddr, sameHost, stalePeer, grace)
-				return ErrAccountAlreadyOnline
+				return auth.ErrAccountAlreadyOnline
 			}
 		} else {
 			// kick_previous：踢掉旧会话
@@ -211,35 +211,9 @@ func (m *Manager) rebuildViaIndexLocked() {
 
 // sameRemoteHost 比较两个 host:port 的主机部分是否相同（忽略端口；规范化 IPv4/IPv6/本机回环）。
 func sameRemoteHost(a, b string) bool {
-	ha := normalizeRemoteHost(a)
-	hb := normalizeRemoteHost(b)
+	ha := netutil.NormalizeRemoteHost(a)
+	hb := netutil.NormalizeRemoteHost(b)
 	return ha != "" && ha == hb
-}
-
-func normalizeRemoteHost(addr string) string {
-	host, _ := splitHost(addr)
-	host = strings.Trim(host, "[]")
-	if host == "" {
-		return ""
-	}
-	if host == "::1" || host == "0:0:0:0:0:0:0:1" {
-		return "127.0.0.1"
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if v4 := ip.To4(); v4 != nil {
-			return v4.String()
-		}
-		return ip.String()
-	}
-	return strings.ToLower(host)
-}
-
-func splitHost(addr string) (host, port string) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return addr, ""
-	}
-	return host, port
 }
 
 // reconnectStaleAfter 半死会话判定阈值：对端静默超过此时间则允许密码重连顶替。

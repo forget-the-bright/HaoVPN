@@ -489,25 +489,39 @@ HaoVPN/
 4. Prometheus 指标埋点（v1.0 用 Dashboard + SQLite 统计代替）
 5. 配置热重载（改 YAML 需重启，文档写清楚）
 6. 连接监控历史自动归档/TTL 清理（v1.0 全量写 SQLite）
-7. 客户端系统托盘 GUI、移动端（v1.0 仅 CLI + Windows 服务）
+7. ~~客户端系统托盘 GUI、移动端（v1.0 仅 CLI + Windows 服务）~~ → **已交付** Fyne 桌面 GUI（`cmd/client-gui` / `internal/clientgui`）；移动端仍不做
 8. 多节点集群 / 高可用（v1.0 单节点现场部署）
 9. IPv6 双栈（v1.0 仅 IPv4）
 10. LDAP/AD 对接（v1.0 仅内置账号体系）
 
-## SQLite 数据模型（v1.0）
+## SQLite 数据模型（权威：schema.sql）
+
+> **以 [`internal/persist/schema.sql`](../internal/persist/schema.sql) 为准**；下表为历史草稿，已过时处勿再照抄。
+>
+> 现状要点：`users` 合一（无独立 `peers` 表）；另有 `peer_routes` / `peer_route_members` / `peer_access` / `client_lan_registry`、`security_events` / `ip_blocks`、日志历史库等。详见 [architecture.md](architecture.md) 与 `persist` 包。
+
+| 表名（现行） | 用途 |
+|------|------|
+| `users` | Web+隧道合一账号（含密钥、vpn_ip、allowed_ips、ip_mode…） |
+| `peer_routes` / `peer_route_members` | 托管路由 dest via + 访问方 |
+| `peer_access` | 账号互访白名单 |
+| `client_lan_registry` | 客户端上报的 local_lans 临时广告 |
+| `ip_allocations` / `connection_events` / `session_stats` / `audit_logs` | IP 池、连接、会话、管理审计 |
+| `security_events` / `ip_blocks` | 探针事件与封禁 |
+
+### 历史草稿（归档，勿用于实现）
 
 | 表名 | 用途 | 主要字段 |
 |------|------|----------|
 | `users` | 管理面登录账号 | id, username, password_hash, enabled, created_at, updated_at |
-| `peers` | VPN 客户端身份，归属用户 | id, user_id, public_key, private_key_enc(可选), vpn_ip, allowed_ips, enabled |
+| `peers` | （已合并进 users） | — |
 | `ip_allocations` | IP 池占用 | ip, peer_id, allocated_at, released_at |
 | `connection_events` | 上下线/断线事件 | id, peer_id, event_type, remote_addr, created_at, detail_json |
 | `session_stats` | 当前会话与累计统计 | peer_id, connected_at, last_heartbeat, rx_bytes, tx_bytes, reconnect_count |
 | `audit_logs` | 管理操作审计 | id, actor_user_id, action, target_type, target_id, client_ip, detail_json, created_at |
 
-- 外键：`peers.user_id → users.id`；`connection_events.peer_id → peers.id`；`audit_logs.actor_user_id → users.id`。
-- 索引：`users.username` 唯一；`peers.public_key` 唯一；`connection_events(peer_id, created_at)`；`audit_logs(created_at)`。
-- 依赖：`modernc.org/sqlite` 或 `github.com/mattn/go-sqlite3`（优先纯 Go 驱动，免 CGO）。
+- 外键与索引以 `schema.sql` 为准。
+- 依赖：`modernc.org/sqlite`（纯 Go）。
 
 ## YAML 配置与首次启动生成
 

@@ -72,17 +72,17 @@ func ValidateSubnetGateway(subnet, gateway string) error {
 //
 // HaoVPN 定位为工控分流 VPN，不允许通过配置覆盖全部流量。
 // 返回：含全隧道前缀或无效 CIDR 时 error。
+// 关联：ForbidDefaultRoute（单条）；本函数额外校验每项可解析。
 func ValidateNoFullTunnel(cidrs []string) error {
 	for _, c := range cidrs {
 		c = strings.TrimSpace(c)
-		if c == "0.0.0.0/0" || c == "::/0" {
+		if c == "" {
+			continue
+		}
+		if err := ForbidDefaultRoute(c); err != nil {
 			return fmt.Errorf("禁止 0.0.0.0/0 全隧道")
 		}
-		normalized := c
-		if !strings.Contains(normalized, "/") {
-			normalized += "/32"
-		}
-		if _, _, err := net.ParseCIDR(normalized); err != nil {
+		if _, err := ParseCIDROrHost(c); err != nil {
 			return fmt.Errorf("无效 CIDR %q: %w", c, err)
 		}
 	}

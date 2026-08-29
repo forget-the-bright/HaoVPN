@@ -114,11 +114,12 @@ func TestAcceptanceAPIFlow(t *testing.T) {
 	}
 	userID := userOut.ID
 
-	// 导出配置
-	exportReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/users/"+itoa(userID)+"/export", nil)
+	// 导出配置（POST + CSRF，防跨站 GET 拖库）
+	exportReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/users/"+itoa(userID)+"/export", nil)
 	for _, c := range cookies {
 		exportReq.AddCookie(c)
 	}
+	exportReq.Header.Set("X-CSRF-Token", csrf)
 	exportResp, err := client.Do(exportReq)
 	if err != nil {
 		t.Fatal(err)

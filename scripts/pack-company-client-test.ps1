@@ -58,13 +58,15 @@ try {
         username = $AdminUser
         password = $AdminPass
     } -WebSession $ws -UseBasicParsing -TimeoutSec 5
+    $csrf = ($login.Content | ConvertFrom-Json).csrf_token
+    $expHeaders = @{ "X-CSRF-Token" = $csrf }
     $users = Invoke-WebRequest -Uri "$ApiBase/api/v1/users" -WebSession $ws -UseBasicParsing
     $list = $users.Content | ConvertFrom-Json
     $hit = $list | Where-Object { $_.username -eq $TestUser } | Select-Object -First 1
     if ($hit) {
         $userID = [int64]$hit.id
         $zipPath = Join-Path $OutDir "account-export.zip"
-        Invoke-WebRequest -Uri "$ApiBase/api/v1/users/$userID/export.zip" -WebSession $ws -OutFile $zipPath -UseBasicParsing
+        Invoke-WebRequest -Uri "$ApiBase/api/v1/users/$userID/export.zip" -Method POST -Headers $expHeaders -WebSession $ws -OutFile $zipPath -UseBasicParsing
         Expand-Archive -Path $zipPath -DestinationPath (Join-Path $OutDir "account-export") -Force
         $yamlPath = Join-Path $OutDir "account-export\client.yaml"
         if (Test-Path $yamlPath) {

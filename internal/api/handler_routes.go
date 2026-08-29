@@ -30,7 +30,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/security/vpn-peers", s.requireAuth(s.handleVPNPeersPolicy))
 
 	s.mux.HandleFunc("/static/", s.handleStatic)
-	s.mux.HandleFunc("/", s.handleDashboardPage)
+	s.mux.HandleFunc("/", s.requireAuthPage(s.handleDashboardPage))
 	s.mux.HandleFunc("/users", s.requireAuthPage(s.handleUsersPage))
 	s.mux.HandleFunc("/peers", s.requireAuthPage(s.handlePeersPage))
 	s.mux.HandleFunc("/connections", s.requireAuthPage(s.handleConnectionsPage))

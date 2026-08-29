@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -117,12 +116,12 @@ func (s *Server) handleLANRegistry(w http.ResponseWriter, r *http.Request) {
 	viaFilter, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
 	rows, err := s.store.ListClientLANRegistry(viaFilter)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	byID, err := s.userDirMap()
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	items := make([]lanRegistryView, 0, len(rows))
@@ -182,7 +181,7 @@ func (s *Server) handlePeerRouteByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeletePeerRoute(id); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	s.audit.Log(s.actorFromRequest(r), "peer_route_delete", "peer_route", &id, s.clientIP(r), map[string]string{
@@ -209,8 +208,7 @@ func (s *Server) replacePeerRouteMembers(w http.ResponseWriter, r *http.Request,
 		MemberUserIDs []int64 `json:"member_user_ids"`
 		ApplyAll      bool    `json:"apply_all"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "无效 JSON")
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 	if body.ApplyAll {
@@ -232,12 +230,12 @@ func (s *Server) replacePeerRouteMembers(w http.ResponseWriter, r *http.Request,
 func (s *Server) listPeerRoutes(w http.ResponseWriter, r *http.Request) {
 	routes, err := s.store.ListPeerRoutes()
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	byID, err := s.userDirMap()
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	items := make([]peerRouteView, 0, len(routes))
@@ -255,8 +253,7 @@ func (s *Server) createPeerRoute(w http.ResponseWriter, r *http.Request) {
 		MemberUserIDs []int64 `json:"member_user_ids"`
 		ApplyAll      bool    `json:"apply_all"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		_ = r.ParseForm()
+	if !decodeJSONOrForm(w, r, &body, func() {
 		body.DestCIDR = r.FormValue("dest_cidr")
 		body.ViaUserID, _ = strconv.ParseInt(r.FormValue("via_user_id"), 10, 64)
 		body.ApplyAll = r.FormValue("apply_all") == "1" || r.FormValue("apply_all") == "true"
@@ -264,6 +261,8 @@ func (s *Server) createPeerRoute(w http.ResponseWriter, r *http.Request) {
 			v, _ := strconv.ParseInt(uid, 10, 64)
 			body.UserID = &v
 		}
+	}) {
+		return
 	}
 	members := body.MemberUserIDs
 	if body.ApplyAll {
@@ -360,7 +359,12 @@ func (s *Server) applyPeerPolicy(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ForceAll bool `json:"force_all"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	// 空体视为 force_all=false；表单/JSON 均可
+	if !decodeJSONOrForm(w, r, &body, func() {
+		body.ForceAll = r.FormValue("force_all") == "1" || r.FormValue("force_all") == "true"
+	}) {
+		return
+	}
 
 	s.peerDirtyMu.Lock()
 	forceAll := body.ForceAll || s.peerDirtyAll
@@ -373,7 +377,7 @@ func (s *Server) applyPeerPolicy(w http.ResponseWriter, r *http.Request) {
 	if forceAll {
 		dir, err := s.store.ListUserDirectory()
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		ids = ids[:0]
@@ -434,12 +438,12 @@ func (s *Server) handlePeerAccess(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listPeerAccess(w http.ResponseWriter, r *http.Request) {
 	byID, err := s.userDirMap()
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	acc, err := s.store.ListAllPeerAccess()
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	filterUID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
@@ -466,10 +470,11 @@ func (s *Server) addPeerAccess(w http.ResponseWriter, r *http.Request) {
 		UserID     int64 `json:"user_id"`
 		PeerUserID int64 `json:"peer_user_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		_ = r.ParseForm()
+	if !decodeJSONOrForm(w, r, &body, func() {
 		body.UserID, _ = strconv.ParseInt(r.FormValue("user_id"), 10, 64)
 		body.PeerUserID, _ = strconv.ParseInt(r.FormValue("peer_user_id"), 10, 64)
+	}) {
+		return
 	}
 	if err := s.store.AddPeerAccessPair(body.UserID, body.PeerUserID); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
@@ -490,7 +495,7 @@ func (s *Server) removePeerAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.RemovePeerAccessPair(uid, pid); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	s.audit.Log(s.actorFromRequest(r), "peer_access_remove", "user", &uid, s.clientIP(r), map[string]string{
@@ -513,12 +518,13 @@ func (s *Server) handleVPNPeersPolicy(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			AllowAllVPNPeers bool `json:"allow_all_vpn_peers"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			_ = r.ParseForm()
+		if !decodeJSONOrForm(w, r, &body, func() {
 			body.AllowAllVPNPeers = r.FormValue("allow_all_vpn_peers") == "1" || r.FormValue("allow_all_vpn_peers") == "true"
+		}) {
+			return
 		}
 		if err := s.store.SetAllowAllVPNPeersSetting(body.AllowAllVPNPeers); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		s.cfg.Security.AllowAllVPNPeers = body.AllowAllVPNPeers
@@ -533,3 +539,4 @@ func (s *Server) handleVPNPeersPolicy(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 	}
 }
+

@@ -11,25 +11,45 @@ import (
 	"haovpn/internal/transport"
 )
 
-// protectThenClearRoutes 断线防护：先装杀开关再清路由。
+// enableKillSwitchIfConfigured 断线时若开启杀开关则 Enable；失败不拆数据面。
+//
+// 返回 ok=false 表示 Enable 失败（调用方不得 clearRoutes，以防工控流量回落物理网卡）。
+func (e *Engine) enableKillSwitchIfConfigured() (ok bool) {
+	if !e.cfg.Security.KillSwitch {
+		return true
+	}
+	prefixes := e.rt.allowedIPs()
+	if len(prefixes) == 0 {
+		e.setKillSwitchStatus(false, "杀开关启用失败: AllowedIPs 为空，已保留路由以防泄漏")
+		logger.Error("杀开关启用失败: AllowedIPs 为空，禁止清路由")
+		return false
+	}
+	if err := e.ks.Enable(prefixes); err != nil {
+		e.setKillSwitchStatus(false, fmt.Sprintf("杀开关启用失败: %v（已保留路由，工控流量仍走 TUN）", err))
+		logger.Error("杀开关启用失败，禁止清路由: %v", err)
+		return false
+	}
+	e.setKillSwitchStatus(true, "")
+	return true
+}
+
+// protectForReconnect 临时断线防护：仅启杀开关（若配置），保留 TUN/路由/via/DNS。
+//
+// 供自动重连路径使用；握手后 applyPolicy 按差分增删，配置未变则 noop。
+func (e *Engine) protectForReconnect() {
+	_ = e.enableKillSwitchIfConfigured()
+	logger.Info("dataplane_keep reason=reconnect")
+}
+
+// protectThenClearRoutes 全量防护：先装杀开关再清路由（Stop 失败路径 / dataplaneFailed）。
 func (e *Engine) protectThenClearRoutes() {
-	if e.cfg.Security.KillSwitch {
-		prefixes := e.rt.allowedIPs()
-		if len(prefixes) == 0 {
-			e.setKillSwitchStatus(false, "杀开关启用失败: AllowedIPs 为空，已保留路由以防泄漏")
-			logger.Error("杀开关启用失败: AllowedIPs 为空，禁止清路由")
-			return
-		}
-		if err := e.ks.Enable(prefixes); err != nil {
-			e.setKillSwitchStatus(false, fmt.Sprintf("杀开关启用失败: %v（已保留路由，工控流量仍走 TUN）", err))
-			logger.Error("杀开关启用失败，禁止清路由: %v", err)
-			return
-		}
-		e.setKillSwitchStatus(true, "")
+	if !e.enableKillSwitchIfConfigured() {
+		return
 	}
 	if e.clearRoutesHook != nil {
 		e.clearRoutesHook()
 	}
+	logger.Info("dataplane_clear reason=dataplane_failed_or_explicit")
 	e.rt.clearRoutes()
 }
 

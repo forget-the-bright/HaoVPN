@@ -245,7 +245,7 @@ launchd 配置历史见 `docs/dev-log.md`。
 | `database.connection_events_retention_days` | `90` | 连接事件保留天数 |
 | `log.history_retention_days` | `90` | 结构化历史日志（`logs.db`）；`-1` 关闭 |
 | `log.history_db` | 同目录 `logs.db` | WebUI 分页检索用 |
-| 客户端 `local_lans` | 未配/空 | **手动**填写本机后面的 LAN（如 `192.168.31.0/24`）；非空则登录上报注册表并开 via 出口（TUN→LAN 转发/SNAT）；空则整条关闭。勿写入账号 AllowedIPs |
+| 客户端 `local_lans` | 未配/空 | **手动**填写本机后面的 LAN（如 `192.168.31.0/24`）；须为 **RFC1918** 且前缀 **≥ /16**（禁 `/0`～`/15` 与公网前缀）；非空则登录上报注册表并开 via 出口；空则整条关闭。勿写入账号 AllowedIPs；勿写 ICS `192.168.137.0/24` |
 
 管理控制台：维护页读 live 日志；**探针**页（`/security`）；**托管路由**页（`/peers`：注册表 + Managed Routes + 互访）；滚动大文件仅读尾部块。
 
@@ -336,6 +336,8 @@ cd C:\haovpn-client
 security:
   kill_switch: true   # Windows 专用，须管理员；断线/重连期间 WFP 阻断 allowed_ips 出站
 ```
+
+自动重连时客户端**保留** TUN 分流路由与 via/ICS（配置未变则不再重跑 ICS），仅换隧道会话；杀开关在断线间隙 Enable、连上后 Disable。登出 / Stop / 策略失败仍全清数据面。GUI「手动重新连接」等价 Stop 再连（全清）。
 
 CLI 若 yaml 已含 `auth.password`，可无 `HAOVPN_PASSWORD` 直连。
 

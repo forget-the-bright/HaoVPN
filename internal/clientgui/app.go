@@ -44,6 +44,10 @@ type uiApp struct {
 
 	pollStop chan struct{}
 
+	// engOpBusy：登出/手动重连等正在后台 Stop，防连点卡死与竞态
+	engOpMu   sync.Mutex
+	engOpBusy bool
+
 	// 托盘当前种类（SetSystemTrayMenu 会冲掉图标，须随后 forceTrayIcon）
 	trayMu       sync.Mutex
 	trayKind     trayKind
@@ -52,7 +56,7 @@ type uiApp struct {
 
 // newUI 构造 UI 控制器并注册 logger sink，将日志行转发到 appendLog。
 func newUI(a fyne.App, configPath string) *uiApp {
-	u := &uiApp{app: a, configPath: configPath, logLines: make([]string, 0, 200)}
+	u := &uiApp{app: a, configPath: configPath, logLines: make([]string, 0, logDisplayKeep)}
 	logger.SetSink(func(_ logger.Level, line string) {
 		u.appendLog(line)
 	})
@@ -120,12 +124,27 @@ func (u *uiApp) showMain() {
 }
 
 // doLogout 停止 VPN、关闭主窗并回到登录窗。
+//
+// Stop（含 ICS 清理）在后台执行，避免 UI 线程卡死；完成后切回登录窗。
 func (u *uiApp) doLogout() {
-	u.stopPoll()
-	if u.eng != nil {
-		u.eng.Stop()
-		u.eng = nil
+	if !u.beginEngineOp() {
+		u.appendLog("正在断开，请稍候…")
+		return
 	}
+	u.stopPoll()
+	if u.statusLbl != nil {
+		u.statusLbl.SetText("状态: 正在断开…")
+	}
+	u.appendLog("正在退出登录（清理网络可能需数秒）…")
+	eng := u.takeEngine()
+	u.stopEngineAsync(eng, func() {
+		u.finishLogoutUI()
+		u.endEngineOp()
+	})
+}
+
+// finishLogoutUI 登出后台 Stop 完成后的界面切换（须在 UI 线程）。
+func (u *uiApp) finishLogoutUI() {
 	if u.mainWin != nil {
 		u.mainWin.Hide()
 		u.mainWin.Close()
@@ -153,13 +172,14 @@ func (u *uiApp) startPoll() {
 	stop := u.pollStop
 	safeutil.GoSafe("gui-status-poll", func() {
 		safeutil.RunTickerStop(stop, 500*time.Millisecond, func() {
-			if u.eng == nil {
+			eng := u.getEngine()
+			if eng == nil {
 				return
 			}
-			st := u.eng.State()
-			ip := u.eng.VPNIP()
-			errMsg := u.eng.LastError()
-			ksOK := u.eng.KillSwitchOK()
+			st := eng.State()
+			ip := eng.VPNIP()
+			errMsg := eng.LastError()
+			ksOK := eng.KillSwitchOK()
 			fyne.Do(func() {
 				if u.statusLbl != nil {
 					txt := "状态: " + st.String()
@@ -191,12 +211,13 @@ func (u *uiApp) stopPoll() {
 }
 
 // shutdown 退出前清理：停轮询、Engine、logger sink。
+//
+// 进程即将退出，须同步等待 Stop 完成以免 ICS/路由残留。
 func (u *uiApp) shutdown() {
 	u.stopPoll()
 	logger.SetSink(nil)
-	if u.eng != nil {
-		u.eng.Stop()
-		u.eng = nil
+	if eng := u.takeEngine(); eng != nil {
+		eng.Stop()
 	}
 	_ = logger.Close()
 }

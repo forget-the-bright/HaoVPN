@@ -8,7 +8,6 @@ import (
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
-	"haovpn/internal/persist"
 	"haovpn/internal/transport"
 	"haovpn/internal/tunnel"
 )
@@ -34,7 +33,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		return
 	}
 	hsStart := time.Now()
-	lans := persist.ValidLANCIDRs(e.cfg.LocalLANs)
+	lans := netutil.ValidLANCIDRs(e.cfg.LocalLANs)
 	hsRes, err := hs.RunAuthWithTimeoutEx(conn, user, pass, lans, clientHostID(), 20*time.Second)
 	if err != nil {
 		logger.Warn("隧道握手失败: %v elapsed=%s", err, time.Since(hsStart))
@@ -81,7 +80,8 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		e.activeConn = nil
 		e.cryptoSess = nil
 		logger.Info("隧道连接已断开，等待重连")
-		e.protectThenClearRoutes()
+		// 临时断线保留 TUN/路由/ICS，握手后差分；仅启杀开关（若配置）
+		e.protectForReconnect()
 		e.mu.Lock()
 		e.state = StateReconnecting
 		e.mu.Unlock()
@@ -113,7 +113,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		}
 		e.activeMu.Unlock()
 		logger.Warn("session_abandoned reason=disconnected_during_policy，等待自动重连")
-		e.protectThenClearRoutes()
+		e.protectForReconnect()
 		e.setLastError("连接在配置网络时断开，正在重连…")
 		e.setState(StateReconnecting)
 		// 不停重连循环：瞬时断线交给 ReconnectClient 下一轮 Dial
@@ -143,7 +143,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 
 // dataplaneFailed 鉴权已成功并通知 GUI 后，TUN/路由失败时的收尾。
 //
-// 停重连、清路由，并触发 OnDataplaneFailed（GUI 回登录红字）。
+// 停重连、清数据面，并触发 OnDataplaneFailed（GUI 回登录红字）。
 func (e *Engine) dataplaneFailed(conn *transport.Conn, msg string) {
 	e.setLastError(msg)
 	e.setState(StateIdle)

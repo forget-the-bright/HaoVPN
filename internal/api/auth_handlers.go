@@ -9,9 +9,10 @@ import (
 
 // requireAuth 鉴权中间件，包装需登录的 API 处理器。
 //
-// 未登录返回 401 JSON；用户已删/禁用时吊销会话并 401（失败关闭）。
+// 未登录返回 401 JSON；用户已删/禁用/非管理员时吊销会话并 401（失败关闭）。
 // MustChangePassword 时仅放行 /api/v1/password 与 /api/v1/logout；查询失败亦 401。
-// POST/PUT/PATCH/DELETE 须通过 validateCSRF；GET 豁免 CSRF。
+// 鉴权成功后 TouchSession（滑动过期）。
+// POST/PUT/PATCH/DELETE 须通过 validateCSRF；GET 豁免 CSRF（敏感下载已改为 POST）。
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		se, ok := s.sessionFromRequest(r)
@@ -42,6 +43,9 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 				writeAPIError(w, http.StatusForbidden, "CSRF token 无效")
 				return
 			}
+		}
+		if c, err := r.Cookie("session"); err == nil {
+			s.auth.TouchSession(c.Value)
 		}
 		next(w, r)
 	}
@@ -115,14 +119,12 @@ func (s *Server) validateCSRF(r *http.Request) bool {
 // 成功时设置 session Cookie、返回 csrf_token 与 must_change_password；失败写审计 login_failed。
 // 副作用：写入会话 Cookie（HttpOnly、SameSite=Lax）；登录接口豁免 CSRF；顺带 prune 过期会话。
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	if err := parseRequestForm(r); err != nil {
+	if !parseFormOrError(w, r) {
 		ip := s.clientIP(r)
-		logger.Warn("登录表单解析失败 ip=%s ct=%q err=%v", ip, r.Header.Get("Content-Type"), err)
-		writeAPIError(w, http.StatusBadRequest, "invalid form data")
+		logger.Warn("登录表单解析失败 ip=%s ct=%q", ip, r.Header.Get("Content-Type"))
 		return
 	}
 	username := r.FormValue("username")
@@ -131,7 +133,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	token, user, err := s.auth.Login(username, password, ip)
 	if err != nil {
 		s.audit.Log(nil, "login_failed", "user", nil, ip, map[string]string{"username": username})
-		writeAPIError(w, http.StatusUnauthorized, err.Error())
+		// 对外统一文案，避免锁定/错密 oracle；细节仅日志与审计
+		logger.Warn("登录失败 ip=%s user=%q err=%v", ip, username, err)
+		writeAPIError(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
 	_ = s.auth.PruneExpiredSessions()
@@ -156,10 +160,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleLogout 注销当前 Web 会话（POST /api/v1/logout）。
+// handleLogout 注销当前 Web 会话（仅 POST /api/v1/logout；须 CSRF，禁止 GET 防跨站注销）。
 //
 // 副作用：销毁服务端会话、清除 session Cookie、写审计 logout。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	if c, err := r.Cookie("session"); err == nil {
 		se, ok := s.auth.ValidateSession(c.Value)
 		if ok {
@@ -177,8 +184,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // 参数：表单 old_password、new_password；成功后清除 MustChangePassword，并吊销该用户全部 Web 会话。
 // 副作用：更新 DB 密码哈希、写审计 change_password；前端须重新登录。
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	se, ok := s.sessionFromRequest(r)
@@ -186,8 +192,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "未登录")
 		return
 	}
-	if err := parseRequestForm(r); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid form data")
+	if !parseFormOrError(w, r) {
 		return
 	}
 	oldPass := r.FormValue("old_password")

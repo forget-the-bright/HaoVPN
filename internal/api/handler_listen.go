@@ -11,6 +11,20 @@ import (
 	"haovpn/internal/safeutil"
 )
 
+// newAdminHTTPServer 构造管理面 http.Server，统一超时以防 Slowloris / 悬挂连接。
+//
+// ReadHeaderTimeout 10s；Read/Write 60s；Idle 120s。与 StartAllListeners / Listen 共用。
+func newAdminHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+}
+
 // StartAllListeners 在多个 host 上并发启动管理 API 监听。
 //
 // 参数：hosts — api.listen_hosts（含 TUN IP 追加后）；port — 管理端口。
@@ -42,7 +56,7 @@ func StartAllListeners(s *Server, hosts []string, port int) []*http.Server {
 			logger.Warn("管理 API 跳过 %s: %v（本机请用 127.0.0.1:%d）", addr, err, port)
 			continue
 		}
-		srv := &http.Server{Addr: addr, Handler: handler}
+		srv := newAdminHTTPServer(addr, handler)
 		servers = append(servers, srv)
 		safeutil.GoSafe("api-listen-"+addr, func() {
 			logger.Info("管理 API 已监听: %s", ln.Addr().String())

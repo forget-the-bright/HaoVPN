@@ -1,7 +1,7 @@
 package api
 
 import (
-	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -84,7 +84,7 @@ func (s *Server) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
 		Offset:    offset,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writePage(w, http.StatusOK, toEventViews(items), total, limit, offset)
@@ -103,7 +103,7 @@ func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
 			Offset:      offset,
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		writePage(w, http.StatusOK, toBlockViews(items), total, limit, offset)
@@ -117,13 +117,16 @@ func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
 			IP     string `json:"ip"`
 			Reason string `json:"reason"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "无效 JSON")
+		if !decodeJSONBody(w, r, &body) {
 			return
 		}
 		ip := strings.TrimSpace(body.IP)
 		if ip == "" {
 			writeAPIError(w, http.StatusBadRequest, "ip 不能为空")
+			return
+		}
+		if net.ParseIP(ip) == nil {
+			writeAPIError(w, http.StatusBadRequest, "无效 IP 地址")
 			return
 		}
 		reason := strings.TrimSpace(body.Reason)
@@ -135,7 +138,7 @@ func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.probeGuard.ManualBan(ip, reason); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		s.audit.Log(&se.UserID, "probe_ban_manual", "ip", nil, s.clientIP(r), map[string]string{
@@ -168,7 +171,7 @@ func (s *Server) handleSecurityBlockByIP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.probeGuard.Unban(ip); err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	s.audit.Log(&se.UserID, "probe_unban", "ip", nil, s.clientIP(r), map[string]string{"ip": ip})
@@ -178,3 +181,4 @@ func (s *Server) handleSecurityBlockByIP(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleSecurityPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "security_probe.html", nil)
 }
+

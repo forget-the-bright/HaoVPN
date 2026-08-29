@@ -6,14 +6,19 @@ import (
 	"fyne.io/fyne/v2"
 )
 
-// appendLog 追加一行日志并在主窗口日志区刷新显示（超 500 行时裁剪保留最近 400 行）。
+// logDisplayKeep 主窗口日志区默认最多展示的最近行数。
+// 磁盘上的 client.log / client.live.log 不受此限制（仍由 logger 滚动策略管理）。
+const logDisplayKeep = 300
+
+// appendLog 追加一行日志并在主窗口日志区刷新显示。
 //
+// 超过 logDisplayKeep 时裁剪，仅保留最近 logDisplayKeep 行，避免 UI 文本过长卡顿。
 // 登录阶段 logEntry 尚未创建时仅写入 logLines 缓冲；showMain 时须调用 flushLogView。
 func (u *uiApp) appendLog(line string) {
 	u.logMu.Lock()
 	u.logLines = append(u.logLines, line)
-	if len(u.logLines) > 500 {
-		u.logLines = u.logLines[len(u.logLines)-400:]
+	if len(u.logLines) > logDisplayKeep {
+		u.logLines = u.logLines[len(u.logLines)-logDisplayKeep:]
 	}
 	text := strings.Join(u.logLines, "\n")
 	n := len(u.logLines)
@@ -53,4 +58,11 @@ func (u *uiApp) bufferedLogText() string {
 	u.logMu.Lock()
 	defer u.logMu.Unlock()
 	return strings.Join(u.logLines, "\n")
+}
+
+// bufferedLogLineCount 返回当前缓冲行数（测试用）。
+func (u *uiApp) bufferedLogLineCount() int {
+	u.logMu.Lock()
+	defer u.logMu.Unlock()
+	return len(u.logLines)
 }

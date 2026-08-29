@@ -7,17 +7,16 @@ import (
 	"haovpn/internal/auth"
 	"haovpn/internal/clientapp"
 	"haovpn/internal/config"
-	"haovpn/internal/sessionmgr"
 )
 
 func TestIsFatalHandshakeError(t *testing.T) {
 	if !clientapp.IsFatalHandshakeError(auth.ErrBadCredentials) {
 		t.Fatal("bad credentials should be fatal")
 	}
-	if clientapp.IsFatalHandshakeError(sessionmgr.ErrAccountAlreadyOnline) {
+	if clientapp.IsFatalHandshakeError(auth.ErrAccountAlreadyOnline) {
 		t.Fatal("account online should not be immediately fatal（有限重试）")
 	}
-	if !clientapp.IsAccountAlreadyOnline(sessionmgr.ErrAccountAlreadyOnline) {
+	if !clientapp.IsAccountAlreadyOnline(auth.ErrAccountAlreadyOnline) {
 		t.Fatal("IsAccountAlreadyOnline")
 	}
 	if !clientapp.IsFatalHandshakeError(auth.ErrLoginLocked) {
@@ -39,7 +38,7 @@ func TestIsFatalHandshakeError(t *testing.T) {
 
 func TestShouldFailFastHandshakeOnlineRetries(t *testing.T) {
 	e := clientapp.NewEngine(&config.ClientConfig{})
-	err := sessionmgr.ErrAccountAlreadyOnline
+	err := auth.ErrAccountAlreadyOnline
 	for i := 1; i < 40; i++ {
 		if e.ShouldFailFastHandshake(err) {
 			t.Fatalf("第 %d 次 account_online 不应 fatal", i)

@@ -87,14 +87,7 @@
 
     document.getElementById('backupBtn').onclick = async function () {
       try {
-        await HaoVPN.refreshCSRF();
-        var r = await fetch('/api/v1/backup', { credentials: 'same-origin' });
-        if (!r.ok) throw new Error('备份失败 ' + r.status);
-        var blob = await r.blob();
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'HaoVPN-backup.db';
-        a.click();
+        await HaoVPN.downloadPost('/api/v1/backup', 'HaoVPN-backup.db');
         HaoVPN.toast('备份已开始下载', 'ok');
       } catch (ex) {
         HaoVPN.toast(ex.message, 'error');

@@ -36,13 +36,15 @@ type Service struct {
 // 字段：
 //   UserID — 对应 persist.User 主键。
 //   Username — 登录名快照；便于日志与 CSRF 校验，不随 DB 改名自动更新。
-//   ExpiresAt — 会话过期 UTC 时间；ValidateSession 会拒绝已过期条目。
+//   ExpiresAt — 滑动过期时间；ValidateSession / TouchSession 维护。
+//   AbsoluteExpiresAt — 绝对上限（创建时 now+2*sessionTTL）；防无限续期。
 //   CSRFToken — 与该 session token 配对的 CSRF 随机串；写操作须 ValidateCSRF。
 type SessionEntry struct {
-	UserID    int64
-	Username  string
-	ExpiresAt time.Time
-	CSRFToken string
+	UserID            int64
+	Username          string
+	ExpiresAt         time.Time
+	AbsoluteExpiresAt time.Time
+	CSRFToken         string
 }
 
 type lockoutEntry struct {

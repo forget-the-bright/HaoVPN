@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"haovpn/internal/auth"
 	"haovpn/internal/crypto"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
@@ -87,6 +88,11 @@ type ProvisionResult struct {
 // 返回：ProvisionResult 含 user_id 与 vpn_ip；任一步失败则回滚池占用并可能 DeleteUser。
 // 副作用：写 users 表、Pool.Allocate/RecordIPAllocation、OnRegisterIP；日志记录创建。
 func (s *Service) ProvisionWebAccount(in ProvisionInput) (ProvisionResult, error) {
+	username := strings.TrimSpace(in.Username)
+	if err := auth.ValidateUsername(username); err != nil {
+		return ProvisionResult{}, err
+	}
+	in.Username = username
 	ipMode := in.IPMode
 	if ipMode == "" {
 		ipMode = persist.IPModeFixed

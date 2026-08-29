@@ -1,9 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"haovpn/internal/auth"
@@ -30,15 +30,21 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 				enabled = 0
 			}
 		}
-		items, total, err := s.store.ListUsersPage(readmodel.UserListFilter{
-			Q: q.Get("q"), Enabled: enabled, UseEnabled: useEnabled, Limit: limit, Offset: offset,
-		})
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 		onlineOnly, _ := paginate.ParseBoolQuery(q.Get("online"))
 		online := s.onlineUserSet()
+
+		// online=1 时须在全量筛选结果上计 total 再切片；不能先 DB 分页再过滤（否则 total 变成页长）。
+		dbLimit, dbOffset := limit, offset
+		if onlineOnly {
+			dbLimit, dbOffset = 500, 0 // ClampLimit 上限；现场账号量远小于此
+		}
+		items, total, err := s.store.ListUsersPage(readmodel.UserListFilter{
+			Q: q.Get("q"), Enabled: enabled, UseEnabled: useEnabled, Limit: dbLimit, Offset: dbOffset,
+		})
+		if err != nil {
+			writeInternalError(w, err)
+			return
+		}
 		var out []readmodel.UserListAccountView
 		for _, u := range items {
 			isOnline := online[u.ID]
@@ -49,14 +55,26 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		if onlineOnly {
 			total = len(out)
+			if offset > total {
+				offset = total
+			}
+			end := offset + limit
+			if end > total {
+				end = total
+			}
+			out = out[offset:end]
 		}
 		writePage(w, http.StatusOK, out, total, limit, offset)
 	case http.MethodPost:
-		if err := parseRequestForm(r); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid form data")
+		if !parseFormOrError(w, r) {
 			return
 		}
-		username := r.FormValue("username")
+		username := strings.TrimSpace(r.FormValue("username"))
+		// 领域层 ProvisionWebAccount 仍会校验；此处提前返回便于 API 文案一致
+		if err := auth.ValidateUsername(username); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		password := r.FormValue("password")
 		ipMode := r.FormValue("ip_mode")
 		if ipMode == "" {
@@ -93,18 +111,17 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
 	parts := strings.Split(path, "/")
-	id, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "无效 ID")
+	id, ok := parsePathID(w, parts[0])
+	if !ok {
 		return
 	}
 	se, _ := s.sessionFromRequest(r)
 
-	if len(parts) > 1 && parts[1] == "export.zip" && r.Method == http.MethodGet {
+	if len(parts) > 1 && parts[1] == "export.zip" && r.Method == http.MethodPost {
 		s.handleUserExportZip(w, r, id, se)
 		return
 	}
-	if len(parts) > 1 && parts[1] == "export" && r.Method == http.MethodGet {
+	if len(parts) > 1 && parts[1] == "export" && r.Method == http.MethodPost {
 		s.handleUserExportYAML(w, r, id, se)
 		return
 	}
@@ -126,7 +143,11 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodDelete:
 		if err := s.vpnSvc.DeleteAccount(id); err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			if errors.Is(err, vpnaccount.ErrLastAdmin) {
+				writeAPIError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeInternalError(w, err)
 			return
 		}
 		revoked := s.auth.LogoutAllForUser(id)
@@ -134,14 +155,17 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		s.audit.Log(&se.UserID, "account_delete", "user", &id, s.clientIP(r), nil)
 		writeOK(w)
 	case http.MethodPost:
-		if err := parseRequestForm(r); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid form data")
+		if !parseFormOrError(w, r) {
 			return
 		}
 		action := r.FormValue("action")
 		if action == "disable" {
 			if err := s.vpnSvc.SetAccountEnabled(id, false); err != nil {
-				writeAPIError(w, http.StatusInternalServerError, err.Error())
+				if errors.Is(err, vpnaccount.ErrLastAdmin) {
+					writeAPIError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				writeInternalError(w, err)
 				return
 			}
 			revoked := s.auth.LogoutAllForUser(id)
@@ -149,7 +173,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			s.audit.Log(&se.UserID, "user_disable", "user", &id, s.clientIP(r), nil)
 		} else if action == "enable" {
 			if err := s.vpnSvc.SetAccountEnabled(id, true); err != nil {
-				writeAPIError(w, http.StatusInternalServerError, err.Error())
+				writeInternalError(w, err)
 				return
 			}
 			s.audit.Log(&se.UserID, "user_enable", "user", &id, s.clientIP(r), nil)

@@ -18,10 +18,14 @@
 
 接手请先读根目录 [记忆.md](../记忆.md) 与 [README.md](../README.md)。
 
+## 第十三轮变更摘要（2026-08-29）
+
+netutil 收口、ExitLAN via 门禁、管理面超时/导出 POST+CSRF、审计中文字典。详见 [dev-log.md](dev-log.md) 最新条目与 [architecture.md](architecture.md)、[security-hardening.md](security-hardening.md)。
+
 ## 第十一轮变更摘要（2026-08-28）
 
-架构收敛、审计补测、文档/发版授权清单。详见 [dev-log.md](dev-log.md) 最新条目。
+架构收敛、审计补测、文档/发版授权清单。详见 [dev-log.md](dev-log.md)。
 
 ## 第十轮变更摘要（2026-08-28）
 
-架构收敛、全量安全审计、文档治理、LICENSE 法律层。详见 [dev-log.md](dev-log.md) 最新条目与 [architecture.md](architecture.md)。
+架构收敛、全量安全审计、文档治理、LICENSE 法律层。详见 [dev-log.md](dev-log.md) 与 [architecture.md](architecture.md)。

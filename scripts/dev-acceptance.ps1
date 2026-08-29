@@ -183,7 +183,7 @@ $userJson = $userResp.Content | ConvertFrom-Json
 $userId = $userJson.id
 Record "创建 VPN 账号分配 IP" ($userId -gt 0 -and $userJson.vpn_ip)
 
-$export = Invoke-WebRequest -Uri "$base/api/v1/users/$userId/export" -WebSession $ws -UseBasicParsing
+$export = Invoke-WebRequest -Uri "$base/api/v1/users/$userId/export" -Method POST -Headers $headers -WebSession $ws -UseBasicParsing
 if ($export.Content -is [byte[]]) {
     $exportText = [System.Text.Encoding]::UTF8.GetString($export.Content)
 } else {
@@ -195,7 +195,7 @@ $noAdminPwd = $exportText -notmatch 'changeme123'
 Record "导出客户端 YAML" ($export.StatusCode -eq 200 -and $hasAuth -and $noPrivateKey -and $noAdminPwd) "status=$($export.StatusCode) hasAuth=$hasAuth noPrivateKey=$noPrivateKey noPwd=$noAdminPwd len=$($exportText.Length)"
 
 $zipPath = Join-Path $AcceptDir "client-export.zip"
-Invoke-WebRequest -Uri "$base/api/v1/users/$userId/export.zip" -WebSession $ws -OutFile $zipPath -UseBasicParsing
+Invoke-WebRequest -Uri "$base/api/v1/users/$userId/export.zip" -Method POST -Headers $headers -WebSession $ws -OutFile $zipPath -UseBasicParsing
 $zipOk = (Test-Path $zipPath) -and ((Get-Item $zipPath).Length -gt 100)
 Record "导出客户端 zip" $zipOk "bytes=$(if(Test-Path $zipPath){(Get-Item $zipPath).Length}else{0})"
 

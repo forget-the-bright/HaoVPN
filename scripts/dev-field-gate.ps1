@@ -133,7 +133,7 @@ $userId = ($pr.Content | ConvertFrom-Json).id
 New-FieldRecord "field 创建 VPN 账号" ($userId -gt 0)
 
 $zipPath = Join-Path $FieldDir "client.zip"
-Invoke-WebRequest -Uri "$base/api/v1/users/$userId/export.zip" -WebSession $ws -OutFile $zipPath -UseBasicParsing
+Invoke-WebRequest -Uri "$base/api/v1/users/$userId/export.zip" -Method POST -Headers $headers -WebSession $ws -OutFile $zipPath -UseBasicParsing
 $clientDir = Join-Path $FieldDir "client-bundle"
 $serverAddr = "127.0.0.1:$tunnelPort"
 $clientYaml = Expand-FieldClientZip $zipPath $clientDir $serverAddr

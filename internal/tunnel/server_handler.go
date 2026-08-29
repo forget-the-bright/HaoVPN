@@ -103,7 +103,7 @@ func (h *ServerHandler) rejectHandshake(conn *transport.Conn, err error) {
 // classifyHandshakeReject 将握手失败映射为探针 signature（errors.Is 优先，避免中文子串漂移）。
 func classifyHandshakeReject(err error) string {
 	switch {
-	case errors.Is(err, sessionmgr.ErrAccountAlreadyOnline):
+	case errors.Is(err, auth.ErrAccountAlreadyOnline):
 		return "account_online"
 	case errors.Is(err, auth.ErrBadCredentials):
 		return "auth_failed"
@@ -301,12 +301,22 @@ func (h *ServerHandler) doHandshake(conn *transport.Conn, data []byte) {
 // applyLANRegistry 按握手 local_lans 写入或清空临时注册表。
 //
 // 非空有效列表：ReplaceClientLANRegistry；空列表：Clear（配置关闭 via 广告，避免残留）。
+// 过宽/非 RFC1918 CIDR 逐条 Warn（signature=lan_cidr_reject），不写入 ExitLAN。
 // 断线时仍会再 Clear（幂等）。
 func (h *ServerHandler) applyLANRegistry(userID int64, vpnIP string, req HandshakeRequest) {
 	if h.Store == nil {
 		return
 	}
-	lans := persist.ValidLANCIDRs(req.LocalLANs)
+	// 逐条校验以便埋点；ValidLANCIDRs 仅返回通过项
+	for _, raw := range req.LocalLANs {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if _, err := netutil.ValidateAdvertisedLAN(raw); err != nil {
+			logger.Warn("lan_cidr_reject user_id=%d cidr=%q reason=%v", userID, raw, err)
+		}
+	}
+	lans := netutil.ValidLANCIDRs(req.LocalLANs)
 	if len(lans) == 0 {
 		if len(req.LocalLANs) > 0 {
 			logger.Warn("lan_registry_skip user_id=%d reason=no_valid_cidrs raw=%v", userID, req.LocalLANs)

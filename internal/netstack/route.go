@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
@@ -122,17 +123,22 @@ func ProbeIPForCIDR(lanCIDR string) string {
 // Teardown 按 Config 拆除已配置的 NAT 规则（尽力而为，失败仅打日志）。
 //
 // 返回：Enabled=false 时 nil；个别规则删除失败不阻断整体返回。
-// 副作用：删除 iptables/NetNat/ICS 等（依平台）。
+// 副作用：删除 iptables/NetNat；Windows 上 ICS 仅关闭一次（避免多 LAN 重复 COM 卡顿）。
 func (s *Stack) Teardown() error {
 	if !s.cfg.Enabled {
 		return nil
 	}
+	start := time.Now()
 	for _, lan := range s.cfg.LanCIDRs {
 		if err := teardownNATPlatform(s.cfg.VPNSubnet, lan, s.cfg.TunName); err != nil {
 			logger.Warn("netstack teardown NAT %s: %v", lan, err)
 		}
 	}
-	logger.Info("netstack teardown 完成")
+	// ICS 关闭与 LAN 条数无关，只做一次（每条 LAN 调一次会卡数秒×N）
+	icsStart := time.Now()
+	disableICSPlatform()
+	logger.Info("netstack teardown 完成 elapsed=%s ics_elapsed=%s lans=%d",
+		time.Since(start), time.Since(icsStart), len(s.cfg.LanCIDRs))
 	return nil
 }
 

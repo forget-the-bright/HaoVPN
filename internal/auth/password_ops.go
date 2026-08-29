@@ -22,9 +22,10 @@ func (s *Service) MustChangePassword(userID int64) (bool, error) {
 	return u.MustChangePassword, nil
 }
 
-// UserActiveForSession 校验会话对应用户仍存在且已启用（供 requireAuth 失败关闭）。
+// UserActiveForSession 校验会话对应用户仍存在、已启用且为管理员（供 requireAuth 失败关闭）。
 //
-// 返回：用户存在且 enabled 时 nil；否则 err（调用方应 401 并吊销会话）。
+// 返回：用户存在、enabled 且 is_admin 时 nil；否则 err（调用方应 401 并吊销会话）。
+// 说明：Web 会话仅管理员可登录；每次请求重查 IsAdmin，防止 DB 降权后 Cookie 仍特权。
 func (s *Service) UserActiveForSession(userID int64) error {
 	u, err := s.store.GetUserByID(userID)
 	if err != nil {
@@ -32,6 +33,9 @@ func (s *Service) UserActiveForSession(userID int64) error {
 	}
 	if !u.Enabled {
 		return ErrAccountDisabled
+	}
+	if !u.IsAdmin {
+		return ErrNotAdmin
 	}
 	return nil
 }

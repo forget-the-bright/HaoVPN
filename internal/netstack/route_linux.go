@@ -53,6 +53,9 @@ func teardownNATPlatform(vpnSubnet, lanCIDR, tunName string) error {
 	return nil
 }
 
+// disableICSPlatform Linux 无 ICS。
+func disableICSPlatform() {}
+
 func addClientRoutePlatform(cidr, tunName, gateway string) error {
 	var cmd *exec.Cmd
 	if gateway != "" {

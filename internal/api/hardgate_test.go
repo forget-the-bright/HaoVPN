@@ -24,7 +24,7 @@ import (
 	"haovpn/internal/sessionmgr"
 )
 
-// TestAccountPrivateKeyAESAndExport 带 keyEnc 创建账号：库内须 enc:v1:，导出 YAML 可解出明文私钥。
+// TestAccountPrivateKeyAESAndExport 带 keyEnc 创建账号：库内须 enc:v1:；导出包/YAML 不得含 private_key 明文。
 func TestAccountPrivateKeyAESAndExport(t *testing.T) {
 	dir := t.TempDir()
 	store, err := persist.Open(filepath.Join(dir, "aes.db"))
@@ -110,10 +110,11 @@ func TestAccountPrivateKeyAESAndExport(t *testing.T) {
 	}
 	_ = plain
 
-	exportReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/users/"+itoa64(userOut.ID)+"/export", nil)
+	exportReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/users/"+itoa64(userOut.ID)+"/export", nil)
 	for _, c := range cookies {
 		exportReq.AddCookie(c)
 	}
+	exportReq.Header.Set("X-CSRF-Token", csrf)
 	exportResp, err := client.Do(exportReq)
 	if err != nil {
 		t.Fatal(err)
@@ -127,10 +128,11 @@ func TestAccountPrivateKeyAESAndExport(t *testing.T) {
 		t.Fatalf("export should not embed private_key")
 	}
 
-	zipReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/users/"+itoa64(userOut.ID)+"/export.zip", nil)
+	zipReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/users/"+itoa64(userOut.ID)+"/export.zip", nil)
 	for _, c := range cookies {
 		zipReq.AddCookie(c)
 	}
+	zipReq.Header.Set("X-CSRF-Token", csrf)
 	zipResp, err := client.Do(zipReq)
 	if err != nil {
 		t.Fatal(err)

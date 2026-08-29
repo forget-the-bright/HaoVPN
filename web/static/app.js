@@ -95,11 +95,34 @@
     });
   }
 
+  /** 带 CSRF 的 POST 下载（备份/导出）；触发浏览器另存为 */
+  async function downloadPost(path, filename) {
+    await refreshCSRF();
+    const headers = {};
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+    const r = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: headers });
+    if (!r.ok) {
+      const ct = r.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        const j = await r.json();
+        throw new Error(j.error || ('下载失败 ' + r.status));
+      }
+      throw new Error('下载失败 ' + r.status);
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename || 'download';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   window.HaoVPN = {
     api: api,
     toast: toast,
     logout: logout,
     refreshCSRF: refreshCSRF,
+    downloadPost: downloadPost,
     formatBytes: formatBytes,
     formatUptime: formatUptime,
     statusBadge: statusBadge,

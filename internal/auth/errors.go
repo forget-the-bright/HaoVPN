@@ -34,4 +34,9 @@ var (
 
 	// ErrInvalidHandshake 握手请求无效。
 	ErrInvalidHandshake = errors.New("无效握手请求")
+
+	// ErrAccountAlreadyOnline 同账号已有在线会话且策略为 reject_second（无法顶替）时返回。
+	// 文案固定；clientapp 用 errors.Is / 有限重试，勿改 Error() 文案。
+	// 关联：sessionmgr.RegisterVPN、tunnel.classifyHandshakeReject、clientapp.IsAccountAlreadyOnline。
+	ErrAccountAlreadyOnline = errors.New("该账号已在其他设备在线")
 )

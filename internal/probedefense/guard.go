@@ -7,6 +7,8 @@ package probedefense
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -116,7 +118,8 @@ func (g *Guard) IsAllowlisted(ip string) bool {
 
 // AllowAccept 实现 transport.ProbeObserver：封禁或源白名单拒绝时返回 false。
 //
-// 已封禁 IP 始终拒绝（不看 Enabled）；源白名单与事件记录仅在 Enabled 时生效。
+// 已封禁 IP 始终拒绝（不看 Enabled）；源白名单（tunnel_allowed_source_ips）同样始终生效，
+// 与握手侧 CheckTunnelSourceIP 对齐，避免 Enabled=false 时扫描器仍走完 TLS Accept。
 func (g *Guard) AllowAccept(remoteAddr string) bool {
 	if g == nil {
 		return true
@@ -127,12 +130,11 @@ func (g *Guard) AllowAccept(remoteAddr string) bool {
 		logger.Warn("探针防御拒绝(已封禁) ip=%s port=%s", ip, port)
 		return false
 	}
-	if !g.cfg.Enabled {
-		return true
-	}
-	// 源白名单与 tunnel.CheckTunnelSourceIP 共用 netutil.IPMatchesRules，避免两套匹配语义漂移。
+	// 源白名单与 tunnel.CheckTunnelSourceIP 共用 netutil.IPMatchesRules，不依赖 Enabled。
 	if len(g.cfg.AllowedSourceIPs) > 0 && !g.AllowSourceIP(ip) {
-		g.RecordReject(ip, port, PhaseTCPAccept, "source_deny", "不在 tunnel_allowed_source_ips")
+		if g.cfg.Enabled {
+			g.RecordReject(ip, port, PhaseTCPAccept, "source_deny", "不在 tunnel_allowed_source_ips")
+		}
 		logger.Warn("探针防御拒绝(源白名单) ip=%s port=%s", ip, port)
 		return false
 	}
@@ -186,9 +188,15 @@ func (g *Guard) RecordReject(ip, port, phase, signature, detail string) {
 }
 
 // ManualBan 管理员手动封禁（不依赖 Enabled；封禁表始终可写）。
+//
+// ip 须为可解析的 IP 地址（非空主机名）。
 func (g *Guard) ManualBan(ip, reason string) error {
 	if g == nil || g.store == nil {
 		return nil
+	}
+	ip = strings.TrimSpace(ip)
+	if net.ParseIP(ip) == nil {
+		return fmt.Errorf("无效 IP 地址")
 	}
 	b := persist.IPBlock{
 		IP: ip, Reason: reason, Source: "manual", Enabled: true,

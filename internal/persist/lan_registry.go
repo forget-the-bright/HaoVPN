@@ -2,11 +2,11 @@ package persist
 
 import (
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 	"haovpn/internal/timeutil"
 )
 
@@ -19,9 +19,16 @@ type ClientLANRegistry struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// NormalizeLANCIDR 规范化本地网段 CIDR（禁止默认路由）。
+// NormalizeLANCIDR 薄包装：委托 netutil（兼容旧调用方；新代码请直接用 netutil）。
+//
+// 关联：netutil.NormalizeLANCIDR / ValidateAdvertisedLAN；与托管路由 dest 策略分离。
 func NormalizeLANCIDR(cidr string) (string, error) {
-	return NormalizePeerRouteDest(cidr)
+	return netutil.NormalizeLANCIDR(cidr)
+}
+
+// ValidLANCIDRs 薄包装：委托 netutil.ValidLANCIDRs（兼容旧调用方）。
+func ValidLANCIDRs(cidrs []string) []string {
+	return netutil.ValidLANCIDRs(cidrs)
 }
 
 // ReplaceClientLANRegistry 用本次上报列表整表替换该账号注册行（换机覆盖）。
@@ -34,7 +41,7 @@ func (s *Store) ReplaceClientLANRegistry(userID int64, vpnIP, hostID string, cid
 	var normalized []string
 	seen := map[string]struct{}{}
 	for _, c := range cidrs {
-		n, err := NormalizeLANCIDR(c)
+		n, err := netutil.NormalizeLANCIDR(c)
 		if err != nil {
 			logger.Warn("lan_registry 跳过无效 CIDR user_id=%d cidr=%q: %v", userID, c, err)
 			continue
@@ -117,29 +124,4 @@ func (s *Store) ListClientLANRegistry(viaUserID int64) ([]ClientLANRegistry, err
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// ValidLANCIDRs 过滤并规范化 CIDR 列表（供客户端上报前校验）。
-func ValidLANCIDRs(cidrs []string) []string {
-	var out []string
-	seen := map[string]struct{}{}
-	for _, c := range cidrs {
-		n, err := NormalizeLANCIDR(c)
-		if err != nil {
-			continue
-		}
-		// 额外拒绝明显非局域网用途的过宽前缀可选：仅禁 /0
-		if _, ipnet, err := net.ParseCIDR(n); err == nil {
-			ones, bits := ipnet.Mask.Size()
-			if bits == 32 && ones == 0 {
-				continue
-			}
-		}
-		if _, ok := seen[n]; ok {
-			continue
-		}
-		seen[n] = struct{}{}
-		out = append(out, n)
-	}
-	return out
 }

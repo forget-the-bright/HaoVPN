@@ -293,17 +293,15 @@ func teardownNATPlatform(vpnSubnet, lanCIDR, tunName string) error {
 	if err != nil {
 		logger.Debug("Remove-NetNat: %s %v", out, err)
 	}
-	// 尽力关闭 ICS，避免残留影响其它网络共享
-	icsOff := `
-$ErrorActionPreference = 'SilentlyContinue'
-regsvr32 /s hnetcfg.dll
-$net = New-Object -ComObject HNetCfg.HNetShare
-foreach ($c in @($net.EnumEveryConnection())) {
-  try { $net.INetSharingConfigurationForINetConnection($c).DisableSharing() } catch {}
-}
-`
-	_ = platform.Command("powershell", "-NoProfile", "-Command", icsOff).Run()
+	// ICS 由 Teardown 末尾 disableICSPlatform 统一关闭一次，避免多 LAN 重复 COM
 	return nil
+}
+
+// disableICSPlatform 关闭本机全部 ICS 共享（Teardown 每栈仅调用一次）。
+func disableICSPlatform() {
+	start := time.Now()
+	winnet.DisableAllICS()
+	logger.Info("windows: disableICSPlatform elapsed=%s", time.Since(start))
 }
 
 // addClientRoutePlatform 添加分流路由：经 Wintun 接口 on-link（忽略 gateway 作下一跳）。
@@ -339,7 +337,11 @@ func delClientRoutePlatform(cidr, tunName, gateway string) error {
 	_ = tunName
 	_ = gateway
 	cmd := platform.Command("route", "DELETE", dest, "MASK", mask)
-	_ = cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// 路由本就不存在时 Windows 常返回非零；记 Warn 便于排查残留 on-link，不阻断清理流程
+		logger.Warn("route DELETE 失败 cidr=%s dest=%s: %v out=%s", cidr, dest, err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

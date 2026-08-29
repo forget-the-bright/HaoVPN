@@ -54,6 +54,15 @@ func TestSecurityChecklistMetaPlan(t *testing.T) {
 		t.Fatalf("#9 CSRF: 期望 403，得 %d body=%s", w.Code, w.Body.String())
 	}
 
+	// logout 仅允许 POST（GET 须 405，防跨站顶层导航注销）
+	reqGet, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/logout", nil)
+	reqGet.AddCookie(&http.Cookie{Name: "session", Value: token})
+	wGet := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wGet, reqGet)
+	if wGet.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("logout GET: 期望 405，得 %d", wGet.Code)
+	}
+
 	// #2 allow_public_bind 审计记录
 	auditLog := audit.New(store)
 	api.LogPublicBindAudit(auditLog)

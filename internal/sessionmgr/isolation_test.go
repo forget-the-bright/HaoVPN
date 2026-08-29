@@ -122,6 +122,8 @@ func TestExitLANSourceForwardsToPeer(t *testing.T) {
 		UserID: 2, VPNIP: "10.88.0.87", Crypto: sess2, Conn: conn2,
 	}
 	m.byIP["10.88.0.87"] = m.sessions[2]
+	// 会话 3 须为已应用托管路由的 via，才允许 ExitLAN→对端 VPN 直转
+	m.viaIndex = []viaRouteEntry{{net: lan, viaUserID: 3}}
 	m.mu.Unlock()
 
 	pkt := make([]byte, 20)
@@ -138,6 +140,48 @@ func TestExitLANSourceForwardsToPeer(t *testing.T) {
 	}
 	if conn2.sends == 0 {
 		t.Fatal("ExitLANs 源应直转到对端 VPN 会话")
+	}
+}
+
+// TestExitLANNonViaCannotBypassPeerIsolation 非 via 即使有 ExitLANs 也不得绕过横向隔离直转到对端 VPN IP。
+func TestExitLANNonViaCannotBypassPeerIsolation(t *testing.T) {
+	m := New(nil)
+	m.vpnIndex = map[string]int64{"10.88.0.2": 1, "10.88.0.3": 2}
+	kp1, _ := crypto.GenerateKeyPair()
+	kp2, _ := crypto.GenerateKeyPair()
+	sess1, _ := crypto.NewSession(kp1.PrivateKey, kp1.PublicKey)
+	sess2, _ := crypto.NewSession(kp2.PrivateKey, kp2.PublicKey)
+	_, lan, _ := net.ParseCIDR("192.168.3.0/24")
+	_, allowed, _ := net.ParseCIDR("10.0.0.0/8")
+	conn2 := &captureConn{}
+	m.mu.Lock()
+	m.sessions[1] = &AccountSession{
+		UserID: 1, VPNIP: "10.88.0.2", Crypto: sess1,
+		AllowedIPs: []*net.IPNet{allowed}, ExitLANs: []*net.IPNet{lan},
+		Conn: &captureConn{},
+	}
+	m.sessions[2] = &AccountSession{
+		UserID: 2, VPNIP: "10.88.0.3", Crypto: sess2, Conn: conn2,
+	}
+	m.byIP["10.88.0.3"] = m.sessions[2]
+	// viaIndex 为空：会话 1 不是任何托管路由的 via
+	m.viaIndex = nil
+	m.mu.Unlock()
+
+	pkt := make([]byte, 20)
+	pkt[0] = 0x45
+	copy(pkt[12:16], net.ParseIP("192.168.3.1").To4())
+	copy(pkt[16:20], net.ParseIP("10.88.0.3").To4())
+	wroteTUN := false
+	_ = m.HandleInbound(1, mustEncrypt(t, sess1, pkt), func(b []byte) error {
+		wroteTUN = true
+		return nil
+	})
+	if wroteTUN {
+		t.Fatal("非 via ExitLAN 回程不应 writeTUN")
+	}
+	if conn2.sends != 0 {
+		t.Fatal("非 via 不得用 ExitLAN 绕过 peer_access 直转到对端")
 	}
 }
 

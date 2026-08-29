@@ -15,7 +15,7 @@
 
 ### 公开健康探针（有意设计）
 
-`GET /api/v1/health` 与 `/api/v1/system/info` **无需登录**，用于就绪探针与版本定位。返回在线数、DB/TUN 状态等**非敏感**摘要；不包含密码、密钥或用户明细。若需隐藏，请在前置反代层限制来源 IP。
+`GET /api/v1/health` 与 `/api/v1/system/info` **无需登录**，用于就绪探针与版本定位。返回在线数、DB/TUN/NAT 状态等**非敏感**摘要；**不含** `recent_errors`（栈/路径仅经需登录的 `/api/v1/dashboard` 暴露）。不包含密码、密钥或用户明细。若需隐藏，请在前置反代层限制来源 IP。
 
 ---
 
@@ -26,10 +26,12 @@
 | admin 默认密码 | 已修改，非模板初始值（`changeme`/`changeme12`）；`dev-security-check` 会 WARN |
 | 密码强度 | ≥8 位，**须含字母与数字**（代码强制） |
 | 自改密 | Web `POST /api/v1/password` 须 `old_password` + `new_password`；成功后吊销该用户全部 Web Session |
-| 闲置账号 | 禁用或删除（禁用同时踢 VPN + 吊销 Web 会话） |
+| 闲置账号 | 禁用或删除（禁用同时踢 VPN + 吊销 Web 会话）；**不可**删除/禁用最后一个启用的管理员（防 Web 锁死） |
+| 用户名格式 | 字母数字与 `._-`，1～64；`auth.ValidateUsername` 在 `EnsureAdmin` / `ProvisionWebAccount` 强制 |
 | 登录锁定 | `login_max_attempts` / `login_lockout_sec` 已配置；**Web 与隧道分表**，互不影响 |
 | `api.trusted_proxy_cidrs` | 生产默认**留空**；仅反代后且 RemoteAddr 命中信任 CIDR 时才解析 X-Forwarded-For（防锁定绕过） |
 | `api.secure_cookies` | HTTPS 终止或全站 TLS 时设为 `true` |
+| 注销 | **仅 POST** `/api/v1/logout`（须 CSRF）；GET → 405 |
 
 ---
 
@@ -62,7 +64,7 @@
 
 ### 4.2 探针防御与安全事件
 
-**行为**：`serverapp` 在存在 Guard 时**始终**挂到 `transport.Config.Probe`。Accept 时查封禁（**封禁表始终生效**，不依赖 `enabled`）与可选源白名单 → TLS/非法帧分类落库 → 窗口内计数自动封。`enabled` 只管自动记录与自动封；手动封禁/解封不依赖 `enabled`。心跳读超时**不记**探针。
+**行为**：`serverapp` 在存在 Guard 时**始终**挂到 `transport.Config.Probe`。Accept 时查封禁（**封禁表始终生效**，不依赖 `enabled`）与 **`tunnel_allowed_source_ips`（同样不依赖 `enabled`，与握手源白名单对齐）** → TLS/非法帧分类落库 → 窗口内计数自动封（**仅计 `action=rejected`**）。`enabled` 只管自动记录与自动封；手动封禁/解封不依赖 `enabled`。心跳读超时**不记**探针。
 
 **配置**（`security.probe_defense` + 相关）：
 
@@ -127,6 +129,54 @@
 | `banned_hit` | 撞上封禁 |
 | `auto_banned` | 已自动封禁 |
 | `manual_banned` | 已手动封禁 |
+
+### 4.3 ExitLAN / local_lans 信任边界
+
+- 客户端可上报 `local_lans`（须 **RFC1918** 且前缀 **≥ /16**，禁 `0.0.0.0/0`）；写入 `client_lan_registry` 并进入会话 `ExitLANs`（允许该源入站回程校验）。
+- **ExitLAN → 其他账号 VPN IP 的 hub 直转**仅当该会话是「已应用托管路由」中的 **via**（`sessionmgr.viaIndex`）。非 via 即使广告了 LAN，也不得绕过 `peer_access`。
+- 过宽/非法 CIDR：握手日志 `lan_cidr_reject`；不写入注册表。
+
+### 4.4 管理审计动作 / 目标字典
+
+WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)`。权威实现：`internal/audit/labels.go`（改码须同步本表）。
+
+#### 动作 action
+
+| 英文码 | 中文 |
+|--------|------|
+| `login` | 登录 |
+| `login_failed` | 登录失败 |
+| `logout` | 退出登录 |
+| `change_password` | 修改密码 |
+| `account_create` | 创建账号 |
+| `account_delete` | 删除账号 |
+| `user_enable` / `user_disable` | 启用/禁用账号 |
+| `kick_account` | 踢线 |
+| `admin_reset_password` | 管理员重置密码 |
+| `policy_change_kick` | 策略变更踢线 |
+| `config_export` | 导出客户端配置 |
+| `db_backup` | 数据库备份 |
+| `management_public_bind_enabled` | 管理口公网绑定已开启 |
+| `peer_route_create` / `delete` / `members` | 托管路由增删/访问方 |
+| `peers_apply` | 应用托管路由 |
+| `peer_access_add` / `remove` | 互访白名单 |
+| `vpn_peers_policy` | 全局互访策略 |
+| `probe_ban_manual` / `probe_unban` | 手动封禁/解封 |
+
+#### 目标 target_type
+
+| 英文码 | 中文 |
+|--------|------|
+| `user` | 用户 |
+| `system` | 系统 |
+| `peer_route` | 托管路由 |
+| `peer_policy` | 互访策略 |
+| `security` | 安全策略 |
+| `ip` | IP |
+
+### 4.5 敏感下载须 POST + CSRF
+
+`POST /api/v1/backup`、`POST /api/v1/users/{id}/export` 与 `export.zip` 须 Session + CSRF（防 SameSite=Lax 跨站 GET 拖库）。WebUI 用 `HaoVPN.downloadPost`。
 
 ---
 

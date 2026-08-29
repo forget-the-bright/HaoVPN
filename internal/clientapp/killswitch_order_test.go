@@ -47,7 +47,7 @@ func (r *recordingKillSwitch) snapshot() []string {
 	return out
 }
 
-// TestProtectThenClearRoutesOrder 断线必须先 Enable 杀开关再清路由。
+// TestProtectThenClearRoutesOrder 全清路径必须先 Enable 杀开关再清路由。
 func TestProtectThenClearRoutesOrder(t *testing.T) {
 	ks := &recordingKillSwitch{}
 	cfg := &config.ClientConfig{}
@@ -71,6 +71,37 @@ func TestProtectThenClearRoutesOrder(t *testing.T) {
 	}
 	if !e.KillSwitchOK() {
 		t.Fatal("Enable 成功后 KillSwitchOK 应为 true")
+	}
+}
+
+// TestProtectForReconnectKeepsDataplane 临时重连只启杀开关、不清路由。
+func TestProtectForReconnectKeepsDataplane(t *testing.T) {
+	ks := &recordingKillSwitch{}
+	cfg := &config.ClientConfig{}
+	cfg.Security.KillSwitch = true
+	e := NewEngine(cfg)
+	e.ks = ks
+	e.rt.mu.Lock()
+	e.rt.allowedCIDRs = []string{"192.168.1.0/24"}
+	e.rt.routes = []string{"192.168.1.0/24"}
+	e.rt.mu.Unlock()
+	cleared := false
+	e.clearRoutesHook = func() { cleared = true }
+
+	e.protectForReconnect()
+
+	got := ks.snapshot()
+	if len(got) != 1 || got[0] != "enable" {
+		t.Fatalf("期望仅 enable，得到 %v", got)
+	}
+	if cleared {
+		t.Fatal("临时重连不得 clearRoutes")
+	}
+	e.rt.mu.Lock()
+	n := len(e.rt.routes)
+	e.rt.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("路由应保留, got %d", n)
 	}
 }
 

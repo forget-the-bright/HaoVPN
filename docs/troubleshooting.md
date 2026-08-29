@@ -33,16 +33,20 @@
 | 托管路由一直「失效」 | via 离线，或注册表无匹配 dest（未上报 / 已下线清空） | via 保持在线且 `local_lans` 含该 dest；换机后须重登上报 |
 | 未配 local_lans 却想共享 LAN | 能力默认关闭 | 在 `client.yaml` 或 GUI「本地网段」填写 CIDR |
 | 服务端狂刷 `丢弃伪造源 IP`（`192.168.137.1` / 家用 LAN） | via/ICS 把非 VPN 源灌进隧道；旧服务端只认 VPN IP | **升级服务端+客户端**：ExitLANs 放行已上报 `local_lans` 回程；客户端过滤非 VPN/非 local_lans 源；广播改 DEBUG。勿把 ICS `192.168.137.0/24` 写进 `local_lans` |
+| ExitLAN 回程不能到对端 VPN IP / 被横向隔离挡住 | 本机不是任何托管路由的 via，或未点「应用生效」 | 仅 **via** 会话才允许 ExitLAN→对端 VPN 旁路；在 `/peers` 配托管路由并以本账号为 via，再「应用生效」；`local_lans` 须 RFC1918 且 ≥/16 |
+| `lan_cidr_reject` / 注册表无行 | local_lans 过宽（如 `/8`）或非私网 | 改为如 `192.168.x.0/24`；查服务端 Warn 日志 |
 | 家/本机能连 VPN，ping 对端 VPN IP 通，但不通服务端 NAT（如 `192.168.3.1`），且开了 local_lans/ICS | ICS 在 TUN 挂 `192.168.137.1` 后 **Windows 错选发包源** | **升级客户端**：ICS 后对非 VPN 地址 `SkipAsSource`，并重装 AllowedIPs；日志 `本机发包源优先 10.88.x.x`。`Get-NetIPAddress` 看 137 地址应为 SkipAsSource |
 | Windows 路由表「在链路上」且接口是本机 VPN IP | **预期**：进 haovpn0，不是把 via 配成自己 | 控制台 `via 10.88.x.x` 只在服务端选路；本机不必出现「下一跳=via」 |
 | `/peers` 增删很卡 | 旧版保存时同步踢线抢 SQLite | 新版保存只写库；点「应用生效」再踢受影响账号 |
 | 手动封禁 IP 仍能连上 | 旧版仅在 `probe_defense.enabled=true` 时挂 Probe | 升级服务端：有 Guard 即挂载，封禁表 Accept 始终生效；查 `/security` 与 `ip_blocks` |
 | 提示「账号密钥须加密存储」 | 库内明文私钥且 `allow_plaintext_private_keys=false` | 重新开户/轮换密钥使私钥加密入库；临时兼容才开 `allow_plaintext_private_keys`（勿用于生产） |
 | 反复断连 | 心跳超时、ZeroTier 等损耗链路抖动 | 客户端 `heartbeat_timeout_sec` 建议 60～90；默认已 90s；**先 `ping` 底层 ZT IP**（如 192.168.196.17），若底层也超时则属 ZeroTier/运营商问题，不是隧道逻辑 |
-| 断线后「好久才连上」 | 旧版 TCP Dial 空等 10s + 退避到 8s，ZT 黑洞时体感约 30s | 新版默认 `dial_timeout_sec: 3`、`reconnect.max_sec: 3`；曾连上再断会立即重拨。**修的是探测节奏**，不能让 TCP 穿透 ZT 黑洞；ZT 仍抖时只能跟底层走 |
+| 断线后「好久才连上」 | 旧版每次重连全清路由+重跑 ICS（via 机尤慢）；或 Dial/退避过长 | **升级客户端**：临时断线保留 TUN/路由/ICS，握手后差分（日志 `policy_apply mode=noop` / `dataplane_keep`）；另查 `dial_timeout_sec`/`reconnect.max_sec`。磁盘日志看 `client.live.log` |
+| 重连仍每次 `via_exit_setup` / ICS | 旧客户端；或 `local_lans`/`vpn_subnet`/VPN IP 真变了；或走了 Stop/手动重连 | 确认已更新客户端；改配置后首次会重建属正常；GUI「手动重新连接」会全清 |
+| 退出登录 / 手动重连时界面卡住数秒 | 旧版在 UI 线程同步 `Stop`（ICS PowerShell COM 很慢） | **升级客户端**：清理改后台；界面显示「正在断开…」；日志 `gui_engine_stop` / `DisableAllICS elapsed=` |
 | ping 网关间歇丢包 | 同上：底层 ZT 丢包会连带 `10.88.0.1` 丢 | 对比双 ping；ZT 稳后再看 VPN |
 
-**日志位置**：`./logs/client.log`
+**日志位置**：`./logs/client.log`、`./logs/client.live.log`（每次启动覆盖、逐行 Sync）。GUI 主窗口日志区默认只展示最近 **300** 行（不影响磁盘文件）。
 
 ---
 

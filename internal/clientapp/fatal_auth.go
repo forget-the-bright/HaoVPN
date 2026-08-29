@@ -6,7 +6,6 @@ import (
 
 	"haovpn/internal/auth"
 	"haovpn/internal/logger"
-	"haovpn/internal/sessionmgr"
 )
 
 // accountOnlineMaxRetries 首次登录时「账号已在线」的最大自动重试次数。
@@ -44,15 +43,17 @@ func IsFatalHandshakeError(err error) bool {
 }
 
 // IsAccountAlreadyOnline 判断是否为「同账号已在其他设备在线」类错误。
+//
+// 优先 errors.Is(auth.ErrAccountAlreadyOnline)，避免依赖 sessionmgr（分层：clientapp 不引会话路由包）。
 func IsAccountAlreadyOnline(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, sessionmgr.ErrAccountAlreadyOnline) {
+	if errors.Is(err, auth.ErrAccountAlreadyOnline) {
 		return true
 	}
 	msg := err.Error()
-	if strings.Contains(msg, sessionmgr.ErrAccountAlreadyOnline.Error()) {
+	if strings.Contains(msg, auth.ErrAccountAlreadyOnline.Error()) {
 		return true
 	}
 	return strings.Contains(msg, "已在其他设备在线")

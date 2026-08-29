@@ -37,7 +37,7 @@
           <div class="toolbar">
             <div class="form-group">
               <label>动作</label>
-              <input id="fAction" placeholder="如 login、account_create">
+              <input id="fAction" placeholder="英文码，如 login、account_create">
             </div>
             <div class="form-group">
               <label>每页</label>
@@ -87,15 +87,19 @@
         }
         rows.forEach(function (e) {
           var tr = document.createElement('tr');
-          var target = (e.target_type || '') + ' ' + (e.target_id != null ? e.target_id : '');
+          var actionLabel = e.action || '';
+          if (e.action_zh) {
+            actionLabel = actionLabel + '（' + e.action_zh + '）';
+          }
+          var target = formatAuditTarget(e);
           var ts = e.created_at || '';
           if (typeof ts === 'string' && ts.indexOf('T') === -1 && ts.length > 10) {
             ts = ts.replace(' ', 'T') + 'Z';
           }
           tr.innerHTML =
             '<td class="text-mono">' + ts + '</td>' +
-            '<td><span class="badge badge-ok">' + (e.action || '') + '</span></td>' +
-            '<td>' + target.trim() + '</td>' +
+            '<td><span class="badge badge-ok">' + actionLabel + '</span></td>' +
+            '<td>' + target + '</td>' +
             '<td class="text-mono">' + (e.client_ip || '') + '</td>';
           tb.appendChild(tr);
         });
@@ -103,6 +107,28 @@
       } catch (ex) {
         HaoVPN.toast(ex.message, 'error');
       }
+    }
+
+    /** 目标列：用户 →「用户名 (#id)」；其它 →「中文类型」[+ #id] */
+    function formatAuditTarget(e) {
+      var typeZH = e.target_type_zh || e.target_type || '';
+      var id = e.target_id;
+      if (e.target_type === 'user') {
+        if (e.target_username && id != null) {
+          return e.target_username + ' (#' + id + ')';
+        }
+        if (e.target_username) {
+          return e.target_username;
+        }
+        if (id != null) {
+          return (typeZH || '用户') + ' (#' + id + ')';
+        }
+        return typeZH || '用户';
+      }
+      if (id != null && id !== '') {
+        return (typeZH || e.target_type || '') + ' #' + id;
+      }
+      return typeZH || e.target_type || '';
     }
 
     document.getElementById('fAction').oninput = HaoVPN.debounce(function () { load(0); }, 400);

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"haovpn/internal/audit"
@@ -15,9 +17,12 @@ import (
 )
 
 // handleHealth 健康检查（GET /api/v1/health，公开）。
+//
+// 故意不返回 recent_errors：公开探针不应泄漏 WARN/ERROR 栈与路径；
+// 近期错误仅经需登录的 /api/v1/dashboard 暴露。
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	dbOK, online, recent := s.dataplaneSnapshot()
-	st := health.NewStatus(s.startedAt, online, dbOK, s.tunOK, s.natOK, recent)
+	dbOK, online, _ := s.dataplaneSnapshot()
+	st := health.NewStatus(s.startedAt, online, dbOK, s.tunOK, s.natOK, nil)
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -27,6 +32,8 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAudit 分页查询管理审计日志（GET /api/v1/audit）。
+//
+// 返回项含 action_zh / target_type_zh；target_type=user 时尽量填充 target_username。
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, offset := paginate.ParseLimitOffset(q, 50, 500)
@@ -37,10 +44,47 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		Offset: offset,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
-	writePage(w, http.StatusOK, persist.AuditEntriesToViews(logs), total, limit, offset)
+	views := persist.AuditEntriesToViews(logs)
+	enrichAuditViews(s.store, views)
+	writePage(w, http.StatusOK, views, total, limit, offset)
+}
+
+// enrichAuditViews 填充审计展示字段：中文标签与用户名（不改库表英文码）。
+func enrichAuditViews(store *persist.Store, views []readmodel.AuditLogView) {
+	for i := range views {
+		v := &views[i]
+		v.ActionZH = audit.ActionLabel(v.Action)
+		v.TargetTypeZH = audit.TargetTypeLabel(v.TargetType)
+		if v.TargetType != "user" || v.TargetID == nil || store == nil {
+			continue
+		}
+		name := store.UsernameByID(*v.TargetID)
+		// UsernameByID 不存在时返回 "#id" 占位；再尝试 detail_json.username（已删账号）
+		placeholder := "#" + strconv.FormatInt(*v.TargetID, 10)
+		if name != "" && name != placeholder {
+			v.TargetUsername = name
+			continue
+		}
+		if u := usernameFromDetailJSON(v.DetailJSON); u != "" {
+			v.TargetUsername = u
+		}
+	}
+}
+
+// usernameFromDetailJSON 从审计 detail_json 提取 username 字段（开户/重置等会写入）。
+func usernameFromDetailJSON(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(detail), &m); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(m["username"])
 }
 
 // handleDashboard 仪表盘摘要 JSON（GET /api/v1/dashboard）。
@@ -61,8 +105,7 @@ func (s *Server) dataplaneSnapshot() (dbOK bool, online int, recent []string) {
 
 // handleLogs 读取实时或历史日志（GET /api/v1/logs）。
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	q := r.URL.Query()
@@ -87,7 +130,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			Limit: limit, Offset: offset,
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		var lines []string
@@ -109,7 +152,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		lines, truncated, err := readLogTail(path, tail)
 		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err)
 			return
 		}
 		lines = redactLogLines(lines)
@@ -119,8 +162,11 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleBackup 下载 SQLite 主库备份（GET /api/v1/backup）。
+// handleBackup 下载 SQLite 主库备份（POST /api/v1/backup；须 CSRF，防 SameSite=Lax 跨站 GET 拖库）。
 func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	se, _ := s.sessionFromRequest(r)
 	s.audit.Log(&se.UserID, "db_backup", "system", nil, s.clientIP(r), nil)
 	http.ServeFile(w, r, s.cfg.Database.Path)
@@ -136,3 +182,4 @@ func LogPublicBindAudit(auditLog *audit.Logger) {
 func stringsToLowerTrim(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
+

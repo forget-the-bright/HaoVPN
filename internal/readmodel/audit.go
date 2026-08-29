@@ -7,18 +7,23 @@ import (
 )
 
 // AuditLogView 管理审计 API 返回项（RFC3339 时间、与 WebUI 契约一致）。
+//
+// action_zh / target_type_zh / target_username 为展示 enrichment，库表仍存英文码。
 type AuditLogView struct {
-	ID          int64  `json:"id"`
-	ActorUserID *int64 `json:"actor_user_id,omitempty"`
-	Action      string `json:"action"`
-	TargetType  string `json:"target_type"`
-	TargetID    *int64 `json:"target_id,omitempty"`
-	ClientIP    string `json:"client_ip"`
-	DetailJSON  string `json:"detail_json,omitempty"`
-	CreatedAt   string `json:"created_at"`
+	ID             int64  `json:"id"`
+	ActorUserID    *int64 `json:"actor_user_id,omitempty"`
+	Action         string `json:"action"`
+	ActionZH       string `json:"action_zh,omitempty"`
+	TargetType     string `json:"target_type"`
+	TargetTypeZH   string `json:"target_type_zh,omitempty"`
+	TargetID       *int64 `json:"target_id,omitempty"`
+	TargetUsername string `json:"target_username,omitempty"`
+	ClientIP       string `json:"client_ip"`
+	DetailJSON     string `json:"detail_json,omitempty"`
+	CreatedAt      string `json:"created_at"`
 }
 
-// AuditLogViewFrom 从 persist 扫描字段构建审计 API 视图。
+// AuditLogViewFrom 从 persist 扫描字段构建审计 API 视图（不含中文 enrichment，由 api 层填充）。
 func AuditLogViewFrom(id int64, actor *int64, action, targetType string, targetID *int64, clientIP, detailJSON string, createdAt time.Time) AuditLogView {
 	return AuditLogView{
 		ID: id, ActorUserID: actor, Action: action, TargetType: targetType,

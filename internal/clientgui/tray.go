@@ -52,7 +52,7 @@ func (u *uiApp) applyTray(kind trayKind, forceMenu bool) {
 	u.trayMu.Unlock()
 
 	if needMenu {
-		if u.eng != nil {
+		if u.getEngine() != nil {
 			desk.SetSystemTrayMenu(u.mainTrayMenu())
 		} else {
 			desk.SetSystemTrayMenu(u.loginTrayMenu())
@@ -85,16 +85,17 @@ func (u *uiApp) forceTrayIcon(kind trayKind) {
 func (u *uiApp) syncTrayFromEngine(forceMenu bool) {
 	kind := trayKindIdle
 	menuKey := ""
-	if u.eng == nil {
+	eng := u.getEngine()
+	if eng == nil {
 		u.applyTray(kind, forceMenu)
 		return
 	}
-	st := u.eng.State()
-	errMsg := u.eng.LastError()
+	st := eng.State()
+	errMsg := eng.LastError()
 	switch {
 	case st == clientapp.StateConnected:
 		kind = trayKindConnected
-		menuKey = "up:" + u.eng.VPNIP()
+		menuKey = "up:" + eng.VPNIP()
 	case st == clientapp.StateConnecting || st == clientapp.StateReconnecting:
 		kind = trayKindConnecting
 		menuKey = "connecting"
@@ -134,8 +135,9 @@ func (u *uiApp) loginTrayMenu() *fyne.Menu {
 
 func (u *uiApp) mainTrayMenu() *fyne.Menu {
 	items := []*fyne.MenuItem{}
-	if u.eng != nil && u.eng.State() == clientapp.StateConnected {
-		ip := u.eng.VPNIP()
+	eng := u.getEngine()
+	if eng != nil && eng.State() == clientapp.StateConnected {
+		ip := eng.VPNIP()
 		status := fyne.NewMenuItem("状态: 已连接 "+ip, nil)
 		status.Disabled = true
 		items = append(items, status)
@@ -156,9 +158,9 @@ func (u *uiApp) mainTrayMenu() *fyne.Menu {
 func (u *uiApp) managedRoutesMenuItem() *fyne.MenuItem {
 	parent := fyne.NewMenuItem("托管路由", nil)
 	var children []*fyne.MenuItem
-	if u.eng != nil {
-		gw := strings.TrimSpace(u.eng.Gateway())
-		vpnIP := strings.TrimSpace(u.eng.VPNIP())
+	if eng := u.getEngine(); eng != nil {
+		gw := strings.TrimSpace(eng.Gateway())
+		vpnIP := strings.TrimSpace(eng.VPNIP())
 		localLine := "VPN 本机"
 		if vpnIP != "" && gw != "" {
 			localLine = fmt.Sprintf("%s via %s (本机TUN)", deriveVPNSubnetHint(vpnIP), gw)
@@ -169,7 +171,7 @@ func (u *uiApp) managedRoutesMenuItem() *fyne.MenuItem {
 		loc.Disabled = true
 		children = append(children, loc)
 
-		for _, mr := range u.eng.ManagedRoutes() {
+		for _, mr := range eng.ManagedRoutes() {
 			line := formatManagedRouteLine(mr)
 			it := fyne.NewMenuItem(line, nil)
 			it.Disabled = true
@@ -224,19 +226,33 @@ func (u *uiApp) showMainWindow() {
 }
 
 func (u *uiApp) reconnectVPN() {
-	if u.eng == nil {
+	if u.getEngine() == nil {
+		return
+	}
+	if !u.beginEngineOp() {
+		u.appendLog("正在处理网络，请稍候…")
 		return
 	}
 	creds := clientapp.Credentials{
 		Username: strings.TrimSpace(u.userEntry.Text),
 		Password: u.passEntry.Text,
 	}
-	u.eng.Stop()
-	u.eng = clientapp.NewEngine(u.cfg)
-	u.eng.SetCredentials(creds)
+	u.stopPoll()
+	if u.statusLbl != nil {
+		u.statusLbl.SetText("状态: 正在重新连接…")
+	}
 	u.applyTray(trayKindConnecting, true)
-	_ = u.eng.Start()
-	u.appendLog("手动重新连接…")
+	u.appendLog("手动重新连接（清理后重拨，可能需数秒）…")
+	old := u.takeEngine()
+	u.stopEngineAsync(old, func() {
+		eng := clientapp.NewEngine(u.cfg)
+		eng.SetCredentials(creds)
+		u.setEngine(eng)
+		_ = eng.Start()
+		u.startPoll()
+		u.endEngineOp()
+		u.applyTray(trayKindConnecting, true)
+	})
 }
 
 func (u *uiApp) quitApp() {

@@ -14,6 +14,16 @@ func (s *Store) CountUsers() (int, error) {
 	return n, err
 }
 
+// CountEnabledAdmins 统计启用中的 Web 管理员数量（is_admin=1 AND enabled=1）。
+//
+// 用途：删除/禁用账号前防止锁死管理面（须至少保留一名启用管理员）。
+// 关联：vpnaccount.DeleteAccount / SetAccountEnabled。
+func (s *Store) CountEnabledAdmins() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE is_admin=1 AND enabled=1`).Scan(&n)
+	return n, err
+}
+
 // CreateUser 仅创建 Web 账号（无隧道身份，如 admin）。
 func (s *Store) CreateUser(username, passwordHash string, mustChange bool) (int64, error) {
 	return s.CreateAdminUser(username, passwordHash, mustChange)

@@ -23,12 +23,14 @@ func (s *Service) createSession(u *persist.User) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	now := time.Now()
 	s.sessionsMu.Lock()
 	s.sessions[token] = SessionEntry{
-		UserID:    u.ID,
-		Username:  u.Username,
-		ExpiresAt: time.Now().Add(s.sessionTTL),
-		CSRFToken: csrf,
+		UserID:            u.ID,
+		Username:          u.Username,
+		ExpiresAt:         now.Add(s.sessionTTL),
+		AbsoluteExpiresAt: now.Add(2 * s.sessionTTL), // 绝对上限：滑动续期不可超过创建时刻 + 2×TTL
+		CSRFToken:         csrf,
 	}
 	s.sessionsMu.Unlock()
 	return token, csrf, nil
@@ -37,16 +39,44 @@ func (s *Service) createSession(u *persist.User) (string, string, error) {
 // ValidateSession 校验 session token 是否仍有效且未过期。
 //
 // 参数：token 为 Login 返回的会话串；空串视为无效。
-// 返回：有效时 SessionEntry 与 true；不存在或过期时零值与 false。
-// 并发：持 RLock 只读；可与 Logout 并发（可能读到已删除 token）。
+// 返回：有效时 SessionEntry 与 true；不存在或过期时零值与 false（并顺带删除过期条目）。
+// 并发：持写锁以便 miss 时 prune；可与 Logout 并发。
 func (s *Service) ValidateSession(token string) (SessionEntry, bool) {
-	s.sessionsMu.RLock()
-	defer s.sessionsMu.RUnlock()
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
 	se, ok := s.sessions[token]
-	if !ok || time.Now().After(se.ExpiresAt) {
+	if !ok {
+		return SessionEntry{}, false
+	}
+	now := time.Now()
+	if now.After(se.ExpiresAt) || (!se.AbsoluteExpiresAt.IsZero() && now.After(se.AbsoluteExpiresAt)) {
+		delete(s.sessions, token)
 		return SessionEntry{}, false
 	}
 	return se, true
+}
+
+// TouchSession 滑动续期：将 ExpiresAt 延长至 now+TTL，但不超过 AbsoluteExpiresAt。
+//
+// 鉴权成功路径调用；token 无效时 no-op。
+func (s *Service) TouchSession(token string) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	se, ok := s.sessions[token]
+	if !ok {
+		return
+	}
+	now := time.Now()
+	if !se.AbsoluteExpiresAt.IsZero() && now.After(se.AbsoluteExpiresAt) {
+		delete(s.sessions, token)
+		return
+	}
+	next := now.Add(s.sessionTTL)
+	if !se.AbsoluteExpiresAt.IsZero() && next.After(se.AbsoluteExpiresAt) {
+		next = se.AbsoluteExpiresAt
+	}
+	se.ExpiresAt = next
+	s.sessions[token] = se
 }
 
 // Logout 使指定 Web 会话 token 立即失效。
@@ -79,16 +109,37 @@ func (s *Service) LogoutAllForUser(userID int64) int {
 
 // PruneExpiredSessions 删除已过期的内存会话，防止长跑进程泄漏。
 //
-// 返回：删除条数；宜在登录成功路径轻量调用。
+// 返回：删除条数；登录成功路径与后台 ticker 均可调用。
 func (s *Service) PruneExpiredSessions() int {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	n := 0
 	now := time.Now()
 	for tok, se := range s.sessions {
-		if now.After(se.ExpiresAt) {
+		expired := now.After(se.ExpiresAt)
+		if !se.AbsoluteExpiresAt.IsZero() && now.After(se.AbsoluteExpiresAt) {
+			expired = true
+		}
+		if expired {
 			delete(s.sessions, tok)
 			n++
+		}
+	}
+	return n
+}
+
+// PruneExpiredLockouts 清理已过锁定窗口的 IP 条目，防止喷洒导致 map 无限增长。
+func (s *Service) PruneExpiredLockouts() int {
+	s.lockoutsMu.Lock()
+	defer s.lockoutsMu.Unlock()
+	n := 0
+	now := time.Now()
+	for _, m := range []map[string]lockoutEntry{s.webLockouts, s.tunnelLockouts} {
+		for ip, e := range m {
+			if !e.LockedUntil.IsZero() && now.After(e.LockedUntil) {
+				delete(m, ip)
+				n++
+			}
 		}
 	}
 	return n

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
 )
 
@@ -39,40 +40,13 @@ func (s *Service) ResolveClientPolicy(u *persist.User) (*ClientPolicy, error) {
 		return &ClientPolicy{}, nil
 	}
 	base := s.ResolveAllowedIPs(u)
-	seen := map[string]struct{}{}
 	var allowed []string
 	var nets []*net.IPNet
 
 	// addCIDR 追加一条目的前缀；skipIfCovered 为 true 时若已被已有网段包含则跳过（用于 peer/via /32）。
+	// 解析/去重委托 netutil.AppendCIDRUnique，避免与 clientapp 路由规范化漂移。
 	addCIDR := func(c string, skipIfCovered bool) {
-		c = strings.TrimSpace(c)
-		if c == "" {
-			return
-		}
-		var n *net.IPNet
-		if _, parsed, err := net.ParseCIDR(c); err == nil {
-			n = parsed
-			c = parsed.String()
-		} else if ip := net.ParseIP(c); ip != nil && ip.To4() != nil {
-			_, n, _ = net.ParseCIDR(ip.String() + "/32")
-			c = n.String()
-		} else {
-			return
-		}
-		if _, ok := seen[c]; ok {
-			return
-		}
-		if skipIfCovered {
-			ip := n.IP
-			for _, exist := range nets {
-				if exist.Contains(ip) {
-					return
-				}
-			}
-		}
-		seen[c] = struct{}{}
-		allowed = append(allowed, c)
-		nets = append(nets, n)
+		allowed, nets, _ = netutil.AppendCIDRUnique(allowed, nets, c, skipIfCovered)
 	}
 	for _, c := range base {
 		addCIDR(c, false)

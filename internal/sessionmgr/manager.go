@@ -1,21 +1,21 @@
 package sessionmgr
 
 import (
-	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"haovpn/internal/auth"
 	"haovpn/internal/config"
 	"haovpn/internal/crypto"
 	"haovpn/internal/persist"
 )
 
-// ErrAccountAlreadyOnline 同账号已有在线会话且策略为 reject_second 时返回。
+// ErrAccountAlreadyOnline 兼容别名：哨兵定义在 auth（切断 clientapp→sessionmgr 仅为错误类型的依赖）。
 //
-// 文案固定，便于客户端识别为致命鉴权错误并停止自动重连。
-var ErrAccountAlreadyOnline = errors.New("该账号已在其他设备在线")
+// Deprecated: 新代码请用 auth.ErrAccountAlreadyOnline。
+var ErrAccountAlreadyOnline = auth.ErrAccountAlreadyOnline
 
 // Manager 维护多账号 VPN 隧道在线会话，负责注册、踢线、TUN 出站路由与入站包校验。
 //

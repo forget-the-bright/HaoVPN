@@ -2,18 +2,18 @@ package sessionmgr
 
 import (
 	"net"
-	"sort"
 	"time"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
 )
 
 // RouteOutbound 将 TUN 出站 IPv4 包路由到匹配的在线账号并加密发送。
 //
 // 匹配顺序：
-//  1. 目的 IP == 某账号 VPN IP → 该会话；
-//  2. 目的命中托管路由 dest → via 账号会话（ZeroTier via 语义）；
+//  1. byIP[dst] — O(1) 命中某账号 VPN IP；
+//  2. viaIndex 命中托管路由 dest → via 账号会话；
 //  3. **不再**用会话 AllowedIPs（NAT 工控网段）匹配，避免把应 NAT 的流量错送回客户端。
 //
 // 参数：packet — 原始 IPv4 帧；长度须 ≥ 20 字节以便读取目的地址。
@@ -22,7 +22,7 @@ import (
 //
 // 副作用：匹配账号的 TxBytes 累加；经 transport.Conn 发送密文帧。
 //
-// 并发：持 RLock 遍历选路（userID 升序保证确定性）；sendToAccount 无额外锁。
+// 并发：持 RLock 选路；sendToAccount 无额外锁。
 func (m *Manager) RouteOutbound(packet []byte) bool {
 	if len(packet) < 20 {
 		return false
@@ -31,21 +31,10 @@ func (m *Manager) RouteOutbound(packet []byte) bool {
 	dstStr := dst.String()
 
 	m.mu.RLock()
-	ids := make([]int64, 0, len(m.sessions))
-	for id := range m.sessions {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-
 	var target *AccountSession
-	for _, id := range ids {
-		ps := m.sessions[id]
-		if ps.VPNIP == dstStr {
-			target = ps
-			break
-		}
-	}
-	if target == nil {
+	if ps := m.byIP[dstStr]; ps != nil {
+		target = ps
+	} else {
 		for _, e := range m.viaIndex {
 			if e.net != nil && e.net.Contains(dst) {
 				if ps, ok := m.sessions[e.viaUserID]; ok {
@@ -142,8 +131,10 @@ func (m *Manager) HandleInbound(userID int64, data []byte, writeTUN func([]byte)
 		return nil
 	}
 
-	// via 出口回程：源在 ExitLANs、目的为其他账号 VPN IP → 直转（不要求 peer_access / dstAllowed）
-	if sourceFromExitLAN(ps, src) {
+	// via 出口回程：源在 ExitLANs、目的为其他账号 VPN IP → 直转（不要求 peer_access / dstAllowed）。
+	// 信任边界：仅当本会话是「已应用托管路由」中的 via（viaIndex 命中）才允许该旁路。
+	// 非 via 即使有 ExitLANs，也落入下方 lateralPeerAllowed，不得绕过 peer_access。
+	if sourceFromExitLAN(ps, src) && m.sessionIsActiveVia(userID) {
 		if peer := m.lookupOnlineByVPNIP(dstStr); peer != nil && peer.UserID != userID {
 			m.noteInboundRx(ps, userID, len(plain))
 			_ = m.sendToAccount(peer, plain)
@@ -160,7 +151,7 @@ func (m *Manager) HandleInbound(userID int64, data []byte, writeTUN func([]byte)
 		lateralPeer = true
 	}
 	if !m.dstAllowed(ps, dst) {
-		if isMulticastOrLinkLocal(dst) || isLimitedBroadcast(dst) {
+		if isMulticastOrLinkLocal(dst) || netutil.IsLimitedBroadcast(dst) {
 			logger.Debug("丢弃越权目的 IP user_id=%d dst=%s", userID, dstStr)
 		} else {
 			logger.Warn("丢弃越权目的 IP user_id=%d dst=%s", userID, dstStr)
@@ -197,6 +188,23 @@ func (m *Manager) lookupOnlineByVPNIP(vpnIP string) *AccountSession {
 	return m.byIP[vpnIP]
 }
 
+// sessionIsActiveVia 判断 userID 是否为当前已加载托管路由中的 via（viaIndex 命中）。
+//
+// 用途：ExitLAN→对端 VPN IP 直转的信任门禁；非 via 即使广告了 local_lans 也不得绕过 peer_access。
+func (m *Manager) sessionIsActiveVia(userID int64) bool {
+	if userID <= 0 {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, e := range m.viaIndex {
+		if e.viaUserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
 // lookupViaSession 在本会话 ViaRoutes 中查找 dst 的 via 在线会话。
 func (m *Manager) lookupViaSession(ps *AccountSession, dst net.IP) *AccountSession {
 	if ps == nil {
@@ -228,19 +236,31 @@ func (m *Manager) noteInboundRx(ps *AccountSession, userID int64, n int) {
 	if !ps.lastStatFlush.CompareAndSwap(last, now.UnixNano()) || m.store == nil {
 		return
 	}
+	m.flushSessionStat(userID, &ps.ConnectedAt, &now, ps.RxBytes.Load(), ps.TxBytes.Load(), ps.RemoteAddr)
+}
+
+// flushSessionStat 写入/更新 session_stats，保留既有 reconnect_count。
+//
+// route 节流刷新与 kick 断线共用，避免两处字段漂移。
+func (m *Manager) flushSessionStat(userID int64, connectedAt, lastHB *time.Time, rx, tx int64, remoteAddr string) {
+	if m.store == nil {
+		return
+	}
 	rc := 0
-	if st, err := m.store.GetSessionStat(userID); err == nil {
+	if st, err := m.store.GetSessionStat(userID); err == nil && st != nil {
 		rc = st.ReconnectCount
 	}
-	_ = m.store.UpsertSessionStat(persist.SessionStat{
+	if err := m.store.UpsertSessionStat(persist.SessionStat{
 		UserID:         userID,
-		ConnectedAt:    &ps.ConnectedAt,
-		LastHeartbeat:  &now,
-		RxBytes:        ps.RxBytes.Load(),
-		TxBytes:        ps.TxBytes.Load(),
+		ConnectedAt:    connectedAt,
+		LastHeartbeat:  lastHB,
+		RxBytes:        rx,
+		TxBytes:        tx,
 		ReconnectCount: rc,
-		RemoteAddr:     ps.RemoteAddr,
-	})
+		RemoteAddr:     remoteAddr,
+	}); err != nil {
+		logger.Warn("更新 session_stats 失败 user_id=%d: %v", userID, err)
+	}
 }
 
 // sourceIPAllowed 入站源地址是否合法：本账号 VPN IP，或 via 出口注册网段内（LAN 回程）。
@@ -292,12 +312,6 @@ func isNoiseSourceIP(ip net.IP) bool {
 	return false
 }
 
-// isLimitedBroadcast IPv4 受限广播 255.255.255.255。
-func isLimitedBroadcast(ip net.IP) bool {
-	v4 := ip.To4()
-	return v4 != nil && v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255
-}
-
 // dstAllowed 判断目的 IP 是否在该会话 VPN IP 或 AllowedIPs 网段内。
 func (m *Manager) dstAllowed(ps *AccountSession, dst net.IP) bool {
 	if ps.VPNIP != "" && dst.String() == ps.VPNIP {
@@ -316,7 +330,7 @@ func isMulticastOrLinkLocal(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
-	if isLimitedBroadcast(ip) {
+	if netutil.IsLimitedBroadcast(ip) {
 		return true
 	}
 	if ip.IsMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {

@@ -207,8 +207,8 @@
         var ops = '';
         if (u.has_vpn) {
           ops +=
-            '<a class="btn btn-ghost btn-sm" href="/api/v1/users/' + u.id + '/export.zip">ZIP</a>' +
-            '<a class="btn btn-ghost btn-sm" href="/api/v1/users/' + u.id + '/export">YAML</a>' +
+            '<button type="button" class="btn btn-ghost btn-sm" onclick="exportZip(' + u.id + ',\'' + u.username + '\')">ZIP</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" onclick="exportYaml(' + u.id + ',\'' + u.username + '\')">YAML</button>' +
             '<button class="btn btn-ghost btn-sm" onclick="openPolicy(' + u.id + ')">策略</button>' +
             '<button class="btn btn-ghost btn-sm" onclick="kick(' + u.id + ')">踢线</button>';
         }
@@ -334,6 +334,20 @@
         await HaoVPN.api('/api/v1/users/' + id + '/kick', { method: 'POST' });
         HaoVPN.toast('已踢线', 'success');
         load();
+      } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
+    }
+
+    async function exportZip(id, username) {
+      try {
+        await HaoVPN.downloadPost('/api/v1/users/' + id + '/export.zip', 'haovpn-client-' + username + '.zip');
+        HaoVPN.toast('ZIP 已开始下载', 'ok');
+      } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
+    }
+
+    async function exportYaml(id, username) {
+      try {
+        await HaoVPN.downloadPost('/api/v1/users/' + id + '/export', 'client-' + username + '.yaml');
+        HaoVPN.toast('YAML 已开始下载', 'ok');
       } catch (ex) { HaoVPN.toast(ex.message, 'error'); }
     }
 

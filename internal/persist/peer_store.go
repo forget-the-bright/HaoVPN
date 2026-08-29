@@ -3,10 +3,10 @@ package persist
 import (
 	"database/sql"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
+	"haovpn/internal/netutil"
 	"haovpn/internal/timeutil"
 )
 
@@ -33,37 +33,30 @@ type PeerRoute struct {
 }
 
 // ValidatePeerRouteDest 校验托管路由目标 CIDR：须合法且禁止默认路由。
+//
+// 领域包装：错误文案带「托管路由」语境；解析与禁默认路由委托 netutil。
 func ValidatePeerRouteDest(cidr string) error {
 	cidr = strings.TrimSpace(cidr)
 	if cidr == "" {
 		return fmt.Errorf("dest_cidr 不能为空")
 	}
-	_, n, err := net.ParseCIDR(cidr)
-	if err != nil {
-		ip := net.ParseIP(cidr)
-		if ip == nil || ip.To4() == nil {
-			return fmt.Errorf("无效 dest_cidr: %s", cidr)
-		}
-		return nil
+	if _, err := netutil.ParseCIDROrHost(cidr); err != nil {
+		return fmt.Errorf("无效 dest_cidr: %s", cidr)
 	}
-	ones, bits := n.Mask.Size()
-	if bits == 32 && ones == 0 {
+	if err := netutil.ForbidDefaultRoute(cidr); err != nil {
 		return fmt.Errorf("禁止默认路由 0.0.0.0/0（托管路由）")
 	}
 	return nil
 }
 
-// NormalizePeerRouteDest 将单 IP 规范为 /32，已是 CIDR 则原样返回规范化字符串。
+// NormalizePeerRouteDest 将单 IP 规范为 /32，已是 CIDR 则返回规范化字符串。
+//
+// 关联：netutil.NormalizeCIDROrHost；入库前须先通过 ValidatePeerRouteDest。
 func NormalizePeerRouteDest(cidr string) (string, error) {
-	cidr = strings.TrimSpace(cidr)
 	if err := ValidatePeerRouteDest(cidr); err != nil {
 		return "", err
 	}
-	if _, n, err := net.ParseCIDR(cidr); err == nil {
-		return n.String(), nil
-	}
-	ip := net.ParseIP(cidr).To4()
-	return ip.String() + "/32", nil
+	return netutil.NormalizeCIDROrHost(cidr)
 }
 
 // NormalizeMemberUserIDs 规范化访问方列表：去重；若含全部(0)则只保留 0。

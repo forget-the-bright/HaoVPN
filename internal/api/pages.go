@@ -34,10 +34,6 @@ func (s *Server) handleDashboardPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if _, ok := s.sessionFromRequest(r); !ok {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
 	s.render(w, "index.html", nil)
 }
 
