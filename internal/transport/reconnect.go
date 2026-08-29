@@ -16,6 +16,7 @@ import (
 //   tlsCfg — 客户端 TLS 配置；Dial 时传入。
 //   onData — 收到数据帧时转发给上层（通常为 tunnel 解密入口）。
 //   onConnect — 每次 Dial 成功、StateConnected 后调用；用于重新握手。
+//   onDialError — 拨号/TLS 失败时可选回调（供 GUI 首次失败提示）；可为 nil。
 //   mu — 保护 conn 指针读写。
 //   conn — 当前活跃 *Conn；重连间隙或 Stop 后为 nil。
 //   stop — Stop 时 close，通知 loop 退出。
@@ -23,15 +24,16 @@ import (
 //
 // 线程安全：Start/Stop/Conn 可从任意 goroutine 调用；loop 在独立 goroutine 运行。
 type ReconnectClient struct {
-	cfg       Config
-	addr      string
-	tlsCfg    *tls.Config
-	onData    func([]byte)
-	onConnect func(*Conn)
-	mu        sync.Mutex
-	conn      *Conn
-	stop      chan struct{}
-	once      sync.Once
+	cfg         Config
+	addr        string
+	tlsCfg      *tls.Config
+	onData      func([]byte)
+	onConnect   func(*Conn)
+	onDialError func(error)
+	mu          sync.Mutex
+	conn        *Conn
+	stop        chan struct{}
+	once        sync.Once
 }
 
 // NewReconnectClient 创建带自动重连的客户端传输管理器。
@@ -49,6 +51,11 @@ func NewReconnectClient(addr string, tlsCfg *tls.Config, cfg Config, onData func
 		onConnect: onConnect,
 		stop:      make(chan struct{}),
 	}
+}
+
+// SetOnDialError 设置拨号失败回调（须在 Start 前调用）。
+func (r *ReconnectClient) SetOnDialError(fn func(error)) {
+	r.onDialError = fn
 }
 
 // Start 在后台 goroutine 启动重连循环。
@@ -75,6 +82,9 @@ func (r *ReconnectClient) loop() {
 		})
 		if err != nil {
 			logger.Warn("reconnect failed: %v, retry in %s dial_timeout=%s backoff=%s", err, backoff, dialTO, backoff)
+			if r.onDialError != nil {
+				r.onDialError(err)
+			}
 			time.Sleep(backoff)
 			backoff *= 2
 			if backoff > maxBackoff {

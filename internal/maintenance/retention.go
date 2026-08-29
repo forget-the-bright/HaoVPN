@@ -41,6 +41,22 @@ func RunDataRetention(store *persist.Store, logs *logstore.Store, cfg *config.Se
 		}
 	}
 
+	if days := cfg.Security.ProbeDefense.EventRetentionDays; days > 0 {
+		cutoff := now.AddDate(0, 0, -days)
+		n, err := store.PruneSecurityEvents(cutoff)
+		if err != nil {
+			logger.Warn("安全事件清理失败: %v", err)
+		} else if n > 0 {
+			logger.Info("已清理安全事件 %d 条（保留 %d 天）", n, days)
+		}
+		n2, err := store.PruneExpiredIPBlocks(now)
+		if err != nil {
+			logger.Warn("过期封禁清理失败: %v", err)
+		} else if n2 > 0 {
+			logger.Info("已停用过期封禁 %d 条", n2)
+		}
+	}
+
 	if logs != nil && cfg.HistoryLogEnabled() {
 		if days := cfg.Log.HistoryRetentionDays; days > 0 {
 			cutoff := now.AddDate(0, 0, -days)

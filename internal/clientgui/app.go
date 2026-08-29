@@ -102,6 +102,8 @@ func (u *uiApp) showMain() {
 	top := container.NewVBox(u.statusLbl, u.vpnIPLbl, widget.NewSeparator())
 	btns := container.NewHBox(reconnectBtn, logoutBtn, saveSvcBtn, layout.NewSpacer(), quitBtn)
 	w.SetContent(container.NewBorder(top, btns, nil, nil, container.NewPadded(u.logEntry)))
+	// 登录阶段 sink 已写入 logLines，须刷入新建的日志框，否则首屏空白
+	u.flushLogView()
 	w.SetCloseIntercept(func() { w.Hide() })
 	w.CenterOnScreen()
 

@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,8 +198,8 @@ func TestHandshakeDisabledAccountRejected(t *testing.T) {
 	}
 }
 
-// TestHandshakeReconnectNoDeadlock 同账号新连接替换旧连接时不得死锁。
-func TestHandshakeReconnectNoDeadlock(t *testing.T) {
+// TestHandshakeRejectSecond 默认 reject_second：第二端须收到「已在其他设备在线」，旧会话保持。
+func TestHandshakeRejectSecond(t *testing.T) {
 	dir := t.TempDir()
 	store, err := persist.Open(filepath.Join(dir, "reconn.db"))
 	if err != nil {
@@ -231,7 +232,7 @@ func TestHandshakeReconnectNoDeadlock(t *testing.T) {
 	}
 	defer ln.Close()
 
-	sessMgr := sessionmgr.New(store)
+	sessMgr := sessionmgr.New(store) // 默认 reject_second
 	pool, _ := ippool.New("10.88.0.0/24")
 	pool.Reserve("10.88.0.1")
 	_ = pool.AllocateSpecific("10.88.0.51", uid)
@@ -251,6 +252,7 @@ func TestHandshakeReconnectNoDeadlock(t *testing.T) {
 			}
 			tc := tls.Server(raw, tlsCfg)
 			if err := tc.Handshake(); err != nil {
+				_ = raw.Close()
 				continue
 			}
 			conn := transport.AcceptConn(tc, transport.DefaultConfig(), nil, nil)
@@ -262,46 +264,121 @@ func TestHandshakeReconnectNoDeadlock(t *testing.T) {
 	clientTLS.InsecureSkipVerify = true
 	cfgT := transport.DefaultConfig()
 
-	dialHandshake := func() *transport.Conn {
-		conn, err := transport.Dial(ln.Addr().String(), clientTLS, cfgT, nil, nil)
-		if err != nil {
-			t.Fatalf("dial: %v", err)
-		}
-		hs := tunnel.NewClientHandshake()
-		if _, err := hs.RunAuthWithTimeout(conn, "u1", "testpass12", 5*time.Second); err != nil {
-			t.Fatalf("handshake: %v", err)
-		}
-		return conn
+	c1, err := transport.Dial(ln.Addr().String(), clientTLS, cfgT, nil, nil)
+	if err != nil {
+		t.Fatalf("dial1: %v", err)
+	}
+	defer c1.Close()
+	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c1, "u1", "testpass12", 10*time.Second); err != nil {
+		t.Fatalf("handshake1: %v", err)
+	}
+	if sessMgr.OnlineCount() != 1 {
+		t.Fatalf("online after first=%d", sessMgr.OnlineCount())
 	}
 
-	done := make(chan struct{})
-	var onlineAtEnd int
-	go func() {
-		defer close(done)
-		c1 := dialHandshake()
-		time.Sleep(100 * time.Millisecond)
-		c2 := dialHandshake()
-		onlineAtEnd = sessMgr.OnlineCount()
-		c2.Close()
-		c1.Close()
-	}()
+	c2, err := transport.Dial(ln.Addr().String(), clientTLS, cfgT, nil, nil)
+	if err != nil {
+		t.Fatalf("dial2: %v", err)
+	}
+	defer c2.Close()
+	_, err = tunnel.NewClientHandshake().RunAuthWithTimeout(c2, "u1", "testpass12", 10*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "已在其他设备在线") {
+		t.Fatalf("第二端应拒绝已在线, err=%v", err)
+	}
+	if sessMgr.OnlineCount() != 1 {
+		t.Fatalf("旧会话应保持 online=%d", sessMgr.OnlineCount())
+	}
+}
 
-	select {
-	case <-done:
-	case <-time.After(15 * time.Second):
-		t.Fatal("同账号重连死锁或超时")
-	}
-	if onlineAtEnd != 1 {
-		t.Fatalf("online=%d want 1", onlineAtEnd)
-	}
-	st, err := store.GetSessionStat(uid)
+// TestHandshakeKickPreviousNoDeadlock kick_previous 下新连接替换旧连接不得死锁。
+func TestHandshakeKickPreviousNoDeadlock(t *testing.T) {
+	dir := t.TempDir()
+	store, err := persist.Open(filepath.Join(dir, "kick.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.ReconnectCount < 1 {
-		t.Fatalf("reconnect_count=%d want >=1", st.ReconnectCount)
+	defer store.Close()
+
+	kp, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
 	}
+	serverKP, err := tunnel.LoadOrCreateServerKeys(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := auth.HashPassword("testpass12")
+	uid, err := store.CreateVPNAccount(persist.User{
+		Username: "u1", PasswordHash: hash, PublicKey: kp.PublicKey, PrivateKeyEnc: kp.PrivateKey,
+		VPNIP: "10.88.0.52", AllowedIPs: []string{"192.168.1.0/24"}, IPMode: persist.IPModeFixed, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cert := genTestCert(t)
+	tlsCfg := security.TLSConfig(cert, true)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	sessMgr := sessionmgr.New(store)
+	sessMgr.SetSessionPolicy(config.SessionPolicyKickPrevious)
+	pool, _ := ippool.New("10.88.0.0/24")
+	pool.Reserve("10.88.0.1")
+	_ = pool.AllocateSpecific("10.88.0.52", uid)
+	cfg := &config.ServerConfig{
+		VPN:      config.VPNSection{Subnet: "10.88.0.0/24", MTU: 1420},
+		Security: config.SecuritySection{EnforceSplitTunnel: true},
+	}
+	vpnSvc := &vpnaccount.Service{Store: store, Pool: pool, Cfg: cfg}
+	authSvc := auth.New(store, 5, 900, 3600)
+	handler := &tunnel.ServerHandler{Store: store, SessMgr: sessMgr, ServerKP: serverKP, VPN: vpnSvc, MTU: 1420, Auth: authSvc}
+
+	go func() {
+		for {
+			raw, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			tc := tls.Server(raw, tlsCfg)
+			if err := tc.Handshake(); err != nil {
+				_ = raw.Close()
+				continue
+			}
+			conn := transport.AcceptConn(tc, transport.DefaultConfig(), nil, nil)
+			handler.Attach(conn)
+		}
+	}()
+
+	clientTLS := security.TLSConfig(tls.Certificate{}, false)
+	clientTLS.InsecureSkipVerify = true
+	cfgT := transport.DefaultConfig()
+
+	c1, err := transport.Dial(ln.Addr().String(), clientTLS, cfgT, nil, nil)
+	if err != nil {
+		t.Fatalf("dial1: %v", err)
+	}
+	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c1, "u1", "testpass12", 10*time.Second); err != nil {
+		t.Fatalf("handshake1: %v", err)
+	}
+
+	c2, err := transport.Dial(ln.Addr().String(), clientTLS, cfgT, nil, nil)
+	if err != nil {
+		t.Fatalf("dial2: %v", err)
+	}
+	defer c2.Close()
+	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c2, "u1", "testpass12", 10*time.Second); err != nil {
+		t.Fatalf("handshake2 (kick): %v", err)
+	}
+	if sessMgr.OnlineCount() != 1 {
+		t.Fatalf("online=%d want 1", sessMgr.OnlineCount())
+	}
+	_ = c1.Close()
 }
+
 
 // TestHandshakePasswordAuth 账号密码握手须下发 gateway 与 client_private_key。
 func TestHandshakePasswordAuth(t *testing.T) {

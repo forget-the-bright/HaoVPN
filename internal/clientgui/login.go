@@ -1,7 +1,9 @@
 package clientgui
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -76,7 +78,9 @@ func (u *uiApp) showLogin(elevHint string) {
 	w.Show()
 }
 
-// tryConnect 校验表单、启动 Engine 并切换到主窗口。
+// tryConnect 校验表单、启动 Engine；鉴权成功（WaitConnected）后进主界面，TUN 在后台继续配置。
+//
+// 密码错误、账号已在线等失败留在登录页并显示 errLbl。
 func (u *uiApp) tryConnect() {
 	if !platform.IsAdmin() {
 		u.errLbl.SetText("须以管理员运行（TUN/路由/杀开关）")
@@ -107,17 +111,55 @@ func (u *uiApp) tryConnect() {
 		u.eng.Stop()
 	}
 	u.eng = clientapp.NewEngine(u.cfg)
+	u.eng.SetFailFast(true) // 登录页：首次失败立即提示，勿空转重连
 	u.eng.SetCredentials(clientapp.Credentials{Username: user, Password: pass})
+	// 鉴权成功进主窗后若 TUN/路由失败，回登录并红字（勿停在「假连接」主界面）
+	u.eng.SetOnDataplaneFailed(func(msg string) {
+		fyne.Do(func() {
+			if u.eng == nil {
+				return
+			}
+			u.doLogout()
+			if u.errLbl != nil {
+				u.errLbl.SetText(msg)
+			}
+		})
+	})
+	u.errLbl.SetText("正在连接…")
 	if err := u.eng.Start(); err != nil {
 		u.errLbl.SetText(err.Error())
 		return
 	}
-	if err := config.SaveClient(u.configPath, u.cfg); err != nil {
-		u.errLbl.SetText("连接成功但保存配置失败: " + err.Error())
-		return
-	}
-	u.errLbl.SetText("")
-	u.loginWin.Hide()
-	u.refreshTrayMenu()
-	u.showMain()
+
+	eng := u.eng
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		err := eng.WaitConnected(ctx)
+		fyne.Do(func() {
+			if u.eng != eng {
+				return // 用户已重新点连接或退出
+			}
+			if err != nil {
+				eng.Stop()
+				msg := err.Error()
+				if le := eng.LastError(); le != "" {
+					msg = le
+				}
+				if ctx.Err() != nil && msg == context.DeadlineExceeded.Error() {
+					msg = "连接超时，请检查服务器地址、网络与密码"
+				}
+				u.errLbl.SetText(msg)
+				return
+			}
+			if err := config.SaveClient(u.configPath, u.cfg); err != nil {
+				u.errLbl.SetText("连接成功但保存配置失败: " + err.Error())
+				return
+			}
+			u.errLbl.SetText("")
+			u.loginWin.Hide()
+			u.refreshTrayMenu()
+			u.showMain()
+		})
+	}()
 }

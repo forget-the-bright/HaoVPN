@@ -26,6 +26,8 @@ vpn:
   require_tun: true
   # 推送给客户端的 DNS（可空；握手时未配置则回退 gateway_ip）
   dns_servers: []
+  # 同账号第二端：reject_second=已在线则拒绝（默认）；kick_previous=新连接踢旧会话（易互踢循环）
+  session_policy: reject_second
 
 nat:
   # 允许 VPN 客户端访问的现场工控网段（SNAT 放行范围）
@@ -68,6 +70,22 @@ api:
 security:
   tunnel_allowed_source_ips: []
   enforce_split_tunnel: true
+  # 公网探针防御：识别扫描特征、落库、可选自动封禁（家里 DDNS 映射建议保持开启）
+  # enabled 用显式 true/false；仅写 enabled: false 不会被默认改回
+  # 封禁表（手动/已封）始终生效；enabled 只管自动记录与自动封
+  probe_defense:
+    enabled: true                 # 自动记录/自动封总开关
+    record_events: true           # 写入 security_events
+    auto_ban: true                # 窗口达阈值写 ip_blocks
+    ban_after_events: 8           # 窗口内事件数阈值
+    ban_window_sec: 600           # 计数窗口（秒）
+    ban_duration_sec: 3600        # 封禁时长秒；0=永久
+    event_retention_days: 30      # 事件保留天数
+    # 以下特征不计入自动封禁（仍会记事件）；默认含错密与瞬时断连
+    ignore_signatures_for_ban:
+      - connection_reset
+      - unexpected_eof
+      - auth_failed
 
 admin:
   username: "admin"

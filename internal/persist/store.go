@@ -70,6 +70,38 @@ type User struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+// SecurityEvent 公网探针/拒绝流水，对应 security_events 表一行。
+//
+// 字段：ClientIP/ClientPort — 源地址；Phase — 拒绝阶段；Signature — 特征标签；
+// Action — rejected/banned_hit/auto_banned/manual_banned；DetailJSON — 附加信息。
+type SecurityEvent struct {
+	ID         int64     `json:"id"`
+	ClientIP   string    `json:"client_ip"`
+	ClientPort string    `json:"client_port,omitempty"`
+	Phase      string    `json:"phase"`
+	Signature  string    `json:"signature"`
+	Action     string    `json:"action"`
+	DetailJSON string    `json:"detail_json,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// IPBlock IP 封禁状态，对应 ip_blocks 表一行。
+//
+// ExpiresAt 为 nil 表示永久（直至手动解封）；Enabled=false 表示已解封保留痕迹。
+type IPBlock struct {
+	ID        int64      `json:"id"`
+	IP        string     `json:"ip"`
+	Reason    string     `json:"reason"`
+	Source    string     `json:"source"` // auto / manual
+	Signature string     `json:"signature,omitempty"`
+	Hits      int        `json:"hits"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Enabled   bool       `json:"enabled"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	LastHitAt *time.Time `json:"last_hit_at,omitempty"`
+}
+
 // HasVPN 是否已配置隧道身份（有公钥）。
 func (u *User) HasVPN() bool {
 	return u != nil && u.PublicKey != ""

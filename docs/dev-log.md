@@ -6,7 +6,54 @@
 
 ---
 
-*最后更新：2026-08-28 · 架构第十一轮*
+*最后更新：2026-08-29 · 探针审计修复 + 特征中文*
+
+---
+
+## 2026-08-29 · 探针审计修复 + 特征中文 / 文档对照
+
+### 动机
+
+审计近期探针防御与登录体验改动：配置哨兵、超时误封、数据面失败无法回登录；安全事件页英文码难读；文档缺对照表。
+
+### 修复
+
+- `probe_defense` 的 `enabled`/`record_events`/`auto_ban` 改为 `*bool`：显式 `false` 不被 ApplyDefaults 改回。
+- 读超时 / deadline / 已关闭连接不记探针、不自动封；transport 有 Probe 时由 Guard 单条 Warn（去双行）。
+- `IsBlocked`/手动封禁不依赖 `Enabled`；Enabled 只管自动记录/自动封。
+- `OnDataplaneFailed`：GUI TUN/路由失败回登录红字；删 `stopReconnectFatal`。
+- `probedefense/labels.go` + API `*_zh`；探针页显示「中文（英文码）」。
+- 文档：`security-hardening` 完整中英文对照；`deploy` / `troubleshooting` / `architecture` 交叉补全；defaults/example/schema 注释。
+
+### 验证
+
+`go test` 覆盖包通过（`config`/`probedefense`/`clientapp`/`api`/`transport` 等）；`.\scripts\build-local.ps1` 通过。若本机已开客户端，`singleinstance` 测可能因端口占用失败（环境干扰，非本改动）。
+
+---
+
+## 2026-08-29 · 探针防御 + 登录体验修复
+
+### 动机
+
+家里 DDNS 映射隧道口后公网扫描噪声（`GET `/AMQP/SSLv2 等）被记成 ERROR；同账号双端互踢重连循环；GUI 错密码仍进主界面；CLI 密码明文回显。
+
+### 登录体验（A）
+
+- `vpn.session_policy` 默认 `reject_second`：已在线则 `该账号已在其他设备在线`，不踢旧会话；可选 `kick_previous`。
+- 握手拒绝经 `SendRawSync` 再 Close，保证客户端收到 `handshake_err`。
+- 客户端 `IsFatalHandshakeError` → 停重连；GUI `WaitConnected` 成功后再 `showMain`。
+- CLI `PromptPassword` → `golang.org/x/term.ReadPassword`（无回显）。
+
+### 探针防御（B）
+
+- 表：`security_events`、`ip_blocks`；包 `internal/probedefense`。
+- Accept 后查封禁/源白名单；TLS/非法帧分类落库；窗口达阈值自动封禁（白名单与 `auth_failed` 不计入）。
+- WebUI `/security` + API `/api/v1/security/events|blocks`；retention 清理事件与过期封禁。
+- 非法帧由 ERROR+stack 降为带 `remote=` 的 WARN。
+
+### 验证
+
+`go test ./...` 通过；`.\scripts\build-local.ps1` 通过。
 
 ---
 

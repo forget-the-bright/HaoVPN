@@ -2,6 +2,7 @@ package transport
 
 import (
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 //   ReconnectMax — 退避上限；0 时 EffectiveReconnectMax 为 3s。
 //   DialTimeout — TCP 拨号超时；0 时 EffectiveDialTimeout 为 3s（避免损耗链路空等）。
 //   MTU — 读缓冲与帧大小参考；与 VPN 内层 MTU 对齐，默认 netutil.DefaultMTU。
+//   Probe — 可选探针防御观测（服务端注入）；客户端保持 nil。
 type Config struct {
 	HeartbeatInterval time.Duration
 	HeartbeatTimeout  time.Duration
@@ -34,6 +36,16 @@ type Config struct {
 	ReconnectMax      time.Duration
 	DialTimeout       time.Duration // TCP 拨号超时；0 表示用默认 3s（损耗链路避免空等 10s）
 	MTU               int
+	Probe             ProbeObserver // 服务端可选；Accept/读错误/拆帧失败时回调
+}
+
+// ProbeObserver 服务端探针防御钩子（由 probedefense.Guard 适配）。
+//
+// AllowAccept 返回 false 时 acceptLoop 立即关闭连接（封禁或源 IP 白名单拒绝）。
+type ProbeObserver interface {
+	AllowAccept(remoteAddr string) bool
+	OnTransportReadError(remoteAddr string, err error)
+	OnFrameDecodeError(remoteAddr string, invalidLen int, err error)
 }
 
 // DefaultConfig 返回传输层合理默认值（心跳、队列、重连、拨号、MTU）。
@@ -106,6 +118,7 @@ type Conn struct {
 	decoder   Decoder
 	state     atomic.Int32
 	mu        sync.Mutex
+	writeMu   sync.Mutex // 保护 tls.Write（writeLoop 与 SendRawSync）
 	sendQ     chan []byte
 	onData    func([]byte)
 	onClose   func(error)
@@ -221,6 +234,25 @@ func (c *Conn) SendRaw(frameType byte, payload []byte) error {
 		return errors.New("send queue full")
 	}
 }
+
+// SendRawSync 同步写出一帧（握手拒绝等须在 Close 前送达送达的场景）。
+//
+// 与 writeLoop 共用 writeMu，避免与队列写出并发写同一 tls.Conn。
+func (c *Conn) SendRawSync(frameType byte, payload []byte) error {
+	frame, err := EncodeFrame(frameType, payload)
+	if err != nil {
+		return err
+	}
+	if c.tls == nil {
+		return errors.New("tls not ready")
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_ = c.tls.SetWriteDeadline(time.Now().Add(c.cfg.WriteTimeout))
+	_, err = c.tls.Write(frame)
+	return err
+}
+
 // Send 发送数据帧（隧道内层 IP 包密文）。
 func (c *Conn) Send(payload []byte) error {
 	if c.State() != StateConnected {
@@ -253,6 +285,7 @@ func (c *Conn) readLoop() {
 	defer c.Close()
 	buf := GetBuffer(c.cfg.MTU + FrameHeaderSize + 64)
 	defer PutBuffer(buf)
+	remote := c.RemoteAddr()
 	for {
 		select {
 		case <-c.closed:
@@ -264,14 +297,28 @@ func (c *Conn) readLoop() {
 		n, err := c.tls.Read(buf)
 		if err != nil {
 			if !errors.Is(err, io.EOF) && c.State() == StateConnected {
-				logger.Warn("transport read error: %v", err)
+				// 有 Probe 时由 Guard 打带 signature 的 Warn，避免双行；超时在 Guard 内忽略
+				if c.cfg.Probe != nil {
+					c.cfg.Probe.OnTransportReadError(remote, err)
+				} else {
+					logger.Warn("transport read error: remote=%s err=%v", remote, err)
+				}
 			}
 			return
 		}
 		// --- 阶段 2：粘包拆帧 ---
 		frames, err := c.decoder.Feed(buf[:n])
 		if err != nil {
-			logger.Error("frame decode error: %v", err)
+			// 公网扫描常见：TLS 谈成后发 HTTP/AMQP 等 → 非法帧长；记 WARN 勿 ERROR+stack
+			invLen := 0
+			if n >= FrameHeaderSize {
+				invLen = int(binary.BigEndian.Uint32(buf[:FrameHeaderSize]))
+			}
+			if c.cfg.Probe != nil {
+				c.cfg.Probe.OnFrameDecodeError(remote, invLen, err)
+			} else {
+				logger.Warn("frame decode error: remote=%s err=%v", remote, err)
+			}
 			return
 		}
 		// --- 阶段 3：按帧类型分发（心跳刷新 / 回调 onData） ---
@@ -307,8 +354,11 @@ func (c *Conn) writeLoop() {
 			return
 		case frame := <-c.sendQ:
 			// --- 阶段 1：带写超时的 TLS Write ---
+			c.writeMu.Lock()
 			_ = c.tls.SetWriteDeadline(time.Now().Add(c.cfg.WriteTimeout))
-			if _, err := c.tls.Write(frame); err != nil {
+			_, err := c.tls.Write(frame)
+			c.writeMu.Unlock()
+			if err != nil {
 				logger.Warn("transport write error: %v", err)
 				c.Close()
 				return
@@ -377,6 +427,11 @@ func (s *Server) acceptLoop() {
 		if err != nil {
 			logger.Info("transport listener closed: %v", err)
 			return
+		}
+		remote := raw.RemoteAddr().String()
+		if s.cfg.Probe != nil && !s.cfg.Probe.AllowAccept(remote) {
+			_ = raw.Close()
+			continue
 		}
 		tlsConn, ok := raw.(*tls.Conn)
 		if !ok {

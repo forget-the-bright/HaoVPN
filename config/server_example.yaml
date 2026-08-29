@@ -14,6 +14,7 @@ vpn:
   mtu: 1420
   heartbeat_interval_sec: 15
   heartbeat_timeout_sec: 90
+  session_policy: reject_second
 
 nat:
   enabled: true
@@ -36,6 +37,20 @@ api:
 security:
   tunnel_allowed_source_ips: []
   enforce_split_tunnel: true
+  # 探针防御：见 docs/security-hardening.md（含特征中英文对照）
+  # enabled:false 单独写即可关闭自动记录/自动封；封禁表仍生效
+  probe_defense:
+    enabled: true                 # 自动记录/自动封
+    record_events: true           # 写 security_events
+    auto_ban: true                # 达阈值自动封禁
+    ban_after_events: 8
+    ban_window_sec: 600
+    ban_duration_sec: 3600        # 0=永久
+    event_retention_days: 30
+    ignore_signatures_for_ban:    # 不计入自动封（仍记事件）
+      - connection_reset
+      - unexpected_eof
+      - auth_failed
 
 admin:
   username: "admin"

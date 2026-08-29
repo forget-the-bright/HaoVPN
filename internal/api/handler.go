@@ -10,6 +10,7 @@ import (
 	"haovpn/internal/logstore"
 	"haovpn/internal/logger"
 	"haovpn/internal/persist"
+	"haovpn/internal/probedefense"
 	"haovpn/internal/security"
 	"haovpn/internal/sessionmgr"
 	"haovpn/internal/vpnaccount"
@@ -24,6 +25,7 @@ type Server struct {
 	sessions   *sessionmgr.Manager
 	keyEnc     *security.KeyEnc
 	vpnSvc     *vpnaccount.Service
+	probeGuard *probedefense.Guard
 	startedAt  time.Time
 	serverPK   string
 	mux        *http.ServeMux
@@ -63,6 +65,9 @@ func NewServer(
 
 // SetLogStore 注入结构化历史日志库（可选）。
 func (s *Server) SetLogStore(ls *logstore.Store) { s.logStore = ls }
+
+// SetProbeGuard 注入探针防御 Guard（可选；供安全事件/封禁 API）。
+func (s *Server) SetProbeGuard(g *probedefense.Guard) { s.probeGuard = g }
 
 // SetVPNService 注入或替换 VPN 账号领域服务。
 func (s *Server) SetVPNService(v *vpnaccount.Service) { s.vpnSvc = v }

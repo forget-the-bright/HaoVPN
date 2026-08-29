@@ -4,13 +4,14 @@ import (
 	"net"
 	"time"
 
+	"haovpn/internal/config"
 	"haovpn/internal/crypto"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
 )
 
-// RegisterVPN 注册或替换账号 VPN 会话（每账号最多 1 条连接）。
+// RegisterVPN 注册账号 VPN 会话（每账号最多 1 条连接）。
 //
 // 参数：
 //   user — 已通过隧道鉴权的账号；须含 PublicKey、IPMode、PolicyVer 等。
@@ -19,10 +20,12 @@ import (
 //   cryptoSess — 与服务端协商好的加密会话。
 //   remoteAddr — 客户端远端地址（host:port）。
 //
-// 返回：allowed 解析失败时 err 非 nil。
+// 返回：allowed 解析失败，或 session_policy=reject_second 且账号已在线时 err 非 nil。
 //
-// 副作用：若已有同 userID 会话则标记旧 conn 并在锁外异步 Close；更新 sessions/byIP/vpnIndex；
-// 写入 connection_events（connected）与 session_stats（含 reconnect_count）；打 Info 日志。
+// 副作用：
+//   - reject_second：已有会话则保持旧连接，返回 ErrAccountAlreadyOnline；
+//   - kick_previous：异步 Close 旧连接后注册新会话；
+//   更新 sessions/byIP/vpnIndex；写 connection_events / session_stats。
 //
 // 并发：持写锁；旧连接在 goroutine 中关闭，避免在 readLoop/握手栈内同步 Close 引发死锁。
 func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketConn, cryptoSess *crypto.Session, remoteAddr string) error {
@@ -42,7 +45,17 @@ func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketC
 	}
 
 	m.mu.Lock()
+	policy := m.sessionPolicy
+	if policy == "" {
+		policy = config.SessionPolicyRejectSecond
+	}
 	if old, ok := m.sessions[user.ID]; ok {
+		if policy == config.SessionPolicyRejectSecond {
+			m.mu.Unlock()
+			logger.Info("拒绝第二端登录 user_id=%d（已有在线会话 remote=%s）", user.ID, old.RemoteAddr)
+			return ErrAccountAlreadyOnline
+		}
+		// kick_previous：踢掉旧会话
 		logger.Info("踢掉旧会话 user_id=%d（新连接）", user.ID)
 		oldConn = old.Conn
 		delete(m.sessions, user.ID)

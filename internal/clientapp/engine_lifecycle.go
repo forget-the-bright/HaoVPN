@@ -3,6 +3,7 @@ package clientapp
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/safeutil"
@@ -59,10 +60,15 @@ func (e *Engine) Start() error {
 	e.runCtx = ctx
 	e.cancel = cancel
 	e.state = StateConnecting
+	e.lastError = ""
+	// 每次 Start 重置首次结果通道，供 WaitConnected 等待本次连接
+	e.firstResultOnce = sync.Once{}
+	e.firstResultCh = make(chan error, 1)
 	e.mu.Unlock()
 
 	tcfg := transport.FromClientConfig(e.cfg)
 	e.reconnect = transport.NewReconnectClient(e.cfg.Server.Address, tlsCfg, tcfg, nil, e.onConnect)
+	e.reconnect.SetOnDialError(e.onDialError)
 	e.reconnect.Start()
 
 	safeutil.GoSafe("client-tun-read", func() {

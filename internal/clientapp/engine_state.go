@@ -2,7 +2,9 @@ package clientapp
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
 	"haovpn/internal/config"
 	"haovpn/internal/crypto"
@@ -83,11 +85,29 @@ type Engine struct {
 	sessionPriv string
 
 	clearRoutesHook func()
+
+	// failFast — GUI 登录：首次拨号/握手失败即停重连并通知 WaitConnected。
+	failFast bool
+
+	// onDataplaneFailed 鉴权成功进主窗后，TUN/路由失败时回调（GUI 回登录）；CLI 可为空。
+	onDataplaneFailed func(msg string)
+
+	// firstResult 首次鉴权结果通道；WaitConnected 等待；容量 1，只通知一次。
+	// nil 表示鉴权成功（非数据面就绪）；数据面失败走 OnDataplaneFailed。
+	firstResultOnce sync.Once
+	firstResultCh   chan error
 }
 
 // NewEngine 创建尚未连接的客户端 VPN 引擎实例。
 func NewEngine(cfg *config.ClientConfig) *Engine {
-	return &Engine{cfg: cfg, state: StateIdle, rt: &runtime{cfg: cfg}, ks: netstackKillSwitch{}, ksOK: true}
+	return &Engine{
+		cfg:           cfg,
+		state:         StateIdle,
+		rt:            &runtime{cfg: cfg},
+		ks:            netstackKillSwitch{},
+		ksOK:          true,
+		firstResultCh: make(chan error, 1),
+	}
 }
 
 // SetCredentials 设置或更新隧道登录凭据。
@@ -95,6 +115,30 @@ func (e *Engine) SetCredentials(c Credentials) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.creds = c
+}
+
+// SetFailFast 设置 GUI 登录模式：首次拨号/握手失败即停止重连并唤醒 WaitConnected。
+//
+// CLI 长期重连应保持 false（默认）。
+func (e *Engine) SetFailFast(v bool) {
+	e.mu.Lock()
+	e.failFast = v
+	e.mu.Unlock()
+}
+
+// SetOnDataplaneFailed 注册鉴权成功后 TUN/路由失败回调（须在 Start 前调用）。
+//
+// GUI 应回登录窗并显示 msg；CLI 可不设。回调可能在非 UI 线程触发。
+func (e *Engine) SetOnDataplaneFailed(fn func(msg string)) {
+	e.mu.Lock()
+	e.onDataplaneFailed = fn
+	e.mu.Unlock()
+}
+
+func (e *Engine) dataplaneFailedCallback() func(string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.onDataplaneFailed
 }
 
 // State 返回当前连接状态。
@@ -109,6 +153,45 @@ func (e *Engine) LastError() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.lastError
+}
+
+// setLastError 写入对用户可见的错误（握手失败、杀开关等）。
+func (e *Engine) setLastError(msg string) {
+	e.mu.Lock()
+	e.lastError = msg
+	e.mu.Unlock()
+}
+
+// signalFirstResult 通知 WaitConnected 首次结果（仅一次；nil 表示成功）。
+func (e *Engine) signalFirstResult(err error) {
+	e.firstResultOnce.Do(func() {
+		select {
+		case e.firstResultCh <- err:
+		default:
+		}
+	})
+}
+
+// WaitConnected 阻塞直到首次鉴权结果（成功或失败），或 ctx 取消。
+//
+// 成功仅表示账号握手通过，不保证 TUN/路由已就绪；数据面失败由 OnDataplaneFailed 通知。
+// GUI 应在 Start 之后调用；成功后再切主界面。除 channel 外亦轮询 StateConnected 兜底。
+func (e *Engine) WaitConnected(ctx context.Context) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-e.firstResultCh:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if e.State() == StateConnected {
+				e.signalFirstResult(nil)
+				return nil
+			}
+		}
+	}
 }
 
 // KillSwitchOK 返回杀开关是否处于预期保护状态。
@@ -132,4 +215,30 @@ func (e *Engine) setState(st State) {
 	e.mu.Lock()
 	e.state = st
 	e.mu.Unlock()
+}
+
+func (e *Engine) isFailFast() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.failFast
+}
+
+// stopReconnectOnly 仅停止重连循环（不重复 signal）。
+func (e *Engine) stopReconnectOnly() {
+	e.mu.Lock()
+	rc := e.reconnect
+	e.mu.Unlock()
+	if rc != nil {
+		rc.Stop()
+	}
+}
+
+// reportFirstFailure 记录首次失败并通知 WaitConnected；failFast 或致命错误时停重连。
+func (e *Engine) reportFirstFailure(msg string, fatal bool) {
+	e.setLastError(msg)
+	e.signalFirstResult(fmt.Errorf("%s", msg))
+	if fatal || e.isFailFast() {
+		e.setState(StateIdle)
+		e.stopReconnectOnly()
+	}
 }

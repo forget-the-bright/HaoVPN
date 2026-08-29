@@ -48,7 +48,80 @@
 |--------|------|
 | 分流 | `enforce_split_tunnel: true`，不下发 `0.0.0.0/0` |
 | 工控网段 | `nat.allowed_lan_cidrs` 仅含必要网段 |
-| 隧道来源 IP | 可选配置 `tunnel_allowed_source_ips` |
+| 隧道来源 IP | 可选配置 `tunnel_allowed_source_ips`（客户端出口固定时建议填；空=不限制） |
+| 同账号会话 | `vpn.session_policy: reject_second`（默认；已在线则拒绝第二端，避免互踢） |
+| 探针防御 | 见下节；WebUI「探针」页 `/security` |
+
+### 4.1 家里 DDNS / 端口映射
+
+仅映射**隧道口**，勿映射管理口。公网扫描属常态：日志出现 `tls: first record…` / `invalid frame length`（实为 HTTP/`GET ` 等魔数）时，由探针防御记入 `security_events` 并可自动写入 `ip_blocks`。
+
+### 4.2 探针防御与安全事件
+
+**行为**：Accept 时查封禁（**封禁表始终生效**）与可选源白名单 → TLS/非法帧分类落库 → 窗口内计数自动封。`enabled` 只管自动记录与自动封；手动封禁/解封不依赖 `enabled`。心跳读超时**不记**探针。
+
+**配置**（`security.probe_defense`）：
+
+| 字段 | 含义 |
+|------|------|
+| `enabled` | 自动记录/自动封总开关；YAML 显式 `false` 永不被默认改回 |
+| `record_events` | 是否写 `security_events` |
+| `auto_ban` | 是否自动写 `ip_blocks` |
+| `ban_after_events` / `ban_window_sec` | 阈值与窗口 |
+| `ban_duration_sec` | 封禁秒；`0`=永久 |
+| `event_retention_days` | 事件保留天 |
+| `ignore_signatures_for_ban` | 不计入自动封的特征（默认含 `auth_failed`、`connection_reset`、`unexpected_eof`） |
+
+与审计日志的区别：`audit_logs` 记管理员操作；`security_events` 记隧道口扫描/握手拒绝。管理端：`/security`；API：`/api/v1/security/events|blocks`（含 `*_zh` 中文字段）。
+
+#### 特征 signature（英文码 ↔ 中文）
+
+| 英文码 | 中文含义 |
+|--------|----------|
+| `account_online` | 账号已在其他设备在线 |
+| `auth_failed` | 用户名或密码错误 |
+| `source_deny` | 来源 IP 不在白名单 |
+| `handshake_reject` | 握手被拒绝 |
+| `http_get` | HTTP GET 探测 |
+| `http_method` | HTTP 方法探测 |
+| `http_blank` | HTTP 空行探测 |
+| `amqp` | AMQP 协议扫描 |
+| `jrmi` | Java RMI 扫描 |
+| `giop` | CORBA/GIOP 扫描 |
+| `conn_probe` | CONN 探测 |
+| `help_probe` | HELP 探测 |
+| `nested_tls` | 套娃 TLS 探测 |
+| `frame_invalid` | 非法帧/未知协议 |
+| `sslv2` | SSLv2 握手探测 |
+| `tls_bad_record` | 非 TLS 首包/坏记录 |
+| `tls_cipher_mismatch` | TLS 密码套件不匹配 |
+| `tls_old_version` | TLS 版本过旧 |
+| `tls_error` | 其它 TLS 错误 |
+| `connection_reset` | 对端重置连接 |
+| `unexpected_eof` | 对端提前断开 |
+| `banned` | 命中封禁 |
+| `manual` | 手动封禁 |
+
+> 实现源：`internal/probedefense/labels.go`；改码须同步本表。
+
+#### 阶段 phase
+
+| 英文码 | 中文 |
+|--------|------|
+| `tcp_accept` | TCP 接入 |
+| `tls` | TLS 层 |
+| `frame` | 应用帧 |
+| `handshake` | 账号握手 |
+| `ban_hit` | 封禁命中 |
+
+#### 动作 action
+
+| 英文码 | 中文 |
+|--------|------|
+| `rejected` | 已拒绝 |
+| `banned_hit` | 撞上封禁 |
+| `auto_banned` | 已自动封禁 |
+| `manual_banned` | 已手动封禁 |
 
 ---
 
@@ -121,4 +194,4 @@ api:
 
 ---
 
-*最后更新：2026-08-28 · 第十一轮*
+*最后更新：2026-08-29 · 探针防御对照表*

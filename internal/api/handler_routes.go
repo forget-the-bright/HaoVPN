@@ -21,6 +21,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/monitor/online", s.requireAuth(s.handleMonitorOnline))
 	s.mux.HandleFunc("/api/v1/monitor/accounts", s.requireAuth(s.handleMonitorAccounts))
 	s.mux.HandleFunc("/api/v1/monitor/events", s.requireAuth(s.handleMonitorEvents))
+	s.mux.HandleFunc("/api/v1/security/events", s.requireAuth(s.handleSecurityEvents))
+	s.mux.HandleFunc("/api/v1/security/blocks", s.requireAuth(s.handleSecurityBlocks))
+	s.mux.HandleFunc("/api/v1/security/blocks/", s.requireAuth(s.handleSecurityBlockByIP))
 
 	s.mux.HandleFunc("/static/", s.handleStatic)
 	s.mux.HandleFunc("/", s.handleDashboardPage)
@@ -30,5 +33,6 @@ func (s *Server) routes() {
 	}))
 	s.mux.HandleFunc("/connections", s.requireAuthPage(s.handleConnectionsPage))
 	s.mux.HandleFunc("/audit", s.requireAuthPage(s.handleAuditPage))
+	s.mux.HandleFunc("/security", s.requireAuthPage(s.handleSecurityPage))
 	s.mux.HandleFunc("/tools", s.requireAuthPage(s.handleToolsPage))
 }

@@ -24,7 +24,8 @@
 |------|----------|------|
 | TLS 握手失败 | 地址/端口错、证书不信任 | 见 [deploy.md § TLS 证书](deploy.md) |
 | 连接超时 | frp 未通、防火墙拦 8443 | 检查 frp；测 8443 端口 |
-| 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「稍后再试」 |
+| 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「稍后再试」；WebUI 探针页可见 `auth_failed` |
+| 提示「该账号已在其他设备在线」 | `session_policy=reject_second` 且旧会话仍在 | 先在旧设备退出，或改 `kick_previous`；探针事件 `account_online` |
 | 反复断连 | 心跳超时、ZeroTier 等损耗链路抖动 | 客户端 `heartbeat_timeout_sec` 建议 60～90；默认已 90s；**先 `ping` 底层 ZT IP**（如 192.168.196.17），若底层也超时则属 ZeroTier/运营商问题，不是隧道逻辑 |
 | 断线后「好久才连上」 | 旧版 TCP Dial 空等 10s + 退避到 8s，ZT 黑洞时体感约 30s | 新版默认 `dial_timeout_sec: 3`、`reconnect.max_sec: 3`；曾连上再断会立即重拨。**修的是探测节奏**，不能让 TCP 穿透 ZT 黑洞；ZT 仍抖时只能跟底层走 |
 | ping 网关间歇丢包 | 同上：底层 ZT 丢包会连带 `10.88.0.1` 丢 | 对比双 ping；ZT 稳后再看 VPN |
@@ -131,7 +132,21 @@ tail -f ./logs/server.log
 
 ---
 
-## 7. 上报问题时请提供
+## 7. 安全事件 / 探针页
+
+WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md §4.2](security-hardening.md)。
+
+| 现象 | 含义 | 处理 |
+|------|------|------|
+| 大量 `http_get` / `tls_*` / `amqp` | 公网扫描撞隧道口 | 正常噪声；可看自动封禁；**勿映射管理口** |
+| `auth_failed` | 错密尝试 | 查账号；默认不计入自动封 |
+| `account_online` | 同账号第二端被拒 | 旧端先登出，或改 `vpn.session_policy: kick_previous` |
+| 合法客户端被封 | 误封 / 扫描同出口 IP | 探针页解封；调大阈值或把特征加入 `ignore_signatures_for_ban` |
+| 写了 `enabled: false` 仍拦已封 IP | 封禁表始终生效 | 预期行为；解封或清 `ip_blocks` |
+
+---
+
+## 8. 上报问题时请提供
 
 1. `haovpn-server -version` / `haovpn-client -version` 输出
 2. 脱敏后的 `server.yaml` / `client.yaml`（**去掉私钥和密码**）
@@ -141,5 +156,5 @@ tail -f ./logs/server.log
 
 ---
 
-*最后更新：2026-08-27 · HaoVPN 首版重命名*
+*最后更新：2026-08-29 · 探针事件排障*
 

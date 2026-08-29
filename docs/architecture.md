@@ -95,7 +95,9 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | **vpnaccount** | IP 模式、开户、PATCH、启禁、删号 | `service.go`, `provision.go`, `patch.go`, `enable.go`, `delete.go` | ippool, persist, netutil |
 | **tunnel** | 握手协议 | `handshake.go`, `client_handshake.go`, `server_handler.go` | transport, crypto, netutil, **tun** |
 | **transport** | TLS-TCP 帧、重连 | `transport.go`, `frame.go`, `reconnect.go` | netutil, config |
-| **sessionmgr** | 会话与报文路由 | `manager.go`, `register.go`, `kick.go`, `route.go`, `stats.go` | crypto, netutil, persist |
+| **sessionmgr** | 会话与报文路由 | `manager.go`, `register.go`, `kick.go`, `route.go`, `stats.go` | crypto, netutil, persist, config |
+| **probedefense** | 公网探针识别/落库/封禁 | `guard.go`, `labels.go`, `ignorable.go`, `config_from.go` | persist, netutil, config, logger |
+
 | **netstack** | 路由/DNS/杀开关/NAT | `route_*.go`, `dns_*.go` | winnet, netutil, **platform** |
 | **tun** | TUN 抽象 | `tun.go`, `tun_windows.go` | winnet, **wintundll**, fileutil |
 | **wintundll** | 嵌入/释放 wintun.dll | `ensure.go` | fileutil |
@@ -103,7 +105,7 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | **netutil** | CIDR/地址/监听/MTU | `cidr.go`, `addr.go`, `gateway.go`, `listen.go`, `constants.go` | — |
 | **config** | YAML 加载/导出/默认值 | `config.go`, `client_export.go`, `client_yaml_patch.go`, `yaml_node.go`, `paths.go`, `retention.go` | netutil, fileutil, brand |
 | **security** | TLS、密钥加密、绑定自检 | `tls_client.go`, `datakey.go`, `keyenc.go` | netutil, fileutil |
-| **persist** | SQLite | `store.go`, `constants.go`, `users.go`, `query_users.go`, `query_audit.go`, `query_events.go`, `query_monitor.go`, `session_store.go` | paginate, readmodel, timeutil |
+| **persist** | SQLite | `store.go`, `constants.go`, `users.go`, `query_*.go`, `security_store.go`, `session_store.go` | paginate, readmodel, timeutil |
 | **auth** | Web Session + 隧道密码校验 | `service.go`, `login.go`, `tunnel_login.go`, `session.go`, `lockout.go`, `password.go`, `password_ops.go` | persist |
 | **ippool** | VPN IP 池 | `pool.go` | — |
 | **health** | 启动自检 + Dashboard | `health.go`, `dashboard.go` | config, persist |
@@ -165,8 +167,13 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | GET | `/api/v1/monitor/online` | handleMonitorOnline | Session |
 | GET | `/api/v1/monitor/accounts` | handleMonitorAccounts | Session |
 | GET | `/api/v1/monitor/events` | handleMonitorEvents | Session |
+| GET | `/api/v1/security/events` | handleSecurityEvents | Session |
+| GET/POST | `/api/v1/security/blocks` | handleSecurityBlocks | Session |
+| DELETE | `/api/v1/security/blocks/{ip}` | handleSecurityBlockByIP | Session |
 
-**WebUI**：`/`, `/users`, `/connections`, `/audit`, `/tools`；`/peers` → `/users`；`/login` 公开。
+**WebUI**：`/`, `/users`, `/connections`, `/audit`, `/security`（探针）、`/tools`；`/peers` → `/users`；`/login` 公开。
+
+> 探针事件码中英文对照与行为说明见 [security-hardening.md](security-hardening.md)「探针防御与安全事件」。改分类或 Label 须同步该文档与 `probedefense/labels.go`。
 
 ---
 

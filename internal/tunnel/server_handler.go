@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"net"
 	"strings"
 	"sync"
 
@@ -24,6 +25,7 @@ import (
 //   ServerKP — 服务端 WireGuard 密钥对；握手应答下发公钥，NewSession 用私钥。
 //   TunDev — TUN 设备；入站解密包写入内核，nil 时丢弃并 Warn。
 //   AllowedSourceIPs — 允许发起隧道的客户端源 IP/CIDR 白名单；空表示不限制。
+//   Probe — 可选探针防御；握手拒绝时记 security_events（不含密码失败细节刷爆时可关）。
 //   VPN — 账号 IP 分配与 allowed_ips 解析服务。
 //   MTU — 下发给客户端的 MTU；≤0 时 ResolveMTU 取平台默认。
 //   GatewayIP — TUN 网关 IP；写入 HandshakePolicy 与 DNS 回落。
@@ -38,12 +40,18 @@ type ServerHandler struct {
 	ServerKP         crypto.KeyPair
 	TunDev           tun.Device
 	AllowedSourceIPs []string
+	Probe            ProbeRecorder
 	VPN              *vpnaccount.Service
 	MTU              int
 	GatewayIP        string
 	DNSServers       []string
 	Auth             *auth.Service
 	KeyEnc           *security.KeyEnc
+}
+
+// ProbeRecorder 握手拒绝时的探针记录窄接口（避免 tunnel→probedefense 硬依赖循环）。
+type ProbeRecorder interface {
+	RecordReject(ip, port, phase, signature, detail string)
 }
 
 // Attach 绑定到 transport 连接：首帧握手，之后转发 IP 包。
@@ -63,13 +71,36 @@ func (h *ServerHandler) Attach(conn *transport.Conn) {
 // rejectHandshake 向客户端发送 handshake_err 并关闭连接。
 //
 // 参数：msg — 可读错误信息，写入 JSON error 字段。
-// 副作用：打 Warn 日志；SendRaw 握手失败帧；conn.Close。
+// 副作用：打 Warn 日志；可选记探针事件；SendRaw 握手失败帧；conn.Close。
 // 并发：仅在 doHandshake 所在 goroutine 调用。
 func (h *ServerHandler) rejectHandshake(conn *transport.Conn, msg string) {
-	logger.Warn("握手拒绝: %s", msg)
+	remote := conn.RemoteAddr()
+	logger.Warn("握手拒绝: remote=%s %s", remote, msg)
+	if h.Probe != nil {
+		ip := netutil.HostFromAddr(remote)
+		port := ""
+		if _, p, err := splitPort(remote); err == nil {
+			port = p
+		}
+		sig := "handshake_reject"
+		if strings.Contains(msg, "已在其他设备在线") {
+			sig = "account_online"
+		} else if strings.Contains(msg, "用户名或密码") {
+			sig = "auth_failed"
+		} else if strings.Contains(msg, "白名单") || strings.Contains(msg, "tunnel_allowed") {
+			sig = "source_deny"
+		}
+		// 密码失败不参与自动封禁计数（由 Guard ignore 或单独 signature）；仍记流水便于排查
+		h.Probe.RecordReject(ip, port, "handshake", sig, msg)
+	}
 	errBytes, _ := EncodeHandshakeErr(msg)
-	_ = conn.SendRaw(transport.FrameTypeHandshake, errBytes)
+	// 须同步写出：若仅入队后立刻 Close，writeLoop 可能先收到 closed 而丢弃错误帧，客户端会握手超时
+	_ = conn.SendRawSync(transport.FrameTypeHandshake, errBytes)
 	conn.Close()
+}
+
+func splitPort(addr string) (host, port string, err error) {
+	return net.SplitHostPort(addr)
 }
 
 // doHandshake 校验身份、分配 IP、下发策略与（密码登录时）客户端私钥。

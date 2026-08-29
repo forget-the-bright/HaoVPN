@@ -1,14 +1,21 @@
 package sessionmgr
 
 import (
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"haovpn/internal/config"
 	"haovpn/internal/crypto"
 	"haovpn/internal/persist"
 )
+
+// ErrAccountAlreadyOnline 同账号已有在线会话且策略为 reject_second 时返回。
+//
+// 文案固定，便于客户端识别为致命鉴权错误并停止自动重连。
+var ErrAccountAlreadyOnline = errors.New("该账号已在其他设备在线")
 
 // Manager 维护多账号 VPN 隧道在线会话，负责注册、踢线、TUN 出站路由与入站包校验。
 //
@@ -18,18 +25,20 @@ import (
 //   sessions — userID → 当前在线 AccountSession；每账号最多一条连接。
 //   byIP — vpnIP → AccountSession；TUN 出站按目的 IP 快速匹配。
 //   vpnIndex — vpnIP → userID；横向访问隔离（禁止 A 访问 B 的 VPN IP）。
+//   sessionPolicy — reject_second（默认）或 kick_previous；见 config.SessionPolicy*。
 //   onKick — 强制踢线后的回调（如禁用/改策略后通知上层）；无论是否在线都会触发。
 //   onDisconnect — 断线或踢线后按 ip_mode 回收 IP 的回调。
 //
 // 线程安全：导出方法内部持 mu；RouteOutbound/HandleInbound 使用 RLock。
 type Manager struct {
-	store    *persist.Store
-	mu       sync.RWMutex
-	sessions map[int64]*AccountSession // userID -> session
-	byIP     map[string]*AccountSession
-	vpnIndex map[string]int64 // vpn_ip -> user_id（横向隔离）
-	onKick   func(userID int64)
-	onDisconnect func(userID int64, vpnIP, ipMode string) // IP 回收回调
+	store         *persist.Store
+	mu            sync.RWMutex
+	sessions      map[int64]*AccountSession // userID -> session
+	byIP          map[string]*AccountSession
+	vpnIndex      map[string]int64 // vpn_ip -> user_id（横向隔离）
+	sessionPolicy string
+	onKick        func(userID int64)
+	onDisconnect  func(userID int64, vpnIP, ipMode string) // IP 回收回调
 }
 
 // AccountSession 单个 VPN 账号的在线隧道会话快照。
@@ -64,16 +73,33 @@ type AccountSession struct {
 	lastStatFlush atomic.Int64
 }
 
-// New 创建会话管理器实例。
+// New 创建会话管理器实例（默认 session_policy=reject_second）。
 //
 // 参数：store — 持久化层；可为 nil（跳过 DB 写入，仅内存索引）。
 // 返回：空索引表的 *Manager；须 LoadVPNIPIndex 预热 vpnIndex（若需横向隔离）。
 func New(store *persist.Store) *Manager {
 	return &Manager{
-		store:    store,
-		sessions: map[int64]*AccountSession{},
-		byIP:     map[string]*AccountSession{},
-		vpnIndex: map[string]int64{},
+		store:         store,
+		sessions:      map[int64]*AccountSession{},
+		byIP:          map[string]*AccountSession{},
+		vpnIndex:      map[string]int64{},
+		sessionPolicy: config.SessionPolicyRejectSecond,
+	}
+}
+
+// SetSessionPolicy 设置同账号第二端策略（reject_second / kick_previous）。
+//
+// 空字符串视为 reject_second；非法值忽略并保持原策略。
+func (m *Manager) SetSessionPolicy(policy string) {
+	switch policy {
+	case config.SessionPolicyRejectSecond, config.SessionPolicyKickPrevious:
+		m.mu.Lock()
+		m.sessionPolicy = policy
+		m.mu.Unlock()
+	case "":
+		m.mu.Lock()
+		m.sessionPolicy = config.SessionPolicyRejectSecond
+		m.mu.Unlock()
 	}
 }
 

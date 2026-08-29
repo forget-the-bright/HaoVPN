@@ -22,6 +22,7 @@ import (
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
 	"haovpn/internal/platform"
+	"haovpn/internal/probedefense"
 	"haovpn/internal/safeutil"
 	"haovpn/internal/security"
 	"haovpn/internal/sessionmgr"
@@ -43,6 +44,7 @@ type bootContext struct {
 	ipPool     *ippool.Pool
 	sessMgr    *sessionmgr.Manager
 	vpnSvc     *vpnaccount.Service
+	probeGuard *probedefense.Guard
 	leaseStop  chan struct{}
 	startedAt  time.Time
 	dataDir    string
@@ -163,6 +165,7 @@ func bootIPPool(bc *bootContext) error {
 // bootSession 创建会话管理器与 VPN 账号服务。
 func bootSession(bc *bootContext) error {
 	sessMgr := sessionmgr.New(bc.store)
+	sessMgr.SetSessionPolicy(bc.cfg.VPN.SessionPolicy)
 	if err := sessMgr.LoadVPNIPIndex(); err != nil {
 		return err
 	}
@@ -184,6 +187,13 @@ func bootSession(bc *bootContext) error {
 	vpnSvc.StartLeaseCleaner(bc.leaseStop)
 	bc.sessMgr = sessMgr
 	bc.vpnSvc = vpnSvc
+	bc.probeGuard = probedefense.New(bc.store, probedefense.ConfigFromServer(bc.cfg.Security))
+	if bc.probeGuard.Enabled() {
+		logger.Info("探针防御已启用 auto_ban=%v ban_after=%d window=%ds",
+			bc.cfg.Security.ProbeDefense.IsAutoBan(),
+			bc.cfg.Security.ProbeDefense.BanAfterEvents,
+			bc.cfg.Security.ProbeDefense.BanWindowSec)
+	}
 	return nil
 }
 
@@ -255,6 +265,7 @@ func bootTunnel(bc *bootContext, tunDev tun.Device) (*transport.Server, crypto.K
 		ServerKP:         serverKP,
 		TunDev:           tunDev,
 		AllowedSourceIPs: cfg.Security.TunnelAllowedSourceIPs,
+		Probe:            bc.probeGuard,
 		VPN:              bc.vpnSvc,
 		MTU:              cfg.VPN.MTU,
 		GatewayIP:        cfg.VPN.GatewayIP,
@@ -264,6 +275,9 @@ func bootTunnel(bc *bootContext, tunDev tun.Device) (*transport.Server, crypto.K
 	}
 
 	tcfg := transport.FromServerVPN(cfg.VPN)
+	if bc.probeGuard != nil && bc.probeGuard.Enabled() {
+		tcfg.Probe = bc.probeGuard
+	}
 	tunnelSrv, err := transport.ListenTLS(cfg.Server.Listen, tlsCfg, tcfg, func(conn *transport.Conn) {
 		tunnelHandler.Attach(conn)
 	})
@@ -301,6 +315,7 @@ func bootAPI(bc *bootContext, sd *safeutil.Shutdown, tunDev tun.Device, tunOK, n
 	apiSrv := api.NewServer(cfg, bc.store, bc.authSvc, bc.auditLog, bc.sessMgr, bc.vpnSvc, bc.keyEnc, bc.startedAt, serverKP.PublicKey)
 	apiSrv.SetLogStore(bc.logHist)
 	apiSrv.SetDataplaneHealth(tunOK, natOK)
+	apiSrv.SetProbeGuard(bc.probeGuard)
 	apiServers := api.StartAllListeners(apiSrv, listenHosts, cfg.API.Port)
 	logger.Info("管理口已就绪: %s", api.FormatBoundAddrs(apiServers))
 	return apiServers
