@@ -12,6 +12,9 @@
 //   query_events.go — ListConnectionEventsFiltered、PruneConnectionEvents
 //   query_monitor.go — ListMonitorAccountRows（JOIN 无 N+1）
 //   scan.go / jsoncol.go / audit_view.go — 行扫描、JSON 列、审计视图；时间统一 timeutil
+//   peer_store.go — peer_access / peer_routes / peer_route_members
+//   lan_registry.go — client_lan_registry 临时本地网段广告
+//   migrate_peer_routes.go — 旧 peer_routes.user_id → members 迁移
 // 查询层 DTO 边界：ListUsersPage / ListMonitorAccountRows 等直接返回 readmodel 类型，
 // 避免 api 层再做 persist→JSON 字段映射；审计视图转换在 audit_view.go。
 //

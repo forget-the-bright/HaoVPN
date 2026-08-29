@@ -4,20 +4,48 @@ import (
 	"errors"
 	"testing"
 
+	"haovpn/internal/auth"
 	"haovpn/internal/clientapp"
+	"haovpn/internal/config"
+	"haovpn/internal/sessionmgr"
 )
 
 func TestIsFatalHandshakeError(t *testing.T) {
-	if !clientapp.IsFatalHandshakeError(errors.New("用户名或密码错误")) {
-		t.Fatal("密码错误应为致命")
+	if !clientapp.IsFatalHandshakeError(auth.ErrBadCredentials) {
+		t.Fatal("bad credentials should be fatal")
 	}
-	if !clientapp.IsFatalHandshakeError(errors.New("该账号已在其他设备在线")) {
-		t.Fatal("已在线应为致命")
+	if clientapp.IsFatalHandshakeError(sessionmgr.ErrAccountAlreadyOnline) {
+		t.Fatal("account online should not be immediately fatal（有限重试）")
+	}
+	if !clientapp.IsAccountAlreadyOnline(sessionmgr.ErrAccountAlreadyOnline) {
+		t.Fatal("IsAccountAlreadyOnline")
+	}
+	if !clientapp.IsFatalHandshakeError(auth.ErrLoginLocked) {
+		t.Fatal("login locked should be fatal")
+	}
+	if !clientapp.IsFatalHandshakeError(errors.New("登录失败次数过多，请稍后再试")) {
+		t.Fatal("legacy lockout")
+	}
+	if !clientapp.IsFatalHandshakeError(errors.New("用户名或密码错误")) {
+		t.Fatal("bad password text")
 	}
 	if clientapp.IsFatalHandshakeError(errors.New("握手超时")) {
-		t.Fatal("超时不应视为致命鉴权错误")
+		t.Fatal("timeout not fatal")
 	}
 	if clientapp.IsFatalHandshakeError(nil) {
-		t.Fatal("nil 非致命")
+		t.Fatal("nil")
+	}
+}
+
+func TestShouldFailFastHandshakeOnlineRetries(t *testing.T) {
+	e := clientapp.NewEngine(&config.ClientConfig{})
+	err := sessionmgr.ErrAccountAlreadyOnline
+	for i := 1; i < 40; i++ {
+		if e.ShouldFailFastHandshake(err) {
+			t.Fatalf("第 %d 次 account_online 不应 fatal", i)
+		}
+	}
+	if !e.ShouldFailFastHandshake(err) {
+		t.Fatal("第 40 次应 fatal")
 	}
 }

@@ -235,15 +235,35 @@ launchd 配置历史见 `docs/dev-log.md`。
 | `api.port` | `8080` | 管理端口 |
 | `vpn.subnet` | `10.88.0.0/24` | VPN 地址池 |
 | `vpn.session_policy` | `reject_second` | 同账号第二端：拒绝（安全事件 `account_online`）/ `kick_previous` 踢旧 |
-| `nat.allowed_lan_cidrs` | 工控网段 | 允许访问的现场网段 |
+| `vpn.reconnect_grace_sec` | `60` | 同公网 IP 短窗顶替旧会话并续算 Rx/Tx；YAML `-1`→关闭 |
+| `nat.allowed_lan_cidrs` | 工控网段 | 允许经**服务端 NAT**访问的现场网段（写入默认 AllowedIPs） |
+| `security.allow_all_vpn_peers` | `false` | 允许全部客户端互访对方 VPN IP；细粒度用控制台「托管路由」/白名单 |
 | `security.probe_defense` | 见下表 | 公网探针识别、落库、温和自动封禁；详解与特征对照见 [security-hardening.md](security-hardening.md) |
+| `security.allow_plaintext_private_keys` | `false` | 仅兼容旧库明文私钥；生产必须保持 false |
 | `database.path` | `./data/haovpn.db` | SQLite 路径 |
 | `database.audit_retention_days` | `90` | 审计日志保留天数 |
 | `database.connection_events_retention_days` | `90` | 连接事件保留天数 |
 | `log.history_retention_days` | `90` | 结构化历史日志（`logs.db`）；`-1` 关闭 |
 | `log.history_db` | 同目录 `logs.db` | WebUI 分页检索用 |
+| 客户端 `local_lans` | 未配/空 | **手动**填写本机后面的 LAN（如 `192.168.31.0/24`）；非空则登录上报注册表并开 via 出口（TUN→LAN 转发/SNAT）；空则整条关闭。勿写入账号 AllowedIPs |
 
-管理控制台：维护页读 live 日志；**探针**页（`/security`）查看 `security_events` / `ip_blocks`（特征列显示中文+英文码）；滚动大文件仅读尾部块。
+管理控制台：维护页读 live 日志；**探针**页（`/security`）；**托管路由**页（`/peers`：注册表 + Managed Routes + 互访）；滚动大文件仅读尾部块。
+
+**四概念对照**：
+
+| 配置/表 | 作用 |
+|---------|------|
+| 账号 AllowedIPs / `nat.allowed_lan_cidrs` | 经**服务端网关 NAT**访问工控网 |
+| 客户端 `local_lans` | 本机当 via 时广告并出口到家里/现场 LAN |
+| `client_lan_registry` | 在线临时广告（断线清空）；alone 不转发 |
+| `peer_routes` + `peer_route_members` | 管理员手工决定谁可走哪条 dest→via |
+
+**via 出口现场步骤（家里共享 LAN）**：
+
+1. 家里客户端 `client.yaml`（或 GUI「本地网段」）填写 `local_lans: ["192.168.31.0/24"]`，**管理员**运行连接。  
+2. 日志应有 `lan_registry_reported`、`via_exit_setup ok`（失败看 WinNAT/ICS/提权）。  
+3. 控制台 `/peers` → 注册表可见 →「创建托管路由」→ 选访问方 → **应用生效**。  
+4. 公司客户端重连后 `ping` via 的 VPN IP 与 LAN 主机；回程依赖 via 侧 SNAT（握手下发 `vpn_subnet`）。
 
 #### `security.probe_defense` 子项（摘要）
 
@@ -258,7 +278,9 @@ launchd 配置历史见 `docs/dev-log.md`。
 | `event_retention_days` | `30` | 事件保留天 |
 | `ignore_signatures_for_ban` | `connection_reset` 等 | 不计入自动封（仍记事件）；默认含 `auth_failed` |
 
-手动封禁与已有 `ip_blocks` **始终生效**，不依赖 `enabled`。完整说明与中英文对照见 [security-hardening.md](security-hardening.md)。
+手动封禁与已有 `ip_blocks` **始终生效**，不依赖 `enabled`（服务端启动时有 Guard 即挂到 Accept）。完整说明与中英文对照见 [security-hardening.md](security-hardening.md)。
+
+Web 自改密：`POST /api/v1/password` 须带 `old_password` 与 `new_password`；成功后吊销全部 Web 会话并重新登录。Web 与隧道登录锁定分表，互不影响。
 
 完整示例见 [meta-plan.md](meta-plan.md) YAML 章节。
 

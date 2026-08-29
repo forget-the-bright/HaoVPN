@@ -6,7 +6,194 @@
 
 ---
 
-*最后更新：2026-08-29 · 探针审计修复 + 特征中文*
+*最后更新：2026-08-29 · ICS SkipAsSource 根因修复（保留 ICS）*
+
+---
+
+## 2026-08-29 · ICS SkipAsSource 根因修复（保留 ICS）
+
+### 动机
+
+此前用「客户端 via 禁 ICS」回避问题。真实根因：家庭版 ICS 在 TUN 挂 `192.168.137.1` 后，Windows 本机访 AllowedIPs 可能错选该地址为源 → 超时；关 ICS 只是糊弄。
+
+### 改动
+
+- **保留 ICS**（via / 服务端家庭版 NAT 回退照旧）。
+- ICS 启用后：`PreferVPNSourceWithICS`——VPN IP 可作源，ICS 地址 `SkipAsSource=$true`。
+- via Setup 后重装客户端 AllowedIPs 路由。
+- 撤回 SkipICS。
+
+### 验证
+
+```powershell
+go test ./internal/netstack/... ./internal/clientapp/... ./internal/winnet/...
+.\scripts\build-local.ps1
+```
+
+重连日志应有 `ICS 已启用` + `SkipAsSource 非 VPN 地址`；`ping 192.168.3.1` 与 via SNAT 并存。
+
+---
+
+## 2026-08-29 · via 回程 ExitLANs + 伪造源刷屏治理
+
+### 动机
+
+via/ICS 把 `192.168.3.1` / `192.168.137.1` 灌进隧道；服务端只认 VPN IP → 狂刷 WARN，且 LAN 回程被丢，via 不通。本机 LAN 与服务端 NAT 同网段时还会抢路由。
+
+### 改动
+
+- 服务端：会话加载 `ExitLANs`；入站源=VPN IP 或 ExitLANs；ExitLAN→对端 VPN IP 直转；广播 DEBUG；伪造源 WARN 10s 限流。
+- 客户端：TUN 上送过滤（仅 VPN IP / local_lans）；排障文档补充 ICS 与网段冲突。
+
+### 验证
+
+```powershell
+go test ./internal/sessionmgr/... ./internal/clientapp/...
+.\scripts\build-local.ps1
+```
+
+须同时更新 **server + client/gui**。家端 `local_lans` **勿**与服务端 AllowedIPs NAT 网段重叠，勿写 ICS `192.168.137.0/24`。
+
+---
+
+## 2026-08-29 · 断线「账号已在线」半死顶替 + 客户端持续重试
+
+### 动机
+
+ZT/链路黑洞后客户端已断，服务端会话仍占坑；`reject_second` 拒重连；旧客户端仅重试 5 次就停。
+
+### 改动
+
+- 服务端：同 IP grace 顶替保留；对端静默约 8～20s 允许异 IP 密码顶替（`PeerActivityConn`）；拒绝日志带 `same_host`/`stale_peer`。
+- 客户端：曾连接或重连中 account_online **不停**；首次登录上限 40 次。
+
+### 验证
+
+```powershell
+go test ./internal/sessionmgr/... ./internal/clientapp/... ./internal/transport/...
+.\scripts\build-local.ps1
+```
+
+须同时更新 **server + client/gui**。
+
+---
+
+## 2026-08-29 · 本地网段注册 + 托管路由解耦 + via 出口
+
+### 动机
+
+家里 LAN 经 via 客户端共享：需临时注册广告、手工托管路由（访问方关系表）、via 侧 TUN→LAN 转发/SNAT；`local_lans` 空则整条关闭。
+
+### 改动
+
+- Schema：`client_lan_registry`；`peer_routes` 去 accessor + `peer_route_members`（`user_id=0`=全部）；旧库迁移 `migrate_peer_routes.go`。
+- 握手上报 `local_lans`；断线清注册；策略跳过失效路由；握手下发 `vpn_subnet`。
+- 客户端 `via_exit.go` 复用 `netstack.Stack`；GUI/YAML `local_lans`。
+- `/peers` 注册表 + 失效展示；`GET /api/v1/lan-registry`。
+
+### 验证
+
+```powershell
+go test ./internal/persist/... ./internal/vpnaccount/... ./internal/clientapp/... ./internal/tunnel/... ./internal/api/... ./internal/sessionmgr/... ./internal/config/...
+.\scripts\build-local.ps1
+```
+
+（全仓 `go test ./...` 时若本机已开 GUI，`singleinstance` 单测会因互斥锁失败，属环境干扰。）
+
+---
+
+## 2026-08-29 · 客户端去网关 /32 冗余 + GUI 重连可恢复性
+
+### 动机
+
+有 `10.88.0.0/24` 时仍装 `10.88.0.1/32` 冗余；GUI `failFast` 登录成功后未关，断线/踢线后再失败即停重连。
+
+### 改动
+
+- `gatewayHostRouteNeeded`：AllowedIPs 已覆盖网关则跳过 `/32`。
+- 鉴权成功 `markAuthOK` 关 failFast；`reportFirstFailure` / `onDialError` 仅登录阶段停循环。
+- `disconnected_during_policy` 改 `StateReconnecting` 不停循环；曾连接后 `account_online` 持续重试。
+
+### 验证
+
+```powershell
+go test ./internal/clientapp/...
+.\scripts\build-local.ps1
+```
+
+---
+
+## 2026-08-29 · 互访 hub 直转 + 去冗余 /32 + 「应用生效」
+
+### 动机
+
+互访 ping 不通：白名单单向 + 放行后仍 `writeTUN`（无 hairpin）；托管页保存同步踢线卡死；客户端多余 `peer/via /32`。
+
+### 改动
+
+- 入站横向放行 → `sendToAccount` 对端会话。
+- `ResolveClientPolicy`：已被 CIDR 覆盖的 peer/via `/32` 不下发；会话仍记 PeerAccess/ViaPeers。
+- 增删路由/白名单只写库；`POST /api/v1/peers/apply` 踢脏账号；互访默认双向。
+- `/peers` 黄条 + 应用生效按钮；排障文档澄清 on-link。
+
+### 验证
+
+```powershell
+go test ./internal/sessionmgr/... ./internal/vpnaccount/... ./internal/persist/... ./internal/api/...
+.\scripts\build-local.ps1
+```
+
+须重启 **haovpn-server**；改策略后点控制台「应用生效」。
+
+---
+
+## 2026-08-29 · Peer 路由 + 重连续算 + 托盘 Logo（对齐 ZeroTier）
+
+### 动机
+
+默认横向隔离正确，但缺「经对端转发」语义与托盘可见性；抖动重连易被 `account_online` 误杀；控制台无 Managed Routes。
+
+### 设计
+
+- **AllowedIPs** = 经服务端网关/NAT；**托管路由** = `dest via 客户端 vpn_ip`（`peer_routes`，`user_id NULL`=全员）。
+- **互访**：`allow_all_vpn_peers` / `peer_access` / via 下一跳；删号级联 `peer_*`。
+- **出站**：vpn_ip → via 索引；禁止用 AllowedIPs 错送。
+- **重连**：`reconnect_grace_sec` 同 IP 顶替续算；客户端 account_online 有限重试。
+- **托盘**：灰/黄/绿/红 + 托管路由只读子菜单；握手 `managed_routes`。
+
+### 验证
+
+```powershell
+go test ./...
+.\scripts\build-local.ps1
+```
+
+---
+
+## 2026-08-29 · 架构解耦第十二轮 + 安全审计闭环
+
+### 动机
+
+审计发现重复工具分散、握手错误靠中文子串耦合、封禁在 `enabled=false` 时未挂 Accept、握手 OK 发送失败留僵尸会话、自改密无旧密码且不吊销 Session、Web/隧道共用 lockout 等。本轮一次做完：高内聚叶子工具 + 安全闭环 + 全局 CODEMAP。
+
+### 改动摘要
+
+- **叶子**：`netutil.SplitRemoteAddr`、`timeutil.Seconds`、`persist.fillIPBlock`；源 IP 统一 `IPMatchesRules`。
+- **哨兵**：`auth/errors.go`；`clientapp.IsFatalHandshakeError` / 探针签名用 `errors.Is`；锁定文案对齐。
+- **P0**：Probe 始终挂载；握手 OK 失败回滚；改密须 `old_password` + `LogoutAllForUser`；`requireAuth` 失败关闭。
+- **P1**：明文钥默认拒绝（`allow_plaintext_private_keys`）；导出不解密；双 lockout；CSRF 常量时间；retention 解耦；sessionmgr 回调/路由加固；`dev-security-check.sh` 对齐 changeme12。
+- **文档**：architecture / internal README / hardening / deploy / troubleshooting / web README / 记忆。
+
+### 验证
+
+```powershell
+go test ./...
+.\scripts\build-local.ps1
+```
+
+本轮相关包与 `go test ./...` 中除 `singleinstance` 外全部通过；`singleinstance` 失败因本机已运行 HaoVPN 客户端占用协调端口（环境干扰，同前次记录）。`build-local.ps1` 通过。
+
+field 门禁仍待工控网：`.\scripts\dev-field-gate.ps1 -PlcHost <IP> -UseHomeConfig`（本轮不阻塞）。
 
 ---
 

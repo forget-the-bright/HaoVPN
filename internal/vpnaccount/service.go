@@ -9,6 +9,7 @@ import (
 	"haovpn/internal/logger"
 	"haovpn/internal/persist"
 	"haovpn/internal/safeutil"
+	"haovpn/internal/timeutil"
 )
 
 // Service 服务端 VPN 账号握手、IP 分配与租约清理逻辑（tunnel 与 Web API 共用）。
@@ -111,7 +112,7 @@ func (s *Service) ReleaseOnDisconnect(userID int64, vpnIP, ipMode string) {
 		if u != nil && u.IPLeaseSec > 0 {
 			leaseSec = u.IPLeaseSec
 		}
-		until := time.Now().Add(time.Duration(leaseSec) * time.Second)
+		until := time.Now().Add(timeutil.Seconds(leaseSec))
 		_ = s.Store.SetIPLeaseUntil(vpnIP, until)
 		// 租约期内保持池内占用，避免其他用户分配到同一 IP。
 		logger.Info("租约 IP 保留 user_id=%d ip=%s until=%s", userID, vpnIP, until.Format("2006-01-02 15:04:05"))

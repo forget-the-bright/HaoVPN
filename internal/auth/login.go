@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"errors"
-
 	"haovpn/internal/logger"
 	"haovpn/internal/persist"
 )
@@ -59,16 +57,18 @@ func (s *Service) EnsureAdmin(username, password string, syncFromConfig bool) er
 // Login 处理 Web 管理端登录并签发 session token。
 //
 // 参数：username/password 为用户凭据；clientIP 用于失败锁定与审计。
-// 返回：session token、User 指针；非 admin、凭据错误或锁定时 err 非 nil。
-// 副作用：成功时写入 sessions；失败时可能累加 lockouts 并打 Warn 日志。
+// 返回：session token、User 指针；凭据错误、锁定或非 admin 时 err 非 nil（哨兵见 errors.go）。
+// 副作用：成功时写入 sessions；失败时可能累加 webLockouts 并打 Warn 日志。
 func (s *Service) Login(username, password, clientIP string) (string, *persist.User, error) {
-	u, err := s.verifyCredentials(username, password, clientIP)
+	u, err := s.verifyCredentials(lockoutWeb, username, password, clientIP)
 	if err != nil {
 		return "", nil, err
 	}
 	if !u.IsAdmin {
+		// 模糊文案：不泄露「存在但非管理员」，与错密同形
 		logger.Warn("Web 登录拒绝: 非管理账号 user=%s ip=%s", username, clientIP)
-		return "", nil, errors.New("非管理账号，无法登录 Web")
+		s.recordFailure(lockoutWeb, clientIP)
+		return "", nil, ErrBadCredentials
 	}
 	token, csrf, err := s.createSession(u)
 	if err != nil {
@@ -79,27 +79,30 @@ func (s *Service) Login(username, password, clientIP string) (string, *persist.U
 	return token, u, nil
 }
 
-func (s *Service) verifyCredentials(username, password, clientIP string) (*persist.User, error) {
-	if s.isLocked(clientIP) {
-		logger.Warn("登录失败: IP 已锁定 ip=%s", clientIP)
-		return nil, errors.New("登录失败次数过多，请稍后再试")
+// verifyCredentials 校验用户名密码；realm 决定写入哪张锁定表。
+//
+// 禁用账号对外统一返回 ErrBadCredentials（防枚举）；内部仍打 Warn。
+func (s *Service) verifyCredentials(realm lockoutRealm, username, password, clientIP string) (*persist.User, error) {
+	if s.isLocked(realm, clientIP) {
+		logger.Warn("登录失败: IP 已锁定 realm=%d ip=%s", realm, clientIP)
+		return nil, ErrLoginLocked
 	}
 	u, err := s.store.GetUserByUsername(username)
 	if err != nil {
-		s.recordFailure(clientIP)
+		s.recordFailure(realm, clientIP)
 		logger.Warn("登录失败: 用户不存在 username=%s ip=%s", username, clientIP)
-		return nil, errors.New("用户名或密码错误")
+		return nil, ErrBadCredentials
 	}
 	if !u.Enabled {
-		s.recordFailure(clientIP)
+		s.recordFailure(realm, clientIP)
 		logger.Warn("登录失败: 账号已禁用 user=%s ip=%s", username, clientIP)
-		return nil, errors.New("账号已禁用")
+		return nil, ErrBadCredentials
 	}
 	if !CheckPassword(u.PasswordHash, password) {
-		s.recordFailure(clientIP)
-		logger.Warn("登录失败: 密码错误 user=%s ip=%s failures=%d", username, clientIP, s.failureCount(clientIP))
-		return nil, errors.New("用户名或密码错误")
+		s.recordFailure(realm, clientIP)
+		logger.Warn("登录失败: 密码错误 user=%s ip=%s failures=%d", username, clientIP, s.failureCount(realm, clientIP))
+		return nil, ErrBadCredentials
 	}
-	s.clearFailures(clientIP)
+	s.clearFailures(realm, clientIP)
 	return u, nil
 }

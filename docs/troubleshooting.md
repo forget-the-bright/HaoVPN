@@ -24,8 +24,20 @@
 |------|----------|------|
 | TLS 握手失败 | 地址/端口错、证书不信任 | 见 [deploy.md § TLS 证书](deploy.md) |
 | 连接超时 | frp 未通、防火墙拦 8443 | 检查 frp；测 8443 端口 |
-| 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「稍后再试」；WebUI 探针页可见 `auth_failed` |
-| 提示「该账号已在其他设备在线」 | `session_policy=reject_second` 且旧会话仍在 | 先在旧设备退出，或改 `kick_previous`；探针事件 `account_online` |
+| 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「登录失败次数过多，请稍后再试」——客户端应**停止自动重连**（`IsFatalHandshakeError`）；WebUI 探针页可见 `auth_failed` |
+| 提示「该账号已在其他设备在线」 | `session_policy=reject_second` 且旧会话仍在；异公网 IP 第二端；或底层黑洞导致服务端半死会话未释放 | 同公网 IP：`reconnect_grace_sec` 顶替；半死静默约 8～20s 后亦可顶替（须升级服务端）；**曾连通过**的客户端持续重试；首次登录最多约 40 次。异设备先退旧端或改 `kick_previous`。查服务端日志 `grace 顶替` / `拒绝第二端 … same_host= stale_peer=` |
+| GUI 断线后不再自动重连 | 旧版登录 `failFast` 成功后未关，或 account_online 仅重试 5 次即停 | 升级客户端：鉴权成功后关 failFast；曾连接/重连中 account_online **持续**重试；首次登录最多约 40 次；并升级服务端半死会话顶替 |
+| 日志出现多余 `10.88.0.1/32` 路由 | 旧版始终加网关主机路由 | 新版：AllowedIPs 已含 VPN 子网时跳过网关 `/32` |
+| 能 ping 网关 / AllowedIPs LAN，不能 ping 其他客户端 VPN IP | **默认设计**：横向隔离；或未点「应用生效」；或服务端未直转对端会话 | 控制台 `/peers`：开「全部互访」、加**双向**白名单，或配托管路由（via 下一跳在服务端放行）；改完后点 **应用生效** 踢线刷新；升级含 hub 直转的服务端 |
+| 托管路由不生效 / ping LAN 得「来自 via：无法访问目标网」 | hub 已送到 via，但 via 未开出口或 SNAT 失败；或未配 `local_lans`；或托管路由「失效」 | 家里客户端配 `local_lans` 并以管理员连接；日志 `via_exit_setup ok` / `ICS 已启用` / `SkipAsSource`；控制台注册表有行；点「应用生效」；勿写 ICS 网段进 `local_lans` |
+| 托管路由一直「失效」 | via 离线，或注册表无匹配 dest（未上报 / 已下线清空） | via 保持在线且 `local_lans` 含该 dest；换机后须重登上报 |
+| 未配 local_lans 却想共享 LAN | 能力默认关闭 | 在 `client.yaml` 或 GUI「本地网段」填写 CIDR |
+| 服务端狂刷 `丢弃伪造源 IP`（`192.168.137.1` / 家用 LAN） | via/ICS 把非 VPN 源灌进隧道；旧服务端只认 VPN IP | **升级服务端+客户端**：ExitLANs 放行已上报 `local_lans` 回程；客户端过滤非 VPN/非 local_lans 源；广播改 DEBUG。勿把 ICS `192.168.137.0/24` 写进 `local_lans` |
+| 家/本机能连 VPN，ping 对端 VPN IP 通，但不通服务端 NAT（如 `192.168.3.1`），且开了 local_lans/ICS | ICS 在 TUN 挂 `192.168.137.1` 后 **Windows 错选发包源** | **升级客户端**：ICS 后对非 VPN 地址 `SkipAsSource`，并重装 AllowedIPs；日志 `本机发包源优先 10.88.x.x`。`Get-NetIPAddress` 看 137 地址应为 SkipAsSource |
+| Windows 路由表「在链路上」且接口是本机 VPN IP | **预期**：进 haovpn0，不是把 via 配成自己 | 控制台 `via 10.88.x.x` 只在服务端选路；本机不必出现「下一跳=via」 |
+| `/peers` 增删很卡 | 旧版保存时同步踢线抢 SQLite | 新版保存只写库；点「应用生效」再踢受影响账号 |
+| 手动封禁 IP 仍能连上 | 旧版仅在 `probe_defense.enabled=true` 时挂 Probe | 升级服务端：有 Guard 即挂载，封禁表 Accept 始终生效；查 `/security` 与 `ip_blocks` |
+| 提示「账号密钥须加密存储」 | 库内明文私钥且 `allow_plaintext_private_keys=false` | 重新开户/轮换密钥使私钥加密入库；临时兼容才开 `allow_plaintext_private_keys`（勿用于生产） |
 | 反复断连 | 心跳超时、ZeroTier 等损耗链路抖动 | 客户端 `heartbeat_timeout_sec` 建议 60～90；默认已 90s；**先 `ping` 底层 ZT IP**（如 192.168.196.17），若底层也超时则属 ZeroTier/运营商问题，不是隧道逻辑 |
 | 断线后「好久才连上」 | 旧版 TCP Dial 空等 10s + 退避到 8s，ZT 黑洞时体感约 30s | 新版默认 `dial_timeout_sec: 3`、`reconnect.max_sec: 3`；曾连上再断会立即重拨。**修的是探测节奏**，不能让 TCP 穿透 ZT 黑洞；ZT 仍抖时只能跟底层走 |
 | ping 网关间歇丢包 | 同上：底层 ZT 丢包会连带 `10.88.0.1` 丢 | 对比双 ping；ZT 稳后再看 VPN |

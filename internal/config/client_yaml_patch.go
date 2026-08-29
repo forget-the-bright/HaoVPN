@@ -15,6 +15,7 @@ type clientSavePatch struct {
 	Username         string
 	RememberPassword bool
 	Password         string
+	LocalLANs        []string // nil=不改；非 nil（含空切片）=覆盖 local_lans
 }
 
 // SaveClient 将 GUI 修改过的偏好写回 client.yaml（权限 0600）。
@@ -28,6 +29,7 @@ func SaveClient(path string, cfg *ClientConfig) error {
 		Address:          out.Server.Address,
 		Username:         out.Auth.Username,
 		RememberPassword: out.Auth.RememberPassword,
+		LocalLANs:        append([]string{}, out.LocalLANs...),
 	}
 	if out.Auth.RememberPassword {
 		patch.Password = out.Auth.Password
@@ -72,6 +74,7 @@ func patchClientYAML(path string, patch clientSavePatch) error {
 	} else {
 		deleteMappingKey(authMap, "password")
 	}
+	setMappingStringSequence(root, "local_lans", patch.LocalLANs)
 	deleteMappingKey(root, "peer")
 
 	out, err := yaml.Marshal(&doc)

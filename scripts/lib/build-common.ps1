@@ -15,6 +15,42 @@ function Get-ProjectVersion {
     return (Get-Content $VersionFile -Raw).Trim()
 }
 
+# Get-VersionQuad 将 VERSION（可含 -dev）转为 Windows 资源用的 a.b.c.d。
+function Get-VersionQuad {
+    param([string]$Version)
+    $core = ($Version -split '-', 2)[0]
+    $parts = @($core.Split('.') | Where-Object { $_ -ne '' })
+    while ($parts.Count -lt 4) { $parts += '0' }
+    if ($parts.Count -gt 4) { $parts = $parts[0..3] }
+    return ($parts -join '.')
+}
+
+# Sync-FyneAppTomlFromVersion 把 cmd/client-gui/FyneApp.toml 的 Version 写成根目录 VERSION（禁止手写死版本）。
+function Sync-FyneAppTomlFromVersion {
+    param(
+        [string]$Root,
+        [string]$Version = ""
+    )
+    if (-not $Version) {
+        $Version = Get-ProjectVersion -Root $Root
+    }
+    $path = Join-Path $Root "cmd/client-gui/FyneApp.toml"
+    if (-not (Test-Path $path)) {
+        Write-Warning "未找到 FyneApp.toml，跳过版本同步: $path"
+        return
+    }
+    $text = Get-Content $path -Raw -Encoding UTF8
+    if ($text -notmatch '(?m)^Version\s*=') {
+        throw "FyneApp.toml 缺少 Version 字段: $path"
+    }
+    $text = [regex]::Replace($text, '(?m)^Version\s*=\s*".*"\s*$', "Version = `"$Version`"")
+    # 保持原有换行风格，仅确保末尾一个换行
+    $nl = if ($text -match "`r`n") { "`r`n" } else { "`n" }
+    $text = $text.TrimEnd("`r", "`n") + $nl
+    [System.IO.File]::WriteAllText($path, $text)
+    Write-Host "    FyneApp.toml Version=$Version"
+}
+
 function Get-GitCommitShort {
     param([string]$Root)
     Push-Location $Root

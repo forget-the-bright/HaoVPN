@@ -114,3 +114,82 @@ New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress '%s' -PrefixLength %d -E
 	_, err := RunPS(ps)
 	return err
 }
+
+// PreferVPNSourceWithICS 在保留 ICS 私网地址（常 192.168.137.1）的前提下，强制本机发包源为 VPN IP。
+//
+// 根因：ICS 在 TUN 上另挂 192.168.137.1 后，Windows 源地址选择可能不用 10.88.x.x，
+// 导致本机经隧道访问服务端 AllowedIPs（如 192.168.3.1）超时；对 ICS 地址设 SkipAsSource=$true。
+func PreferVPNSourceWithICS(configName, vpnIP string) error {
+	vpnIP = strings.TrimSpace(vpnIP)
+	if configName == "" || vpnIP == "" {
+		return fmt.Errorf("PreferVPNSourceWithICS: configName/vpnIP 为空")
+	}
+	ps := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+$vpn = '%s'
+$if = Get-NetAdapter | Where-Object { $_.Name -eq '%s' } | Select-Object -First 1
+if (-not $if) {
+  $if = Get-NetAdapter | Where-Object { $_.InterfaceDescription -match 'Wintun|HaoVPN' } | Select-Object -First 1
+}
+if (-not $if) { throw '未找到 Wintun 网卡' }
+$idx = $if.ifIndex
+# 确保 VPN IP 仍在（ICS 有时冲掉 /32）
+$hasVpn = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.IPAddress -eq $vpn }
+if (-not $hasVpn) {
+  New-NetIPAddress -InterfaceIndex $idx -IPAddress $vpn -PrefixLength 32 -ErrorAction SilentlyContinue | Out-Null
+}
+# VPN IP 可作为源；其余地址（含 ICS 192.168.137.x）禁止作本机发包源
+Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object {
+  if ($_.IPAddress -eq $vpn) {
+    Set-NetIPAddress -InterfaceIndex $idx -IPAddress $_.IPAddress -SkipAsSource $false -ErrorAction SilentlyContinue
+  } else {
+    Set-NetIPAddress -InterfaceIndex $idx -IPAddress $_.IPAddress -SkipAsSource $true -ErrorAction SilentlyContinue
+  }
+}
+`, EscapeSingleQuoted(vpnIP), EscapeSingleQuoted(configName))
+	out, err := RunPS(ps)
+	if err != nil {
+		return platform.CommandOutputError("PreferVPNSourceWithICS", out, err)
+	}
+	return nil
+}
+
+// RemoveICSAddressesKeepVPN 关闭 ICS 后删除 192.168.137.x 等 ICS 地址，保留 VPN IP。
+func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
+	vpnIP = strings.TrimSpace(vpnIP)
+	if configName == "" || vpnIP == "" {
+		return fmt.Errorf("RemoveICSAddressesKeepVPN: configName/vpnIP 为空")
+	}
+	ps := fmt.Sprintf(`
+$ErrorActionPreference = 'SilentlyContinue'
+$vpn = '%s'
+$if = Get-NetAdapter | Where-Object { $_.Name -eq '%s' } | Select-Object -First 1
+if (-not $if) {
+  $if = Get-NetAdapter | Where-Object { $_.InterfaceDescription -match 'Wintun|HaoVPN' } | Select-Object -First 1
+}
+if (-not $if) { throw '未找到 Wintun 网卡' }
+Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -ne $vpn -and $_.IPAddress -like '192.168.137.*' } |
+  ForEach-Object { Remove-NetIPAddress -InterfaceIndex $_.InterfaceIndex -IPAddress $_.IPAddress -Confirm:$false -ErrorAction SilentlyContinue }
+$has = Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq $vpn }
+if (-not $has) {
+  New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress $vpn -PrefixLength 32 -ErrorAction SilentlyContinue | Out-Null
+}
+`, EscapeSingleQuoted(vpnIP), EscapeSingleQuoted(configName))
+	_, err := RunPS(ps)
+	return err
+}
+
+// DisableAllICS 关闭本机全部 ICS 共享（via 关闭或 Teardown 时清残留）。
+func DisableAllICS() {
+	ps := `
+$ErrorActionPreference = 'SilentlyContinue'
+regsvr32 /s hnetcfg.dll
+$net = New-Object -ComObject HNetCfg.HNetShare
+foreach ($c in @($net.EnumEveryConnection())) {
+  try { $net.INetSharingConfigurationForINetConnection($c).DisableSharing() } catch {}
+}
+`
+	_ = platform.Command("powershell", "-NoProfile", "-Command", ps).Run()
+}

@@ -189,21 +189,22 @@ func TestAcceptanceAPIFlow(t *testing.T) {
 			t.Fatalf("page %s: %d", path, pageResp.StatusCode)
 		}
 	}
-	// /peers → 302 /users
+	// /peers 托管路由页（原重定向 /users；现独立 Managed Routes）
 	peersReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/peers", nil)
 	for _, c := range cookies {
 		peersReq.AddCookie(c)
 	}
-	noFollow := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
-	peersResp, err := noFollow.Do(peersReq)
+	peersResp, err := client.Do(peersReq)
 	if err != nil {
 		t.Fatal(err)
 	}
+	peersBody, _ := io.ReadAll(peersResp.Body)
 	peersResp.Body.Close()
-	if peersResp.StatusCode != http.StatusFound {
-		t.Fatalf("/peers redirect: %d", peersResp.StatusCode)
+	if peersResp.StatusCode != http.StatusOK {
+		t.Fatalf("/peers: %d", peersResp.StatusCode)
+	}
+	if !strings.Contains(string(peersBody), "托管路由") {
+		t.Fatal("/peers 页面应含托管路由文案")
 	}
 
 	if exportResp.Header.Get("X-Content-Type-Options") != "nosniff" {

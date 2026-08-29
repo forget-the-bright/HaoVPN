@@ -73,6 +73,37 @@ func scanUserListItem(row scannable) (readmodel.UserListItem, error) {
 	return item, nil
 }
 
+// UserDirectoryEntry 控制台下拉/路由展示用轻量账号（无私钥/密码）。
+type UserDirectoryEntry struct {
+	ID       int64
+	Username string
+	VPNIP    string
+	HasVPN   bool
+	IsAdmin  bool
+}
+
+// ListUserDirectory 列出全部账号的 id/用户名/vpn_ip（托管路由页用，不读私钥）。
+func (s *Store) ListUserDirectory() ([]UserDirectoryEntry, error) {
+	rows, err := s.db.Query(
+		`SELECT id, username, COALESCE(vpn_ip,''), CASE WHEN public_key IS NOT NULL AND public_key != '' THEN 1 ELSE 0 END, is_admin FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserDirectoryEntry
+	for rows.Next() {
+		var e UserDirectoryEntry
+		var hasVPN, isAdmin int
+		if err := rows.Scan(&e.ID, &e.Username, &e.VPNIP, &hasVPN, &isAdmin); err != nil {
+			return nil, err
+		}
+		e.HasVPN = hasVPN == 1
+		e.IsAdmin = isAdmin == 1
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // UsernameByID 按 ID 取用户名（事件列表展示用）。
 //
 // 参数：id — users.id；不存在时返回 "#<id>" 占位字符串。

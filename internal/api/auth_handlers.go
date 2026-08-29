@@ -9,7 +9,8 @@ import (
 
 // requireAuth 鉴权中间件，包装需登录的 API 处理器。
 //
-// 未登录返回 401 JSON；MustChangePassword 时仅放行 /api/v1/password 与 /api/v1/logout。
+// 未登录返回 401 JSON；用户已删/禁用时吊销会话并 401（失败关闭）。
+// MustChangePassword 时仅放行 /api/v1/password 与 /api/v1/logout；查询失败亦 401。
 // POST/PUT/PATCH/DELETE 须通过 validateCSRF；GET 豁免 CSRF。
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -18,7 +19,18 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeAPIError(w, http.StatusUnauthorized, "未登录")
 			return
 		}
-		if u, err := s.auth.MustChangePassword(se.UserID); err == nil && u {
+		if err := s.auth.UserActiveForSession(se.UserID); err != nil {
+			s.invalidateRequestSession(r)
+			writeAPIError(w, http.StatusUnauthorized, "会话已失效")
+			return
+		}
+		mustChange, err := s.auth.MustChangePassword(se.UserID)
+		if err != nil {
+			s.invalidateRequestSession(r)
+			writeAPIError(w, http.StatusUnauthorized, "会话已失效")
+			return
+		}
+		if mustChange {
 			allowed := r.URL.Path == "/api/v1/password" || r.URL.Path == "/api/v1/logout"
 			if !allowed {
 				writeAPIError(w, http.StatusForbidden, "须先修改密码")
@@ -37,7 +49,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 // requireAuthPage WebUI 页面鉴权中间件。
 //
-// 未登录或须改密时重定向 /login；不返回 JSON，供 HTML 页面路由使用。
+// 未登录、用户失效或须改密时重定向 /login；不返回 JSON，供 HTML 页面路由使用。
 func (s *Server) requireAuthPage(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		se, ok := s.sessionFromRequest(r)
@@ -45,11 +57,27 @@ func (s *Server) requireAuthPage(next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		if u, err := s.auth.MustChangePassword(se.UserID); err == nil && u {
+		if err := s.auth.UserActiveForSession(se.UserID); err != nil {
+			s.invalidateRequestSession(r)
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		mustChange, err := s.auth.MustChangePassword(se.UserID)
+		if err != nil || mustChange {
+			if err != nil {
+				s.invalidateRequestSession(r)
+			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 		next(w, r)
+	}
+}
+
+// invalidateRequestSession 吊销当前请求 Cookie 对应的 Web 会话。
+func (s *Server) invalidateRequestSession(r *http.Request) {
+	if c, err := r.Cookie("session"); err == nil {
+		s.auth.Logout(c.Value)
 	}
 }
 
@@ -85,7 +113,7 @@ func (s *Server) validateCSRF(r *http.Request) bool {
 // handleLogin 处理登录请求（POST /api/v1/login；页面表单亦指向此路由）。
 //
 // 成功时设置 session Cookie、返回 csrf_token 与 must_change_password；失败写审计 login_failed。
-// 副作用：写入会话 Cookie（HttpOnly、SameSite=Lax）；登录接口豁免 CSRF。
+// 副作用：写入会话 Cookie（HttpOnly、SameSite=Lax）；登录接口豁免 CSRF；顺带 prune 过期会话。
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
@@ -106,6 +134,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
+	_ = s.auth.PruneExpiredSessions()
 	csrf := s.auth.GetCSRF(token)
 	cookie := &http.Cookie{
 		Name:     "session",
@@ -145,8 +174,8 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleChangePassword 修改当前登录用户密码（POST /api/v1/password）。
 //
-// 参数：表单 new_password；成功后清除 MustChangePassword 标记。
-// 副作用：更新 DB 密码哈希、写审计 change_password。
+// 参数：表单 old_password、new_password；成功后清除 MustChangePassword，并吊销该用户全部 Web 会话。
+// 副作用：更新 DB 密码哈希、写审计 change_password；前端须重新登录。
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
@@ -161,13 +190,21 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid form data")
 		return
 	}
+	oldPass := r.FormValue("old_password")
 	newPass := r.FormValue("new_password")
-	if err := s.auth.ChangePassword(se.UserID, newPass); err != nil {
+	if oldPass == "" {
+		writeAPIError(w, http.StatusBadRequest, "请填写当前密码")
+		return
+	}
+	if err := s.auth.ChangePassword(se.UserID, oldPass, newPass); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	n := s.auth.LogoutAllForUser(se.UserID)
+	logger.Info("用户改密成功并吊销 Web 会话 user_id=%d sessions=%d", se.UserID, n)
 	s.audit.Log(&se.UserID, "change_password", "user", &se.UserID, s.clientIP(r), nil)
-	writeOK(w)
+	http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "relogin": true})
 }
 
 // handleCSRF 返回当前会话的 CSRF Token（GET /api/v1/csrf）。

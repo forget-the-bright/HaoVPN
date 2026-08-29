@@ -17,11 +17,26 @@ import (
 //   username — 账号名；与 password 成对出现时为当前鉴权方式。
 //   password — 账号密码；经 TLS 加密传输，服务端 VerifyTunnelLogin 校验。
 //   public_key — 已废弃的公钥登录字段；非空时服务端拒绝并提示改用账号密码。
+//   local_lans — 可选；客户端 YAML 配置的本地网段列表，鉴权成功后写入临时注册表。
+//   host_id — 可选；主机标识（排障），与 local_lans 一并上报。
 type HandshakeRequest struct {
-	Type      string `json:"type"`
-	Username  string `json:"username,omitempty"`
-	Password  string `json:"password,omitempty"`
-	PublicKey string `json:"public_key,omitempty"` // 已废弃，服务端拒绝
+	Type      string   `json:"type"`
+	Username  string   `json:"username,omitempty"`
+	Password  string   `json:"password,omitempty"`
+	PublicKey string   `json:"public_key,omitempty"` // 已废弃，服务端拒绝
+	LocalLANs []string `json:"local_lans,omitempty"` // 手动配置的本地网段广告
+	HostID    string   `json:"host_id,omitempty"`
+}
+
+// ManagedRoute 握手下发的托管路由一行（对齐 ZeroTier：{dest} via {via_ip}）。
+//
+// ViaIP 为空或 Stale=true 表示失效（via 离线或注册表无匹配）；客户端托盘可显示「失效」。
+type ManagedRoute struct {
+	Dest        string `json:"dest"`
+	ViaIP       string `json:"via_ip,omitempty"`
+	ViaUserID   int64  `json:"via_user_id,omitempty"`
+	ViaUsername string `json:"via_username,omitempty"`
+	Stale       bool   `json:"stale,omitempty"`
 }
 
 // HandshakePolicy 服务端下发的运行时策略（权威配置，客户端必须以应答为准覆盖本地默认值）。
@@ -29,19 +44,23 @@ type HandshakeRequest struct {
 // JSON 字段：
 //   vpn_ip — 分配给本连接的虚拟 IPv4 地址。
 //   gateway_ip — TUN 网关地址（可选）；客户端配置路由/DNS 时使用。
-//   allowed_ips — 客户端经 VPN 可访问的目的 CIDR 列表。
+//   allowed_ips — 客户端经 VPN 可访问的目的 CIDR 列表（含 NAT 工控网段 + peer/32 + 托管 dest）。
+//   managed_routes — 托管路由元数据（dest + via）；与 allowed_ips 并行，避免客户端猜 via。
 //   dns_servers — 推送给客户端的 DNS 服务器列表（可选）；空时客户端可回落 gateway_ip。
 //   mtu — 隧道 MTU；客户端 TUN 与分片策略须与此一致。
 //   ip_mode — IP 分配模式（fixed / dynamic_session / dynamic_lease）。
 //   policy_ver — 策略版本号；服务端递增，变更后旧连接会被踢。
+//   vpn_subnet — VPN 地址池 CIDR（via 出口 SNAT 源网段）；未配 local_lans 的客户端可忽略。
 type HandshakePolicy struct {
-	VPNIP      string   `json:"vpn_ip"`
-	GatewayIP  string   `json:"gateway_ip,omitempty"`
-	AllowedIPs []string `json:"allowed_ips"`
-	DNSServers []string `json:"dns_servers,omitempty"`
-	MTU        int      `json:"mtu"`
-	IPMode     string   `json:"ip_mode"`
-	PolicyVer  int      `json:"policy_ver"`
+	VPNIP          string         `json:"vpn_ip"`
+	GatewayIP      string         `json:"gateway_ip,omitempty"`
+	AllowedIPs     []string       `json:"allowed_ips"`
+	ManagedRoutes  []ManagedRoute `json:"managed_routes,omitempty"`
+	DNSServers     []string       `json:"dns_servers,omitempty"`
+	MTU            int            `json:"mtu"`
+	IPMode         string         `json:"ip_mode"`
+	PolicyVer      int            `json:"policy_ver"`
+	VPNSubnet      string         `json:"vpn_subnet,omitempty"`
 }
 
 // HandshakeResponse 服务端握手应答 JSON。
@@ -71,14 +90,19 @@ func EncodeHandshakeRequest(publicKey string) ([]byte, error) {
 	return json.Marshal(req)
 }
 
-// EncodeHandshakeAuthRequest 序列化账号密码握手请求。
-//
-// 参数：username/password — 非空由调用方保证；经 TLS 传输。
-// 返回：{"type":"handshake","username":...,"password":...} JSON；err 为 Marshal 失败。
-// 副作用：无。
-// 并发：client_handshake 拨号后调用。
+// EncodeHandshakeAuthRequest 序列化账号密码握手请求（无 local_lans）。
 func EncodeHandshakeAuthRequest(username, password string) ([]byte, error) {
-	req := HandshakeRequest{Type: "handshake", Username: username, Password: password}
+	return EncodeHandshakeAuthRequestEx(username, password, nil, "")
+}
+
+// EncodeHandshakeAuthRequestEx 序列化账号密码握手，可附带本地网段广告。
+//
+// localLans 空则不上报（via 出口关闭）；非空时服务端写入 client_lan_registry。
+func EncodeHandshakeAuthRequestEx(username, password string, localLans []string, hostID string) ([]byte, error) {
+	req := HandshakeRequest{
+		Type: "handshake", Username: username, Password: password,
+		LocalLANs: localLans, HostID: hostID,
+	}
 	return json.Marshal(req)
 }
 

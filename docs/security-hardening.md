@@ -23,10 +23,11 @@
 
 | 检查项 | 要求 |
 |--------|------|
-| admin 默认密码 | 已修改，非模板初始值 |
+| admin 默认密码 | 已修改，非模板初始值（`changeme`/`changeme12`）；`dev-security-check` 会 WARN |
 | 密码强度 | ≥8 位，**须含字母与数字**（代码强制） |
-| 闲置账号 | 禁用或删除 |
-| 登录锁定 | `login_max_attempts` / `login_lockout_sec` 已配置 |
+| 自改密 | Web `POST /api/v1/password` 须 `old_password` + `new_password`；成功后吊销该用户全部 Web Session |
+| 闲置账号 | 禁用或删除（禁用同时踢 VPN + 吊销 Web 会话） |
+| 登录锁定 | `login_max_attempts` / `login_lockout_sec` 已配置；**Web 与隧道分表**，互不影响 |
 | `api.trusted_proxy_cidrs` | 生产默认**留空**；仅反代后且 RemoteAddr 命中信任 CIDR 时才解析 X-Forwarded-For（防锁定绕过） |
 | `api.secure_cookies` | HTTPS 终止或全站 TLS 时设为 `true` |
 
@@ -47,6 +48,9 @@
 | 检查项 | 要求 |
 |--------|------|
 | 分流 | `enforce_split_tunnel: true`，不下发 `0.0.0.0/0` |
+| 互访默认禁止 | `allow_all_vpn_peers: false`；仅白名单 `peer_access` 或托管路由 via 下一跳可横跳 VPN IP |
+| 托管路由 | 控制台 `/peers`；禁 `0.0.0.0/0`；删号级联清理 `peer_*` 表 |
+| 重连 grace | `reconnect_grace_sec` 默认 60；异 IP 第二端仍拒绝 |
 | 工控网段 | `nat.allowed_lan_cidrs` 仅含必要网段 |
 | 隧道来源 IP | 可选配置 `tunnel_allowed_source_ips`（客户端出口固定时建议填；空=不限制） |
 | 同账号会话 | `vpn.session_policy: reject_second`（默认；已在线则拒绝第二端，避免互踢） |
@@ -58,9 +62,9 @@
 
 ### 4.2 探针防御与安全事件
 
-**行为**：Accept 时查封禁（**封禁表始终生效**）与可选源白名单 → TLS/非法帧分类落库 → 窗口内计数自动封。`enabled` 只管自动记录与自动封；手动封禁/解封不依赖 `enabled`。心跳读超时**不记**探针。
+**行为**：`serverapp` 在存在 Guard 时**始终**挂到 `transport.Config.Probe`。Accept 时查封禁（**封禁表始终生效**，不依赖 `enabled`）与可选源白名单 → TLS/非法帧分类落库 → 窗口内计数自动封。`enabled` 只管自动记录与自动封；手动封禁/解封不依赖 `enabled`。心跳读超时**不记**探针。
 
-**配置**（`security.probe_defense`）：
+**配置**（`security.probe_defense` + 相关）：
 
 | 字段 | 含义 |
 |------|------|
@@ -69,8 +73,9 @@
 | `auto_ban` | 是否自动写 `ip_blocks` |
 | `ban_after_events` / `ban_window_sec` | 阈值与窗口 |
 | `ban_duration_sec` | 封禁秒；`0`=永久 |
-| `event_retention_days` | 事件保留天 |
+| `event_retention_days` | 事件保留天（过期 `ip_blocks` 清理**不依赖**本项，由 retention 独立执行） |
 | `ignore_signatures_for_ban` | 不计入自动封的特征（默认含 `auth_failed`、`connection_reset`、`unexpected_eof`） |
+| `allow_plaintext_private_keys` | （`security` 段）`true` 时兼容库内明文私钥；**生产必须 false** |
 
 与审计日志的区别：`audit_logs` 记管理员操作；`security_events` 记隧道口扫描/握手拒绝。管理端：`/security`；API：`/api/v1/security/events|blocks`（含 `*_zh` 中文字段）。
 
@@ -176,6 +181,20 @@
 
 ---
 
+## 8. Windows 服务凭据（DPAPI）
+
+客户端 `--service` 可将账号密码存入本机凭据文件（`credentials` 包，`CRYPTPROTECT_LOCAL_MACHINE`）。
+
+| 说明 | 含义 |
+|------|------|
+| 威胁模型 | **机器级**保护：本机任意能读凭据文件的本地主体均可解密；非用户绑定 DPAPI |
+| 为何如此 | 服务账户无交互桌面，须 LocalMachine 才能在开机自启时读密 |
+| 运维建议 | 限制凭据目录 ACL；生产机勿开共享登录；勿把凭据文件拷到非受信主机 |
+
+`ResolveCredentials`：YAML 已有 `username` 但密码空时，仍可从服务凭据库补密码。
+
+---
+
 ## 开发环境例外
 
 开发联调可临时设置：
@@ -194,4 +213,4 @@ api:
 
 ---
 
-*最后更新：2026-08-29 · 探针防御对照表*
+*最后更新：2026-08-29 · 第十二轮（改密/封禁/双 lockout/明文钥/DPAPI 说明）*

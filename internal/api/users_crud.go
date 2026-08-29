@@ -129,6 +129,8 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		revoked := s.auth.LogoutAllForUser(id)
+		logger.Info("账号已删除: user_id=%d web_sessions_revoked=%d", id, revoked)
 		s.audit.Log(&se.UserID, "account_delete", "user", &id, s.clientIP(r), nil)
 		writeOK(w)
 	case http.MethodPost:
@@ -142,7 +144,8 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 				writeAPIError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			logger.Info("账号已禁用并踢线: user_id=%d", id)
+			revoked := s.auth.LogoutAllForUser(id)
+			logger.Info("账号已禁用并踢线: user_id=%d web_sessions_revoked=%d", id, revoked)
 			s.audit.Log(&se.UserID, "user_disable", "user", &id, s.clientIP(r), nil)
 		} else if action == "enable" {
 			if err := s.vpnSvc.SetAccountEnabled(id, true); err != nil {

@@ -19,7 +19,7 @@ func TestRegisterVPNRejectsEmptyAllowed(t *testing.T) {
 	kp, _ := crypto.GenerateKeyPair()
 	sess, _ := crypto.NewSession(kp.PrivateKey, kp.PublicKey)
 	u := &persist.User{ID: 1, Username: "u", PublicKey: kp.PublicKey, VPNIP: "10.88.0.2", Enabled: true}
-	err = m.RegisterVPN(u, nil, nil, sess, "1.2.3.4:1")
+	err = m.RegisterVPN(u, nil, nil, sess, "1.2.3.4:1", sessionmgr.PeerReg{})
 	if err == nil {
 		t.Fatal("expected reject empty allowed")
 	}

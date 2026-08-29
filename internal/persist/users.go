@@ -173,16 +173,25 @@ func (s *Store) DeleteUser(id int64) error {
 	}
 	defer tx.Rollback()
 
-	stmts := []string{
-		`DELETE FROM connection_events WHERE user_id=?`,
-		`DELETE FROM session_stats WHERE user_id=?`,
-		`DELETE FROM ip_allocations WHERE user_id=?`,
-		`UPDATE audit_logs SET actor_user_id=NULL WHERE actor_user_id=?`,
-		`DELETE FROM users WHERE id=?`,
+	// peer_* 语句含两个 ?，须各传一次 user id（modernc sqlite 不复用同一参数）
+	type cascadeStmt struct {
+		q    string
+		args []any
 	}
-	for _, q := range stmts {
-		if _, err := tx.Exec(q, id); err != nil {
-			return fmt.Errorf("delete user cascade (%s): %w", q, err)
+	stmts := []cascadeStmt{
+		{`DELETE FROM peer_access WHERE user_id=? OR peer_user_id=?`, []any{id, id}},
+		{`DELETE FROM peer_route_members WHERE user_id=? OR route_id IN (SELECT id FROM peer_routes WHERE via_user_id=?)`, []any{id, id}},
+		{`DELETE FROM peer_routes WHERE via_user_id=?`, []any{id}},
+		{`DELETE FROM client_lan_registry WHERE user_id=?`, []any{id}},
+		{`DELETE FROM connection_events WHERE user_id=?`, []any{id}},
+		{`DELETE FROM session_stats WHERE user_id=?`, []any{id}},
+		{`DELETE FROM ip_allocations WHERE user_id=?`, []any{id}},
+		{`UPDATE audit_logs SET actor_user_id=NULL WHERE actor_user_id=?`, []any{id}},
+		{`DELETE FROM users WHERE id=?`, []any{id}},
+	}
+	for _, st := range stmts {
+		if _, err := tx.Exec(st.q, st.args...); err != nil {
+			return fmt.Errorf("delete user cascade (%s): %w", st.q, err)
 		}
 	}
 	return tx.Commit()

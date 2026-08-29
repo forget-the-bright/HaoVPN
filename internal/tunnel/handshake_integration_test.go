@@ -73,7 +73,7 @@ func TestHandshakeIntegration(t *testing.T) {
 	authSvc := auth.New(store, 5, 900, 3600)
 	handler := &tunnel.ServerHandler{
 		Store: store, SessMgr: sessMgr, ServerKP: serverKP, TunDev: nil, VPN: vpnSvc, MTU: 1420,
-		GatewayIP: "10.88.0.1", Auth: authSvc,
+		GatewayIP: "10.88.0.1", Auth: authSvc, AllowPlaintextPrivateKeys: true,
 	}
 
 	go func() {
@@ -167,7 +167,7 @@ func TestHandshakeDisabledAccountRejected(t *testing.T) {
 	authSvc := auth.New(store, 5, 900, 3600)
 	handler := &tunnel.ServerHandler{
 		Store: store, SessMgr: sessMgr, ServerKP: serverKP, TunDev: nil, VPN: vpnSvc, MTU: 1420,
-		GatewayIP: "10.88.0.1", Auth: authSvc,
+		GatewayIP: "10.88.0.1", Auth: authSvc, AllowPlaintextPrivateKeys: true,
 	}
 
 	go func() {
@@ -242,7 +242,7 @@ func TestHandshakeRejectSecond(t *testing.T) {
 	}
 	vpnSvc := &vpnaccount.Service{Store: store, Pool: pool, Cfg: cfg}
 	authSvc := auth.New(store, 5, 900, 3600)
-	handler := &tunnel.ServerHandler{Store: store, SessMgr: sessMgr, ServerKP: serverKP, VPN: vpnSvc, MTU: 1420, Auth: authSvc}
+	handler := &tunnel.ServerHandler{Store: store, SessMgr: sessMgr, ServerKP: serverKP, VPN: vpnSvc, MTU: 1420, Auth: authSvc, AllowPlaintextPrivateKeys: true}
 
 	go func() {
 		for {
@@ -335,7 +335,7 @@ func TestHandshakeKickPreviousNoDeadlock(t *testing.T) {
 	}
 	vpnSvc := &vpnaccount.Service{Store: store, Pool: pool, Cfg: cfg}
 	authSvc := auth.New(store, 5, 900, 3600)
-	handler := &tunnel.ServerHandler{Store: store, SessMgr: sessMgr, ServerKP: serverKP, VPN: vpnSvc, MTU: 1420, Auth: authSvc}
+	handler := &tunnel.ServerHandler{Store: store, SessMgr: sessMgr, ServerKP: serverKP, VPN: vpnSvc, MTU: 1420, Auth: authSvc, AllowPlaintextPrivateKeys: true}
 
 	go func() {
 		for {
@@ -513,6 +513,7 @@ func TestHandshakePublicKeyRejected(t *testing.T) {
 	authSvc := auth.New(store, 5, 900, 3600)
 	handler := &tunnel.ServerHandler{
 		Store: store, SessMgr: sessMgr, ServerKP: serverKP, VPN: vpnSvc, Auth: authSvc,
+		AllowPlaintextPrivateKeys: true,
 	}
 
 	go func() {

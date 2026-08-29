@@ -3,6 +3,8 @@ package clientapp
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"haovpn/internal/logger"
 	"haovpn/internal/netstack"
 	"haovpn/internal/netutil"
+	"haovpn/internal/persist"
 	"haovpn/internal/tunnel"
 	"haovpn/internal/tun"
 )
@@ -25,6 +28,8 @@ import (
 //   vpnIP — 当前 TUN 绑定的虚拟 IP。
 //   policyVer — 服务端策略版本号，变更时打日志。
 //   gateway — 当前用于 AddClientRoute 的下一跳网关 IP。
+//   via — local_lans 非空时的 via 出口 Stack；空配置时为 nil。
+//   exitLANNets — 解析后的 local_lans，供 TUN 上送过滤（允许 LAN 回程源）。
 type runtime struct {
 	mu           sync.Mutex
 	cfg          *config.ClientConfig
@@ -34,6 +39,8 @@ type runtime struct {
 	vpnIP        string
 	policyVer    int
 	gateway      string
+	via          *viaExit
+	exitLANNets  []*net.IPNet
 }
 
 // allowedIPs 返回 AllowedIPs 副本，供杀开关 Enable 使用。
@@ -87,24 +94,7 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 	gw := netutil.ResolveGateway(policy.GatewayIP, "", policy.VPNIP)
 	rt.gateway = gw
 	tunName := rt.tunDev.Name()
-	if gw != "" {
-		gwCIDR := gw + "/32"
-		if err := netstack.AddClientRoute(gwCIDR, tunName, gw); err != nil {
-			logger.Warn("添加网关路由 %s: %v", gwCIDR, err)
-		} else {
-			rt.routes = append(rt.routes, gwCIDR)
-		}
-	}
-	for _, cidr := range policy.AllowedIPs {
-		if gw != "" && cidr == gw+"/32" {
-			continue
-		}
-		if err := netstack.AddClientRoute(cidr, tunName, gw); err != nil {
-			logger.Warn("添加路由 %s: %v", cidr, err)
-		} else {
-			rt.routes = append(rt.routes, cidr)
-		}
-	}
+	rt.installClientRoutesLocked(policy.AllowedIPs, gw, tunName)
 
 	// --- 阶段 4：更新策略版本与杀开关前缀 ---
 	if policy.PolicyVer != rt.policyVer && rt.policyVer > 0 {
@@ -123,7 +113,92 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 			logger.Info("dns_applied servers=%v adapter=%s", policy.DNSServers, tunName)
 		}
 	}
+
+	// --- 阶段 6：via 出口（local_lans 非空才 Setup；ICS 可能改路由表）---
+	rt.cacheExitLANNetsLocked()
+	if err := rt.setupViaExitLocked(policy.VPNSubnet, tunName, policy.VPNIP, rt.cfg.LocalLANs); err != nil {
+		return err
+	}
+	// ICS 启用后重装分流路由，避免 AllowedIPs 被冲掉
+	if len(rt.cfg.LocalLANs) > 0 {
+		rt.clearRoutesOnlyLocked()
+		rt.installClientRoutesLocked(policy.AllowedIPs, gw, tunName)
+		logger.Info("via_exit 后已重装客户端分流路由")
+	}
 	return nil
+}
+
+// installClientRoutesLocked 安装网关 /32（按需）与 AllowedIPs；调用方须已持 rt.mu。
+func (rt *runtime) installClientRoutesLocked(allowed []string, gw, tunName string) {
+	rt.routes = nil
+	if gw != "" && gatewayHostRouteNeeded(gw, allowed) {
+		gwCIDR := gw + "/32"
+		if err := netstack.AddClientRoute(gwCIDR, tunName, gw); err != nil {
+			logger.Warn("添加网关路由 %s: %v", gwCIDR, err)
+		} else {
+			rt.routes = append(rt.routes, gwCIDR)
+		}
+	}
+	for _, cidr := range allowed {
+		if gw != "" && cidr == gw+"/32" {
+			continue
+		}
+		if err := netstack.AddClientRoute(cidr, tunName, gw); err != nil {
+			logger.Warn("添加路由 %s: %v", cidr, err)
+		} else {
+			rt.routes = append(rt.routes, cidr)
+		}
+	}
+}
+
+// cacheExitLANNetsLocked 解析 local_lans 供 TUN 上送过滤；调用方须已持 rt.mu。
+func (rt *runtime) cacheExitLANNetsLocked() {
+	rt.exitLANNets = nil
+	if rt.cfg == nil {
+		return
+	}
+	// 与握手/出口一致：先 ValidLANCIDRs，再解析；空则关闭上送放宽
+	lans := persist.ValidLANCIDRs(rt.cfg.LocalLANs)
+	if len(lans) == 0 {
+		return
+	}
+	nets, err := netutil.ParseCIDRListToNets(lans)
+	if err != nil {
+		return
+	}
+	rt.exitLANNets = nets
+}
+
+// gatewayHostRouteNeeded 判断是否需单独添加网关主机路由（/32）。
+// 若 AllowedIPs 中已有 CIDR 包含网关 IP（如 10.88.0.0/24 含 10.88.0.1），则不必再装。
+func gatewayHostRouteNeeded(gw string, allowed []string) bool {
+	ip := net.ParseIP(strings.TrimSpace(gw))
+	if ip == nil {
+		return false
+	}
+	ip = ip.To4()
+	if ip == nil {
+		return false
+	}
+	for _, c := range allowed {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			if hip := net.ParseIP(c); hip != nil && hip.To4() != nil {
+				_, n, err = net.ParseCIDR(hip.String() + "/32")
+			}
+		}
+		if err != nil || n == nil {
+			continue
+		}
+		if n.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 func (rt *runtime) clearRoutes() {
@@ -133,6 +208,7 @@ func (rt *runtime) clearRoutes() {
 }
 
 func (rt *runtime) clearRoutesLocked() {
+	rt.teardownViaExitLocked()
 	rt.clearRoutesOnlyLocked()
 	if rt.tunDev == nil {
 		return
@@ -198,8 +274,44 @@ func (rt *runtime) readLoop(ctx context.Context, send func([]byte) error, mtu in
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		if err := send(buf[:n]); err != nil {
+		pkt := buf[:n]
+		if !rt.shouldUploadTUN(pkt) {
+			continue
+		}
+		if err := send(pkt); err != nil {
 			logger.Warn("隧道发送失败: %v", err)
 		}
 	}
+}
+
+// shouldUploadTUN 仅上送合法 IPv4：源为本机 VPN IP，或落在 local_lans（via 回程）。
+// 过滤 ICS(192.168.137.x)、广播/组播等误注入，避免服务端伪造源刷屏。
+func (rt *runtime) shouldUploadTUN(pkt []byte) bool {
+	if len(pkt) < 20 || pkt[0]>>4 != 4 {
+		return false
+	}
+	src := net.IP(pkt[12:16])
+	dst := net.IP(pkt[16:20])
+	if dst != nil && (dst.IsMulticast() || dst.IsLinkLocalMulticast() || isAllOnesBroadcast(dst)) {
+		return false
+	}
+	rt.mu.Lock()
+	vpnIP := rt.vpnIP
+	lans := rt.exitLANNets
+	rt.mu.Unlock()
+	if vpnIP != "" && src.String() == vpnIP {
+		return true
+	}
+	for _, n := range lans {
+		if n != nil && n.Contains(src) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAllOnesBroadcast IPv4 受限广播 255.255.255.255。
+func isAllOnesBroadcast(ip net.IP) bool {
+	v4 := ip.To4()
+	return v4 != nil && v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255
 }

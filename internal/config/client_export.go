@@ -44,6 +44,8 @@ func BuildClientExportYAML(serverListen, username, caFile string, mtu int) strin
 	b.WriteString("auth:\n")
 	b.WriteString(fmt.Sprintf("  username: %q\n", username))
 	b.WriteString("  # password: 请用 GUI 输入，或环境变量 HAOVPN_PASSWORD\n\n")
+	b.WriteString("# 可选：本机局域网段（via 出口）；未配则关闭。例：\n")
+	b.WriteString("# local_lans:\n#   - \"192.168.31.0/24\"\n\n")
 	b.WriteString(fmt.Sprintf("reconnect:\n  initial_sec: %d\n  max_sec: %d\n\n", def.Reconnect.InitialSec, def.Reconnect.MaxSec))
 	b.WriteString(fmt.Sprintf("log:\n  level: %q\n  file: %q\n", def.Log.Level, def.Log.File))
 	return b.String()

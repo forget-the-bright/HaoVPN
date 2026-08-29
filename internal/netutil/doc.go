@@ -7,6 +7,7 @@
 // 关键文件：
 //   cidr.go — ValidateCIDRList、SplitCIDR、ParseCIDRToV4Mask、ValidateIPInSubnet
 //   addr.go — HostFromAddr、ParseHostIP、NormalizeIPv4、DedupTrimNonEmpty
+//   hostport.go — SplitHostPortLoose、SplitRemoteAddr（探针/握手共用远端拆分）
 //   gateway.go — InferGatewayFromVPNIP、ResolveGateway、IsLoopbackHost
 //   listen.go — 管理口监听地址合并与校验
 //   ipmatch.go — IPMatchesRules、ParseCIDROrHost

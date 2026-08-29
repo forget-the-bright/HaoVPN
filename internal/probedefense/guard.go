@@ -7,13 +7,13 @@ package probedefense
 import (
 	"encoding/binary"
 	"encoding/json"
-	"net"
 	"strings"
 	"time"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
+	"haovpn/internal/timeutil"
 )
 
 // 阶段与动作常量（写入 security_events）。
@@ -121,7 +121,7 @@ func (g *Guard) AllowAccept(remoteAddr string) bool {
 	if g == nil {
 		return true
 	}
-	ip, port := SplitHostPort(remoteAddr)
+	ip, port := netutil.SplitRemoteAddr(remoteAddr)
 	if g.IsBlocked(ip) {
 		g.RecordBanHit(ip, port)
 		logger.Warn("探针防御拒绝(已封禁) ip=%s port=%s", ip, port)
@@ -130,6 +130,7 @@ func (g *Guard) AllowAccept(remoteAddr string) bool {
 	if !g.cfg.Enabled {
 		return true
 	}
+	// 源白名单与 tunnel.CheckTunnelSourceIP 共用 netutil.IPMatchesRules，避免两套匹配语义漂移。
 	if len(g.cfg.AllowedSourceIPs) > 0 && !g.AllowSourceIP(ip) {
 		g.RecordReject(ip, port, PhaseTCPAccept, "source_deny", "不在 tunnel_allowed_source_ips")
 		logger.Warn("探针防御拒绝(源白名单) ip=%s port=%s", ip, port)
@@ -145,7 +146,7 @@ func (g *Guard) OnTransportReadError(remoteAddr string, err error) {
 	if g == nil || !g.cfg.Enabled || err == nil || IsIgnorableTransportError(err) {
 		return
 	}
-	ip, port := SplitHostPort(remoteAddr)
+	ip, port := netutil.SplitRemoteAddr(remoteAddr)
 	sig := ClassifyTLSError(err)
 	logger.Warn("探针特征拒绝 phase=tls ip=%s port=%s signature=%s detail=%v", ip, port, sig, err)
 	g.RecordReject(ip, port, PhaseTLS, sig, err.Error())
@@ -156,7 +157,7 @@ func (g *Guard) OnFrameDecodeError(remoteAddr string, invalidLen int, err error)
 	if g == nil || !g.cfg.Enabled {
 		return
 	}
-	ip, port := SplitHostPort(remoteAddr)
+	ip, port := netutil.SplitRemoteAddr(remoteAddr)
 	sig := ClassifyFrameLength(invalidLen)
 	logger.Warn("探针特征拒绝 phase=frame ip=%s port=%s signature=%s len=%d detail=%v", ip, port, sig, invalidLen, err)
 	g.RecordReject(ip, port, PhaseFrame, sig, err.Error())
@@ -169,7 +170,9 @@ func (g *Guard) RecordBanHit(ip, port string) {
 	if g == nil || g.store == nil {
 		return
 	}
-	_ = g.store.IncrementIPBlockHit(ip)
+	if err := g.store.IncrementIPBlockHit(ip); err != nil {
+		logger.Warn("封禁命中计数失败 ip=%s: %v", ip, err)
+	}
 	g.record(ip, port, PhaseBanHit, "banned", ActionBannedHit, "")
 }
 
@@ -191,7 +194,7 @@ func (g *Guard) ManualBan(ip, reason string) error {
 		IP: ip, Reason: reason, Source: "manual", Enabled: true,
 	}
 	if g.cfg.BanDurationSec > 0 {
-		exp := time.Now().Add(time.Duration(g.cfg.BanDurationSec) * time.Second)
+		exp := time.Now().Add(timeutil.Seconds(g.cfg.BanDurationSec))
 		b.ExpiresAt = &exp
 	}
 	if err := g.store.UpsertIPBlock(b); err != nil {
@@ -238,7 +241,7 @@ func (g *Guard) maybeAutoBan(ip, signature string) {
 			return
 		}
 	}
-	window := time.Duration(g.cfg.BanWindowSec) * time.Second
+	window := timeutil.Seconds(g.cfg.BanWindowSec)
 	if window <= 0 {
 		window = 10 * time.Minute
 	}
@@ -255,7 +258,7 @@ func (g *Guard) maybeAutoBan(ip, signature string) {
 		IP: ip, Reason: reason, Source: "auto", Signature: signature, Enabled: true,
 	}
 	if g.cfg.BanDurationSec > 0 {
-		exp := time.Now().Add(time.Duration(g.cfg.BanDurationSec) * time.Second)
+		exp := time.Now().Add(timeutil.Seconds(g.cfg.BanDurationSec))
 		b.ExpiresAt = &exp
 	}
 	if err := g.store.UpsertIPBlock(b); err != nil {
@@ -320,13 +323,4 @@ func ClassifyFrameLength(n int) string {
 	default:
 		return "frame_invalid"
 	}
-}
-
-// SplitHostPort 从 remoteAddr 拆 IP 与端口（失败时 port 空、ip 为原串）。
-func SplitHostPort(remoteAddr string) (ip, port string) {
-	host, p, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return netutil.HostFromAddr(remoteAddr), ""
-	}
-	return strings.Trim(host, "[]"), p
 }

@@ -11,30 +11,26 @@ import (
 	"haovpn/internal/vpnaccount"
 )
 
-// loadExportAccount 加载可导出的 VPN 账号并解密私钥。
+// loadExportAccount 加载可导出的 VPN 账号（不解密私钥：导出包仅含 client.yaml + 证书，密钥由握手下发）。
 //
 // 参数：id — users.id。
-// 返回：User、明文私钥；无 VPN 配置或解密失败时 error（供 handler 映射 404/500）。
-func (s *Server) loadExportAccount(id int64) (*persist.User, string, error) {
+// 返回：User；无 VPN 配置时 ErrAccountNotFound。
+func (s *Server) loadExportAccount(id int64) (*persist.User, error) {
 	u, err := s.store.GetUserByID(id)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if u == nil || !u.HasVPN() {
-		return nil, "", vpnaccount.ErrAccountNotFound
+		return nil, vpnaccount.ErrAccountNotFound
 	}
-	plainKey, err := vpnaccount.OpenAccountPrivateKey(u, s.keyEnc)
-	if err != nil {
-		return nil, "", fmt.Errorf("私钥解密失败")
-	}
-	return u, plainKey, nil
+	return u, nil
 }
 
 // handleUserExportZip 下载账号客户端 ZIP（含 yaml + 证书等）。
 //
 // 副作用：写审计 config_export；响应经 writeAttachment。
 func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
-	u, plainKey, err := s.loadExportAccount(id)
+	u, err := s.loadExportAccount(id)
 	if err != nil {
 		if errors.Is(err, vpnaccount.ErrAccountNotFound) {
 			writeAPIError(w, http.StatusNotFound, err.Error())
@@ -43,7 +39,7 @@ func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id 
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	zipBytes, err := buildAccountExportZip(s.cfg, u, plainKey, s.serverPK)
+	zipBytes, err := buildAccountExportZip(s.cfg, u)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -56,7 +52,7 @@ func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id 
 //
 // 副作用：写审计 config_export；YAML 由 config.BuildClientExportYAML 生成。
 func (s *Server) handleUserExportYAML(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
-	u, _, err := s.loadExportAccount(id)
+	u, err := s.loadExportAccount(id)
 	if err != nil {
 		if errors.Is(err, vpnaccount.ErrAccountNotFound) {
 			writeAPIError(w, http.StatusNotFound, err.Error())

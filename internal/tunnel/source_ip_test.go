@@ -1,6 +1,7 @@
 package tunnel_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -14,6 +15,8 @@ func TestCheckTunnelSourceIP(t *testing.T) {
 	}
 	if err := tunnel.CheckTunnelSourceIP("8.8.8.8:8443", allowed); err == nil {
 		t.Fatal("8.8.8.8 should be denied")
+	} else if !errors.Is(err, tunnel.ErrSourceDenied) {
+		t.Fatalf("deny should wrap ErrSourceDenied: %v", err)
 	}
 	if err := tunnel.CheckTunnelSourceIP("192.168.1.50:1234", allowed); err != nil {
 		t.Fatalf("single IP rule: %v", err)

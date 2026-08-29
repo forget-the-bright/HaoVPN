@@ -8,6 +8,7 @@ import (
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
+	"haovpn/internal/persist"
 	"haovpn/internal/transport"
 	"haovpn/internal/tunnel"
 )
@@ -33,15 +34,17 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		return
 	}
 	hsStart := time.Now()
-	hsRes, err := hs.RunAuthWithTimeout(conn, user, pass, 20*time.Second)
+	lans := persist.ValidLANCIDRs(e.cfg.LocalLANs)
+	hsRes, err := hs.RunAuthWithTimeoutEx(conn, user, pass, lans, clientHostID(), 20*time.Second)
 	if err != nil {
 		logger.Warn("隧道握手失败: %v elapsed=%s", err, time.Since(hsStart))
 		conn.Close()
 		// 首次失败必须通知 WaitConnected（含握手超时）；GUI failFast 会停重连
-		e.reportFirstFailure(err.Error(), IsFatalHandshakeError(err))
+		e.reportFirstFailure(err.Error(), e.ShouldFailFastHandshake(err))
 		return
 	}
 	logger.Info("隧道鉴权应答收到 elapsed=%s", time.Since(hsStart))
+	e.resetOnlineRejects()
 
 	priv := strings.TrimSpace(hsRes.ClientPrivateKey)
 	if priv == "" {
@@ -89,7 +92,8 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	e.sessionPriv = priv
 	e.activeMu.Unlock()
 
-	// 鉴权已通过：先唤醒 WaitConnected，避免 GUI 卡在登录页等 TUN/路由
+	// 鉴权已通过：关闭登录 failFast，唤醒 WaitConnected，后台继续配 TUN/路由
+	e.markAuthOK()
 	e.signalFirstResult(nil)
 	logger.Info("鉴权成功，正在配置 TUN/路由…")
 
@@ -108,21 +112,18 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 			e.cryptoSess = nil
 		}
 		e.activeMu.Unlock()
-		logger.Warn("session_abandoned reason=disconnected_during_policy")
+		logger.Warn("session_abandoned reason=disconnected_during_policy，等待自动重连")
 		e.protectThenClearRoutes()
-		msg := "连接在配置网络时断开，请重试"
-		e.setLastError(msg)
-		e.setState(StateIdle)
-		e.stopReconnectOnly()
-		if fn := e.dataplaneFailedCallback(); fn != nil {
-			fn(msg)
-		}
+		e.setLastError("连接在配置网络时断开，正在重连…")
+		e.setState(StateReconnecting)
+		// 不停重连循环：瞬时断线交给 ReconnectClient 下一轮 Dial
 		return
 	}
 	mtu := netutil.ResolveMTU(hsRes.Policy.MTU, e.cfg.Tun.MTU)
 	e.mu.Lock()
 	e.vpnIP = hsRes.Policy.VPNIP
 	e.gateway = hsRes.Policy.GatewayIP
+	e.managedRoutes = append([]tunnel.ManagedRoute{}, hsRes.Policy.ManagedRoutes...)
 	e.state = StateConnected
 	e.lastError = ""
 	e.mu.Unlock()
@@ -177,12 +178,16 @@ func (e *Engine) tunReadLoop(ctx context.Context) {
 	}, mtu)
 }
 
-// onDialError 首次拨号/TLS 失败时通知 WaitConnected（GUI failFast 会停重连）。
+// onDialError 拨号/TLS 失败回调：未鉴权成功前通知 WaitConnected（GUI failFast 可停）；
+// 已上线后仅记日志，由 ReconnectClient 继续退避重拨。
 func (e *Engine) onDialError(err error) {
 	if err == nil {
 		return
 	}
 	msg := fmt.Sprintf("无法连接服务器: %v", err)
 	logger.Warn("%s", msg)
-	e.reportFirstFailure(msg, false) // failFast 时仍会停重连
+	if e.hasAuthOKOnce() {
+		return
+	}
+	e.reportFirstFailure(msg, false)
 }

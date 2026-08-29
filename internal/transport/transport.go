@@ -13,6 +13,7 @@ import (
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
+	"haovpn/internal/timeutil"
 )
 
 // Config 传输层心跳、队列、重连与 MTU 参数（由 client/server YAML 经 config_from 映射）。
@@ -54,13 +55,13 @@ type ProbeObserver interface {
 // 副作用：无；纯函数。
 func DefaultConfig() Config {
 	return Config{
-		HeartbeatInterval: time.Duration(netutil.DefaultHeartbeatIntervalSec) * time.Second,
-		HeartbeatTimeout:  time.Duration(netutil.DefaultHeartbeatTimeoutSec) * time.Second,
+		HeartbeatInterval: timeutil.Seconds(netutil.DefaultHeartbeatIntervalSec),
+		HeartbeatTimeout:  timeutil.Seconds(netutil.DefaultHeartbeatTimeoutSec),
 		WriteTimeout:      15 * time.Second,
 		MaxQueueSize:      256,
-		ReconnectInitial:  time.Duration(netutil.DefaultReconnectInitialSec) * time.Second,
-		ReconnectMax:      time.Duration(netutil.DefaultReconnectMaxSec) * time.Second,
-		DialTimeout:       time.Duration(netutil.DefaultDialTimeoutSec) * time.Second,
+		ReconnectInitial:  timeutil.Seconds(netutil.DefaultReconnectInitialSec),
+		ReconnectMax:      timeutil.Seconds(netutil.DefaultReconnectMaxSec),
+		DialTimeout:       timeutil.Seconds(netutil.DefaultDialTimeoutSec),
 		MTU:               netutil.DefaultMTU,
 	}
 }
@@ -195,6 +196,15 @@ func (c *Conn) setState(s State) { c.state.Store(int32(s)) }
 
 // State 返回当前连接生命周期状态（atomic 读取）。
 func (c *Conn) State() State { return State(c.state.Load()) }
+
+// LastPeerActivity 对端最近活跃时间（心跳/数据/握手帧），供 sessionmgr 判定半死会话。
+func (c *Conn) LastPeerActivity() time.Time {
+	ns := c.lastHB.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
 
 func (c *Conn) touchHB() { c.lastHB.Store(time.Now().UnixNano()) }
 

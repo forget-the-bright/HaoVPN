@@ -102,3 +102,26 @@ func deleteMappingKey(m *yaml.Node, key string) {
 		}
 	}
 }
+
+// setMappingStringSequence 写入字符串序列；values 为空则删除该键。
+func setMappingStringSequence(m *yaml.Node, key string, values []string) {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return
+	}
+	if len(values) == 0 {
+		deleteMappingKey(m, key)
+		return
+	}
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, v := range values {
+		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v})
+	}
+	if _, val := mappingEntry(m, key); val != nil {
+		*val = *seq
+		return
+	}
+	m.Content = append(m.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		seq,
+	)
+}

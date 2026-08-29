@@ -42,18 +42,14 @@ func NewClientHandshake() *ClientHandshake {
 	return &ClientHandshake{}
 }
 
-// RunAuthWithTimeout 发送账号密码握手并阻塞等待应答。
-//
-// 参数：
-//   conn — 已建立 TLS 的传输连接；须已 SetOnData 由本方法接管首帧。
-//   username/password — 隧道登录凭据。
-//   timeout — 等待 handshake_ok/err 的最长时间；超时返回「握手超时」。
-//
-// 返回：成功时 HandshakeResult 含 policy 与可选 client_private_key；失败时 err 非 nil。
-//
-// 副作用：向 conn 发送 FrameTypeHandshake 帧；注册 OnData 回调直至完成或超时。
+// RunAuthWithTimeout 发送账号密码握手并阻塞等待应答（无 local_lans）。
 func (c *ClientHandshake) RunAuthWithTimeout(conn *transport.Conn, username, password string, timeout time.Duration) (HandshakeResult, error) {
-	req, err := EncodeHandshakeAuthRequest(username, password)
+	return c.RunAuthWithTimeoutEx(conn, username, password, nil, "", timeout)
+}
+
+// RunAuthWithTimeoutEx 发送账号密码握手，可附带 local_lans / host_id。
+func (c *ClientHandshake) RunAuthWithTimeoutEx(conn *transport.Conn, username, password string, localLans []string, hostID string, timeout time.Duration) (HandshakeResult, error) {
+	req, err := EncodeHandshakeAuthRequestEx(username, password, localLans, hostID)
 	if err != nil {
 		return HandshakeResult{}, err
 	}

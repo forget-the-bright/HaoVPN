@@ -34,7 +34,7 @@ func TestBuildAccountExportZip(t *testing.T) {
 		VPNIP:      "10.88.0.6",
 		AllowedIPs: []string{"10.88.0.0/24"},
 	}
-	raw, err := buildAccountExportZip(cfg, u, "plain-priv", "server-pk")
+	raw, err := buildAccountExportZip(cfg, u)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestBuildAccountExportZipMissingCert(t *testing.T) {
 		},
 		VPN: config.VPNSection{MTU: 1420},
 	}
-	_, err := buildAccountExportZip(cfg, &persist.User{Username: "u"}, "", "")
+	_, err := buildAccountExportZip(cfg, &persist.User{Username: "u"})
 	if err == nil {
 		t.Fatal("expected error when cert missing")
 	}

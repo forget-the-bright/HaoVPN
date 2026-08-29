@@ -50,6 +50,7 @@ $Version = Get-ProjectVersion -Root $Root
 $Commit = Get-GitCommitShort -Root $Root
 $BuildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $Ldflags = Get-BuildLdflags -Version $Version -Commit $Commit -BuildTime $BuildTime
+Sync-FyneAppTomlFromVersion -Root $Root -Version $Version
 $Out = "dist"
 
 $allPlatforms = Get-PlatformsFromFile -Root $Root

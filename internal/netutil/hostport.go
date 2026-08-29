@@ -1,6 +1,9 @@
 package netutil
 
-import "strings"
+import (
+	"net"
+	"strings"
+)
 
 // SplitHostPortLoose 宽松解析 "host:port"（不处理 IPv6 方括号格式）。
 //
@@ -11,4 +14,18 @@ func SplitHostPortLoose(addr string) (host, port string, ok bool) {
 		return addr[:i], addr[i+1:], true
 	}
 	return "", "", false
+}
+
+// SplitRemoteAddr 从 remoteAddr 拆出主机（去方括号）与端口。
+//
+// 参数：remoteAddr — 如 "203.0.113.1:8443"、"[2001:db8::1]:443" 或裸 IP。
+// 返回：ip 为去掉 [] 的主机；port 在无法解析时为空，ip 回落为 HostFromAddr(remoteAddr)。
+// 用途：探针防御、握手拒绝审计、日志中的 client_ip/client_port；统一替代各包私有 SplitHostPort。
+// 关联：HostFromAddr（只要主机）、SplitHostPortLoose（宽松无 IPv6）。
+func SplitRemoteAddr(remoteAddr string) (ip, port string) {
+	host, p, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return HostFromAddr(remoteAddr), ""
+	}
+	return strings.Trim(host, "[]"), p
 }

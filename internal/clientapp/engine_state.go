@@ -10,6 +10,7 @@ import (
 	"haovpn/internal/crypto"
 	"haovpn/internal/netstack"
 	"haovpn/internal/transport"
+	"haovpn/internal/tunnel"
 )
 
 // State 客户端 VPN 连接状态，供 GUI/CLI 轮询展示。
@@ -74,6 +75,7 @@ type Engine struct {
 	gateway   string
 	lastError string
 	ksOK      bool
+	managedRoutes []tunnel.ManagedRoute // 最近一次握手托管路由（托盘只读）
 	rt        *runtime
 	reconnect *transport.ReconnectClient
 	cancel    context.CancelFunc
@@ -86,8 +88,14 @@ type Engine struct {
 
 	clearRoutesHook func()
 
-	// failFast — GUI 登录：首次拨号/握手失败即停重连并通知 WaitConnected。
+	// failFast — GUI 登录：尚未首次鉴权成功前，拨号/握手失败即停重连并通知 WaitConnected。
 	failFast bool
+
+	// authOKOnce 是否已至少一次隧道鉴权成功；成功后关闭 failFast，断线应持续重连。
+	authOKOnce bool
+
+	// onlineRejects 「账号已在线」连续失败次数；成功握手后清零。
+	onlineRejects int
 
 	// onDataplaneFailed 鉴权成功进主窗后，TUN/路由失败时回调（GUI 回登录）；CLI 可为空。
 	onDataplaneFailed func(msg string)
@@ -211,16 +219,24 @@ func (e *Engine) VPNIP() string {
 	return e.vpnIP
 }
 
+// Gateway 返回最近一次握手的网关 IP。
+func (e *Engine) Gateway() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.gateway
+}
+
+// ManagedRoutes 返回最近一次握手下发的托管路由副本（托盘只读展示）。
+func (e *Engine) ManagedRoutes() []tunnel.ManagedRoute {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]tunnel.ManagedRoute{}, e.managedRoutes...)
+}
+
 func (e *Engine) setState(st State) {
 	e.mu.Lock()
 	e.state = st
 	e.mu.Unlock()
-}
-
-func (e *Engine) isFailFast() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.failFast
 }
 
 // stopReconnectOnly 仅停止重连循环（不重复 signal）。
@@ -233,12 +249,37 @@ func (e *Engine) stopReconnectOnly() {
 	}
 }
 
-// reportFirstFailure 记录首次失败并通知 WaitConnected；failFast 或致命错误时停重连。
+// reportFirstFailure 记录失败并通知 WaitConnected（若尚未通知）。
+// 停重连条件：真正致命错误，或仍处登录 failFast 且尚未鉴权成功。
 func (e *Engine) reportFirstFailure(msg string, fatal bool) {
 	e.setLastError(msg)
 	e.signalFirstResult(fmt.Errorf("%s", msg))
-	if fatal || e.isFailFast() {
+	e.mu.Lock()
+	stop := fatal || (e.failFast && !e.authOKOnce)
+	e.mu.Unlock()
+	if stop {
 		e.setState(StateIdle)
 		e.stopReconnectOnly()
 	}
+}
+
+// markAuthOK 标记隧道鉴权已成功：关闭 failFast，后续断线由 ReconnectClient 持续重拨。
+func (e *Engine) markAuthOK() {
+	e.mu.Lock()
+	e.authOKOnce = true
+	e.failFast = false
+	e.mu.Unlock()
+}
+
+func (e *Engine) hasAuthOKOnce() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.authOKOnce
+}
+
+// isReconnecting 是否处于断线重连态（用于 account_online 持续重试）。
+func (e *Engine) isReconnecting() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.state == StateReconnecting
 }

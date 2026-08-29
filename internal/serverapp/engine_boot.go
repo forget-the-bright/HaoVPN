@@ -166,6 +166,15 @@ func bootIPPool(bc *bootContext) error {
 func bootSession(bc *bootContext) error {
 	sessMgr := sessionmgr.New(bc.store)
 	sessMgr.SetSessionPolicy(bc.cfg.VPN.SessionPolicy)
+	allowPeers := bc.cfg.Security.AllowAllVPNPeers
+	if v, ok, err := bc.store.GetAllowAllVPNPeersSetting(); err == nil && ok {
+		allowPeers = v
+		bc.cfg.Security.AllowAllVPNPeers = v
+	}
+	sessMgr.SetAllowAllVPNPeers(allowPeers)
+	if bc.cfg.VPN.ReconnectGraceSec > 0 {
+		sessMgr.SetReconnectGrace(time.Duration(bc.cfg.VPN.ReconnectGraceSec) * time.Second)
+	}
 	if err := sessMgr.LoadVPNIPIndex(); err != nil {
 		return err
 	}
@@ -183,7 +192,12 @@ func bootSession(bc *bootContext) error {
 			sessMgr.KickUser(userID)
 		},
 	}
-	sessMgr.SetDisconnectHandler(vpnSvc.ReleaseOnDisconnect)
+	sessMgr.SetDisconnectHandler(func(userID int64, vpnIP, ipMode string) {
+		if err := bc.store.ClearClientLANRegistry(userID); err != nil {
+			logger.Warn("断线清 lan_registry 失败 user_id=%d: %v", userID, err)
+		}
+		vpnSvc.ReleaseOnDisconnect(userID, vpnIP, ipMode)
+	})
 	vpnSvc.StartLeaseCleaner(bc.leaseStop)
 	bc.sessMgr = sessMgr
 	bc.vpnSvc = vpnSvc
@@ -260,22 +274,25 @@ func bootTunnel(bc *bootContext, tunDev tun.Device) (*transport.Server, crypto.K
 	}
 
 	tunnelHandler := &tunnel.ServerHandler{
-		Store:            bc.store,
-		SessMgr:          bc.sessMgr,
-		ServerKP:         serverKP,
-		TunDev:           tunDev,
-		AllowedSourceIPs: cfg.Security.TunnelAllowedSourceIPs,
-		Probe:            bc.probeGuard,
-		VPN:              bc.vpnSvc,
-		MTU:              cfg.VPN.MTU,
-		GatewayIP:        cfg.VPN.GatewayIP,
-		DNSServers:       cfg.VPN.DNSServers,
-		Auth:             bc.authSvc,
-		KeyEnc:           bc.keyEnc,
+		Store:                     bc.store,
+		SessMgr:                   bc.sessMgr,
+		ServerKP:                  serverKP,
+		TunDev:                    tunDev,
+		AllowedSourceIPs:          cfg.Security.TunnelAllowedSourceIPs,
+		AllowPlaintextPrivateKeys: cfg.Security.AllowPlaintextPrivateKeys,
+		Probe:                     bc.probeGuard,
+		VPN:                       bc.vpnSvc,
+		MTU:                       cfg.VPN.MTU,
+		GatewayIP:                 cfg.VPN.GatewayIP,
+		DNSServers:                cfg.VPN.DNSServers,
+		VPNSubnet:                 cfg.VPN.Subnet,
+		Auth:                      bc.authSvc,
+		KeyEnc:                    bc.keyEnc,
 	}
 
 	tcfg := transport.FromServerVPN(cfg.VPN)
-	if bc.probeGuard != nil && bc.probeGuard.Enabled() {
+	// 有 Guard 即挂载：封禁表（IsBlocked）始终在 Accept 生效；Enabled 只控制自动记录/自动封。
+	if bc.probeGuard != nil {
 		tcfg.Probe = bc.probeGuard
 	}
 	tunnelSrv, err := transport.ListenTLS(cfg.Server.Listen, tlsCfg, tcfg, func(conn *transport.Conn) {

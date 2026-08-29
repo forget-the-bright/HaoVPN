@@ -1,7 +1,5 @@
 package api
 
-import "net/http"
-
 // routes 注册所有 HTTP 路由（公开 / 需登录 API / WebUI 页面）。
 func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/login", s.handleLogin)
@@ -24,13 +22,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/security/events", s.requireAuth(s.handleSecurityEvents))
 	s.mux.HandleFunc("/api/v1/security/blocks", s.requireAuth(s.handleSecurityBlocks))
 	s.mux.HandleFunc("/api/v1/security/blocks/", s.requireAuth(s.handleSecurityBlockByIP))
+	s.mux.HandleFunc("/api/v1/peer-routes", s.requireAuth(s.handlePeerRoutes))
+	s.mux.HandleFunc("/api/v1/peer-routes/", s.requireAuth(s.handlePeerRouteByID))
+	s.mux.HandleFunc("/api/v1/peer-access", s.requireAuth(s.handlePeerAccess))
+	s.mux.HandleFunc("/api/v1/lan-registry", s.requireAuth(s.handleLANRegistry))
+	s.mux.HandleFunc("/api/v1/peers/apply", s.requireAuth(s.handlePeersApply))
+	s.mux.HandleFunc("/api/v1/security/vpn-peers", s.requireAuth(s.handleVPNPeersPolicy))
 
 	s.mux.HandleFunc("/static/", s.handleStatic)
 	s.mux.HandleFunc("/", s.handleDashboardPage)
 	s.mux.HandleFunc("/users", s.requireAuthPage(s.handleUsersPage))
-	s.mux.HandleFunc("/peers", s.requireAuthPage(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/users", http.StatusFound)
-	}))
+	s.mux.HandleFunc("/peers", s.requireAuthPage(s.handlePeersPage))
 	s.mux.HandleFunc("/connections", s.requireAuthPage(s.handleConnectionsPage))
 	s.mux.HandleFunc("/audit", s.requireAuthPage(s.handleAuditPage))
 	s.mux.HandleFunc("/security", s.requireAuthPage(s.handleSecurityPage))

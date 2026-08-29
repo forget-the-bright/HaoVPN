@@ -71,6 +71,7 @@ type VPNSection struct {
 	RequireTun           bool     `yaml:"require_tun"`            // true 时 TUN 创建失败则拒绝启动
 	DNSServers           []string `yaml:"dns_servers"`            // 握手推送给客户端；可空则回退 gateway
 	SessionPolicy        string   `yaml:"session_policy"`         // reject_second（默认）| kick_previous
+	ReconnectGraceSec    int      `yaml:"reconnect_grace_sec"`    // 同公网 IP 短窗顶替旧会话并续算流量；默认 60；0=关闭
 }
 
 // NATSection 工控/局域网 SNAT 与 IP 转发配置（internal/netstack）。
@@ -112,9 +113,11 @@ type APISection struct {
 //
 // enforce_split_tunnel 为 true 时将 vpn.subnet 并入账号默认 AllowedIPs。
 type SecuritySection struct {
-	TunnelAllowedSourceIPs []string            `yaml:"tunnel_allowed_source_ips"` // 允许发起 TLS 隧道的源 CIDR；空不限制
-	EnforceSplitTunnel     bool                `yaml:"enforce_split_tunnel"`      // true 时将 VPN.Subnet 并入账号默认 AllowedIPs
-	ProbeDefense           ProbeDefenseSection `yaml:"probe_defense"`             // 公网扫描识别、落库与自动封禁
+	TunnelAllowedSourceIPs    []string            `yaml:"tunnel_allowed_source_ips"`     // 允许发起 TLS 隧道的源 CIDR；空不限制
+	EnforceSplitTunnel        bool                `yaml:"enforce_split_tunnel"`          // true 时将 VPN.Subnet 并入账号默认 AllowedIPs
+	AllowPlaintextPrivateKeys bool                `yaml:"allow_plaintext_private_keys"`  // true 时允许库内未加密私钥（仅兼容旧库，生产保持 false）
+	AllowAllVPNPeers          bool                `yaml:"allow_all_vpn_peers"`           // true 时任意账号可互访对方 VPN IP；默认 false
+	ProbeDefense              ProbeDefenseSection `yaml:"probe_defense"`                 // 公网扫描识别、落库与自动封禁
 }
 
 // ProbeDefenseSection 公网对隧道口的探针防御（security.probe_defense）。
@@ -188,6 +191,13 @@ func (c *ServerConfig) ApplyDefaults() {
 	}
 	if strings.TrimSpace(c.VPN.SessionPolicy) == "" {
 		c.VPN.SessionPolicy = SessionPolicyRejectSecond
+	}
+	// reconnect_grace_sec：未写(0)→默认 60；显式 -1→关闭（规范化为 0）
+	switch {
+	case c.VPN.ReconnectGraceSec < 0:
+		c.VPN.ReconnectGraceSec = 0
+	case c.VPN.ReconnectGraceSec == 0:
+		c.VPN.ReconnectGraceSec = 60
 	}
 	if len(c.API.ListenHosts) == 0 {
 		c.API.ListenHosts = []string{"127.0.0.1"}

@@ -206,36 +206,31 @@ func (s *Store) PruneExpiredIPBlocks(now time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
-func scanIPBlock(row *sql.Row) (*IPBlock, error) {
-	var b IPBlock
-	var exp, created, updated, lastHit sql.NullString
-	var sig sql.NullString
-	var enabled int
-	err := row.Scan(&b.ID, &b.IP, &b.Reason, &b.Source, &sig, &b.Hits, &exp, &enabled, &created, &updated, &lastHit)
-	if err != nil {
-		return nil, err
-	}
-	b.Signature = sig.String
-	b.Enabled = enabled != 0
-	b.CreatedAt = timeutil.ParseUTC(created.String)
-	b.UpdatedAt = timeutil.ParseUTC(updated.String)
-	if exp.Valid && exp.String != "" {
-		t := timeutil.ParseUTC(exp.String)
-		b.ExpiresAt = &t
-	}
-	if lastHit.Valid && lastHit.String != "" {
-		t := timeutil.ParseUTC(lastHit.String)
-		b.LastHitAt = &t
-	}
-	return &b, nil
+// ipBlockScanner 统一 *sql.Row / *sql.Rows 的 Scan 接口，避免两套填充逻辑漂移。
+type ipBlockScanner interface {
+	Scan(dest ...any) error
 }
 
+// scanIPBlock 从单行查询填充 IPBlock。
+func scanIPBlock(row *sql.Row) (*IPBlock, error) {
+	return fillIPBlock(row)
+}
+
+// scanIPBlockRows 从分页 rows 填充一条 IPBlock。
 func scanIPBlockRows(rows *sql.Rows) (*IPBlock, error) {
+	return fillIPBlock(rows)
+}
+
+// fillIPBlock 将 ip_blocks 表一行扫入结构体（列顺序须与 SELECT 一致）。
+//
+// 列顺序：id, ip, reason, source, signature, hits, expires_at, enabled, created_at, updated_at, last_hit_at。
+// 为何合一：原先 scanIPBlock / scanIPBlockRows 复制粘贴，字段增减易漏改一侧。
+func fillIPBlock(sc ipBlockScanner) (*IPBlock, error) {
 	var b IPBlock
 	var exp, created, updated, lastHit sql.NullString
 	var sig sql.NullString
 	var enabled int
-	err := rows.Scan(&b.ID, &b.IP, &b.Reason, &b.Source, &sig, &b.Hits, &exp, &enabled, &created, &updated, &lastHit)
+	err := sc.Scan(&b.ID, &b.IP, &b.Reason, &b.Source, &sig, &b.Hits, &exp, &enabled, &created, &updated, &lastHit)
 	if err != nil {
 		return nil, err
 	}

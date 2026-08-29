@@ -20,6 +20,8 @@ func (m *Manager) KickUser(userID int64) {
 	ps, ok := m.sessions[userID]
 	var conn PacketConn
 	var vpnIP, ipMode, remoteAddr string
+	onDisc := m.onDisconnect
+	onKick := m.onKick
 	if ok {
 		conn = ps.Conn
 		vpnIP, ipMode, remoteAddr = ps.VPNIP, ps.IPMode, ps.RemoteAddr
@@ -27,17 +29,18 @@ func (m *Manager) KickUser(userID int64) {
 		if ps.VPNIP != "" {
 			delete(m.byIP, ps.VPNIP)
 		}
+		m.rebuildViaIndexLocked()
 	}
 	m.mu.Unlock()
 	if ok {
 		conn.Close()
 		m.recordDisconnect(userID, remoteAddr)
-		if m.onDisconnect != nil {
-			m.onDisconnect(userID, vpnIP, ipMode)
+		if onDisc != nil {
+			onDisc(userID, vpnIP, ipMode)
 		}
 	}
-	if m.onKick != nil {
-		m.onKick(userID)
+	if onKick != nil {
+		onKick(userID)
 	}
 }
 

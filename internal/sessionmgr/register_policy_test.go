@@ -23,10 +23,10 @@ func TestRegisterVPNRejectSecond(t *testing.T) {
 	sess, _ := crypto.NewSession(kp.PrivateKey, kp.PublicKey)
 	u := &persist.User{ID: 7, Username: "u", PublicKey: kp.PublicKey, VPNIP: "10.88.0.2", Enabled: true}
 	c1, c2 := nopConn{}, nopConn{}
-	if err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, c1, sess, "1.1.1.1:1"); err != nil {
+	if err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, c1, sess, "1.1.1.1:1", sessionmgr.PeerReg{}); err != nil {
 		t.Fatalf("首连应成功: %v", err)
 	}
-	err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, c2, sess, "2.2.2.2:2")
+	err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, c2, sess, "2.2.2.2:2", sessionmgr.PeerReg{})
 	if !errors.Is(err, sessionmgr.ErrAccountAlreadyOnline) {
 		t.Fatalf("第二端应 ErrAccountAlreadyOnline，got %v", err)
 	}
@@ -42,10 +42,10 @@ func TestRegisterVPNKickPrevious(t *testing.T) {
 	kp, _ := crypto.GenerateKeyPair()
 	sess, _ := crypto.NewSession(kp.PrivateKey, kp.PublicKey)
 	u := &persist.User{ID: 8, Username: "u", PublicKey: kp.PublicKey, VPNIP: "10.88.0.3", Enabled: true}
-	if err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, nopConn{}, sess, "1.1.1.1:1"); err != nil {
+	if err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, nopConn{}, sess, "1.1.1.1:1", sessionmgr.PeerReg{}); err != nil {
 		t.Fatalf("首连: %v", err)
 	}
-	if err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, nopConn{}, sess, "2.2.2.2:2"); err != nil {
+	if err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, nopConn{}, sess, "2.2.2.2:2", sessionmgr.PeerReg{}); err != nil {
 		t.Fatalf("kick_previous 第二端应成功: %v", err)
 	}
 	if m.OnlineCount() != 1 {

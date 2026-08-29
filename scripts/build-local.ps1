@@ -30,6 +30,9 @@ $Commit = Get-GitCommitShort -Root $Root
 $BuildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $Ldflags = Get-BuildLdflags -Version $Version -Commit $Commit -BuildTime $BuildTime
 
+# Fyne 元数据 Version 与根目录 VERSION 对齐（勿在 FyneApp.toml 手写死版本）
+Sync-FyneAppTomlFromVersion -Root $Root -Version $Version
+
 $Out = Join-Path $Root "bin"
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
 

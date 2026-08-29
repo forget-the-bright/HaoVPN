@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"haovpn/internal/brand"
 	"haovpn/internal/logger"
@@ -44,7 +45,7 @@ func setupNATPlatform(vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outbound
 	if isWinNATUnavailable(winErr) {
 		logger.Warn("WinNAT 不可用（Windows 家庭版或未启用 Hyper-V）: %v", winErr)
 		logger.Info("尝试 ICS 回退（Internet 连接共享）…")
-		return setupICSPlatform(tunName, lanCIDR, outboundIf)
+		return setupICSPlatform(tunName, lanCIDR, outboundIf, tunIP)
 	}
 	return winErr
 }
@@ -198,7 +199,8 @@ $found
 }
 
 // setupICSPlatform 用 ICS 做 VPN→LAN SNAT（WinNAT 不可用时的回退，如 Windows 家庭版）。
-func setupICSPlatform(tunName, lanCIDR, outboundIf string) error {
+// tunIP 为 TUN 上的 VPN/网关地址；启用 ICS 后对其它地址设 SkipAsSource，避免本机错源。
+func setupICSPlatform(tunName, lanCIDR, outboundIf string, tunIP net.IP) error {
 	lanIf, err := findOutboundInterface(lanCIDR, outboundIf)
 	if err != nil {
 		return fmt.Errorf("ICS 回退: %w", err)
@@ -264,6 +266,21 @@ if (-not $ok) { throw "ICS EnableSharing 失败（0x80040201 常见于 Win11 家
 		return fmt.Errorf("ICS 启用失败: %w（家庭版请确认 LAN 网卡名正确且 SharedAccess 服务可启动）", err)
 	}
 	logger.Info("windows: ICS 已启用 public=%s private=%s（VPN→LAN NAT 回退）", lanIf, tunName)
+
+	// ICS 异步挂 192.168.137.1，稍等再设 SkipAsSource
+	time.Sleep(1500 * time.Millisecond)
+
+	// 根因：ICS 在 TUN 挂 192.168.137.1 后 Windows 可能用它作源；保留该地址供 ICS SNAT，但 SkipAsSource
+	if tunIP != nil {
+		if v4 := tunIP.To4(); v4 != nil {
+			vpn := v4.String()
+			if err := winnet.PreferVPNSourceWithICS(tunName, vpn); err != nil {
+				logger.Warn("windows: ICS 后 PreferVPNSource 失败（本机 AllowedIPs 可能仍异常）: %v", err)
+			} else {
+				logger.Info("windows: ICS 后已 SkipAsSource 非 VPN 地址，本机发包源优先 %s", vpn)
+			}
+		}
+	}
 	return nil
 }
 

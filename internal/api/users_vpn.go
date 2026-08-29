@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"haovpn/internal/auth"
+	"haovpn/internal/logger"
 	"haovpn/internal/vpnaccount"
 )
 
@@ -58,6 +59,8 @@ func (s *Server) handleUserPasswordReset(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	s.sessions.KickUser(id)
+	revoked := s.auth.LogoutAllForUser(id)
+	logger.Info("管理员重置密码并吊销 Web 会话 target=%d revoked=%d", id, revoked)
 	s.audit.Log(&se.UserID, "admin_reset_password", "user", &id, s.clientIP(r), map[string]string{"username": u.Username})
 	writeOK(w)
 }

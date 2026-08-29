@@ -101,6 +101,48 @@ CREATE TABLE IF NOT EXISTS ip_blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_ip_blocks_enabled ON ip_blocks(enabled);
 
+-- VPN 账号互访白名单：user_id 可访问 peer_user_id 的当前 vpn_ip/32（默认无行=禁止互访）
+CREATE TABLE IF NOT EXISTS peer_access (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    peer_user_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, peer_user_id),
+    CHECK (user_id <> peer_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_peer_access_peer ON peer_access(peer_user_id);
+
+-- 客户端本地网段临时注册表（登录上报；断线清空；alone 不转发）
+-- 主键 (user_id, dest_cidr)；换机登录先删该账号全部行再写入
+CREATE TABLE IF NOT EXISTS client_lan_registry (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    dest_cidr TEXT NOT NULL,                    -- 客户端 local_lans 中的网段
+    vpn_ip TEXT NOT NULL DEFAULT '',            -- 上报时该账号 VPN IP 快照
+    host_id TEXT NOT NULL DEFAULT '',           -- 可选主机标识（日志/排障）
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, dest_cidr)
+);
+CREATE INDEX IF NOT EXISTS idx_lan_registry_user ON client_lan_registry(user_id);
+
+-- 托管路由定义（手工维护；不跟注册表自动变）：dest via via_user
+-- 访问方在 peer_route_members；本表不再存 accessor
+CREATE TABLE IF NOT EXISTS peer_routes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dest_cidr TEXT NOT NULL,                    -- 目标网段，如 192.168.0.0/24
+    via_user_id INTEGER NOT NULL REFERENCES users(id), -- 下一跳账号（via）
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (dest_cidr, via_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_peer_routes_via ON peer_routes(via_user_id);
+
+-- 托管路由访问方：user_id=0 表示全部账号；与指定可并存，解析时有 0 则忽略指定
+CREATE TABLE IF NOT EXISTS peer_route_members (
+    route_id INTEGER NOT NULL REFERENCES peer_routes(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL,                   -- 0=全部；>0 须为 users.id
+    PRIMARY KEY (route_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_peer_route_members_user ON peer_route_members(user_id);
+
 -- schema 版本（迁移标记）
 CREATE TABLE IF NOT EXISTS schema_meta (
     key TEXT PRIMARY KEY,

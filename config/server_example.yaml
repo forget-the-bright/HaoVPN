@@ -15,6 +15,8 @@ vpn:
   heartbeat_interval_sec: 15
   heartbeat_timeout_sec: 90
   session_policy: reject_second
+  # 同公网 IP 短窗内重连顶替旧会话并续算流量（秒）；-1 关闭
+  reconnect_grace_sec: 60
 
 nat:
   enabled: true
@@ -37,8 +39,12 @@ api:
 security:
   tunnel_allowed_source_ips: []
   enforce_split_tunnel: true
+  # 仅兼容旧库明文私钥；生产保持 false
+  allow_plaintext_private_keys: false
+  # 允许全部 VPN 客户端互访对方虚拟 IP（默认 false；细粒度见控制台「托管路由」）
+  allow_all_vpn_peers: false
   # 探针防御：见 docs/security-hardening.md（含特征中英文对照）
-  # enabled:false 单独写即可关闭自动记录/自动封；封禁表仍生效
+  # enabled:false 单独写即可关闭自动记录/自动封；封禁表仍生效（serverapp 始终挂 Probe）
   probe_defense:
     enabled: true                 # 自动记录/自动封
     record_events: true           # 写 security_events

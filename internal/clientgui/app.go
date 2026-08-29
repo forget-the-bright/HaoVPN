@@ -35,13 +35,19 @@ type uiApp struct {
 	logSyncing bool // 程序 SetText 时忽略 OnChanged，防止用户编辑污染
 
 	serverEntry  *widget.Entry
-	userEntry   *widget.Entry
-	passEntry   *widget.Entry
+	userEntry    *widget.Entry
+	passEntry    *widget.Entry
+	localLansEntry *widget.Entry // 可选本地网段，逗号/换行分隔；空=关闭 via
 	rememberPass *widget.Check
-	errLbl      *widget.Label
-	cfgPathLbl  *widget.Label
+	errLbl       *widget.Label
+	cfgPathLbl   *widget.Label
 
 	pollStop chan struct{}
+
+	// 托盘当前种类（SetSystemTrayMenu 会冲掉图标，须随后 forceTrayIcon）
+	trayMu       sync.Mutex
+	trayKind     trayKind
+	trayMenuKey  string // 已连接时含 VPN IP，变化则重建菜单
 }
 
 // newUI 构造 UI 控制器并注册 logger sink，将日志行转发到 appendLog。
@@ -134,17 +140,20 @@ func (u *uiApp) doLogout() {
 	} else {
 		u.showLogin("")
 	}
-	u.refreshTrayMenu()
+	u.trayMu.Lock()
+	u.trayMenuKey = ""
+	u.trayMu.Unlock()
+	u.applyTray(trayKindIdle, true)
 }
 
-// startPoll 后台定时刷新连接状态与 VPN IP（500ms）；停止信号走 safeutil.RunTickerStop。
+// startPoll 后台定时刷新连接状态、VPN IP 与托盘图标（500ms）。
 func (u *uiApp) startPoll() {
 	u.stopPoll()
 	u.pollStop = make(chan struct{})
 	stop := u.pollStop
 	safeutil.GoSafe("gui-status-poll", func() {
 		safeutil.RunTickerStop(stop, 500*time.Millisecond, func() {
-			if u.eng == nil || u.statusLbl == nil {
+			if u.eng == nil {
 				return
 			}
 			st := u.eng.State()
@@ -152,18 +161,22 @@ func (u *uiApp) startPoll() {
 			errMsg := u.eng.LastError()
 			ksOK := u.eng.KillSwitchOK()
 			fyne.Do(func() {
-				txt := "状态: " + st.String()
-				if !ksOK && errMsg != "" {
-					txt += " | " + errMsg
-				} else if errMsg != "" && st != clientapp.StateConnected {
-					txt += " | " + errMsg
+				if u.statusLbl != nil {
+					txt := "状态: " + st.String()
+					if !ksOK && errMsg != "" {
+						txt += " | " + errMsg
+					} else if errMsg != "" && st != clientapp.StateConnected {
+						txt += " | " + errMsg
+					}
+					u.statusLbl.SetText(txt)
+					if ip != "" {
+						u.vpnIPLbl.SetText("VPN IP: " + ip)
+					} else {
+						u.vpnIPLbl.SetText("VPN IP: —")
+					}
 				}
-				u.statusLbl.SetText(txt)
-				if ip != "" {
-					u.vpnIPLbl.SetText("VPN IP: " + ip)
-				} else {
-					u.vpnIPLbl.SetText("VPN IP: —")
-				}
+				// 仅状态变化时更新图标；菜单仅在已连接且需展示 IP/路由时按需 force
+				u.syncTrayFromEngine(false)
 			})
 		})
 	})

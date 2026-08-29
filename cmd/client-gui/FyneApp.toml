@@ -1,0 +1,11 @@
+# Fyne 打包/元数据。Version 由构建脚本从根目录 VERSION 同步，勿手写死版本号。
+# 见 docs/versioning.md、scripts/lib/build-common.ps1 → Sync-FyneAppTomlFromVersion
+[Details]
+Name = "HaoVPN"
+ID = "com.haovpn.client.gui"
+Icon = "Icon.png"
+Version = "0.1.1"
+[LinuxAndBSD]
+GenericName = "HaoVPN"
+Categories = ["Network"]
+Comment = "HaoVPN industrial VPN client"

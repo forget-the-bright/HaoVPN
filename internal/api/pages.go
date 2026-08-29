@@ -45,6 +45,11 @@ func (s *Server) handleUsersPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "user_list.html", nil)
 }
 
+// handlePeersPage 托管路由 / 互访白名单页（对齐 ZeroTier Managed Routes）。
+func (s *Server) handlePeersPage(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "peer_routes.html", nil)
+}
+
 func (s *Server) handleConnectionsPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "connection_detail.html", nil)
 }

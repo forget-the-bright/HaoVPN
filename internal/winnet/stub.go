@@ -22,6 +22,21 @@ func InterfaceHasIPv4(configName string, ifIndex int, ip string) bool {
 	return false
 }
 
+// PreferVPNSourceWithICS 非 Windows 无操作。
+func PreferVPNSourceWithICS(configName, vpnIP string) error {
+	_, _ = configName, vpnIP
+	return nil
+}
+
+// RemoveICSAddressesKeepVPN 非 Windows 无操作。
+func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
+	_, _ = configName, vpnIP
+	return nil
+}
+
+// DisableAllICS 非 Windows 无操作。
+func DisableAllICS() {}
+
 // ErrNotSupported 表示当前平台不支持 winnet 的 Windows 专有操作。
 var ErrNotSupported = errorString("winnet: 仅 Windows 支持")
 

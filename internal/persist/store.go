@@ -202,6 +202,10 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(string(schema)); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
+	// 旧库 peer_routes 含 user_id 访问方列；迁到定义表 + peer_route_members
+	if err := s.migratePeerRoutesV2(); err != nil {
+		return fmt.Errorf("migrate peer_routes_v2: %w", err)
+	}
 	return nil
 }
 

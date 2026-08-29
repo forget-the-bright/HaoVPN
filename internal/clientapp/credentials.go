@@ -21,13 +21,19 @@ import (
 // 并发：无内部锁；终端读取不可并行，调用方应单 goroutine 在 Start 前调用一次。
 func ResolveCredentials(cfg *config.ClientConfig) (user, password string, err error) {
 	user, password = cfg.ResolveAuth()
-	if user == "" {
+	// YAML 仅有用户名、密码为空时，仍尝试服务凭据库补密码（Windows 服务场景）。
+	if user == "" || password == "" {
 		cu, cp, loadErr := credentials.LoadService()
-		if loadErr != nil {
+		if loadErr != nil && user == "" {
 			return "", "", fmt.Errorf("读取服务凭据失败: %w", loadErr)
 		}
-		if cu != "" && cp != "" {
-			user, password = cu, cp
+		if loadErr == nil {
+			if user == "" && cu != "" {
+				user = cu
+			}
+			if password == "" && cp != "" {
+				password = cp
+			}
 		}
 	}
 	if user == "" {

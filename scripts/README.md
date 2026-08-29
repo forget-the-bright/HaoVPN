@@ -25,6 +25,20 @@
 
 本机 `build-local` 同样构建 **`haovpn-client-gui.exe`**（仅 Windows）。
 
+### 图标（品牌「好」+ Windows exe）
+
+| 资源 | 说明 |
+|------|------|
+| `assets/haovpn-logo-source.png` | 品牌源图（对勾路径 + 节点，无文字） |
+| `scripts/gen-icons.go` | 生成托盘灰/黄/绿/红、`logo.png`、`appicon*.png`、`cmd/client-gui/Icon.png` |
+| `scripts/embed-win-icons.ps1` | 用 go-winres 写入 `cmd/*/rsrc_windows_*.syso`（资源管理器/任务栏 exe 图标） |
+| `internal/clientgui/icons/` | GUI 运行时嵌入的托盘与登录 Logo |
+
+品牌语义：**对勾路径** =「好 / 通路确认」；**节点连线** = VPN 组网。改源图后：`go run .\scripts\gen-icons.go` → `.\scripts\embed-win-icons.ps1` → `.\scripts\build-local.ps1`。
+
+`FyneApp.toml` / winres 的版本号由构建脚本从根目录 **VERSION** 同步，勿手写死（见 [docs/versioning.md](../docs/versioning.md)）。
+Linux/macOS 分发的是无壳裸二进制，无 Windows 式文件图标；可用 `assets/appicon.png` 做 `.desktop` / 安装包图标。
+
 ---
 
 ## Windows Wintun（内嵌单 exe）

@@ -28,6 +28,8 @@ vpn:
   dns_servers: []
   # 同账号第二端：reject_second=已在线则拒绝（默认）；kick_previous=新连接踢旧会话（易互踢循环）
   session_policy: reject_second
+  # 同公网 IP 短窗内重连顶替旧会话并续算流量（秒）；-1 关闭
+  reconnect_grace_sec: 60
 
 nat:
   # 允许 VPN 客户端访问的现场工控网段（SNAT 放行范围）
@@ -70,6 +72,10 @@ api:
 security:
   tunnel_allowed_source_ips: []
   enforce_split_tunnel: true
+  # 仅兼容旧库明文私钥；生产保持 false
+  allow_plaintext_private_keys: false
+  # 允许全部 VPN 客户端互访对方虚拟 IP（默认 false；细粒度见控制台托管路由/白名单）
+  allow_all_vpn_peers: false
   # 公网探针防御：识别扫描特征、落库、可选自动封禁（家里 DDNS 映射建议保持开启）
   # enabled 用显式 true/false；仅写 enabled: false 不会被默认改回
   # 封禁表（手动/已封）始终生效；enabled 只管自动记录与自动封
@@ -128,6 +134,11 @@ auth:
   # password：仅 remember_password=true 时由 GUI 写入明文；CLI 也可填写以免每次输入
   # 注意：含密码时本文件为敏感信息，请限制权限（0600）且勿提交 git
   # password: ""
+
+# 可选：本机后面的局域网段（手动填写）。非空则登录上报注册表并开启 via 出口（TUN→LAN 转发/SNAT）
+# 未配置或空列表 = 整条能力关闭。不要写进服务端账号 AllowedIPs（那是经网关 NAT）
+# local_lans:
+#   - "192.168.31.0/24"
 
 reconnect:
   initial_sec: 1

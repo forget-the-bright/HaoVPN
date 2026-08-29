@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"haovpn/internal/persist"
+	"haovpn/internal/timeutil"
 )
 
 const bcryptCost = 12
@@ -14,19 +15,20 @@ const bcryptCost = 12
 // 字段：
 //   store — 持久化用户库；所有账号读写经此访问。
 //   sessions — 内存 Web 会话表（token → SessionEntry）；进程重启后清空。
-//   lockouts — 按 clientIP 累计失败次数与锁定截止时间。
+//   webLockouts / tunnelLockouts — 按 clientIP 分表累计失败（Web 与隧道互不影响）。
 //   maxAttempts / lockoutSec / sessionTTL — 来自配置；≤0 时 New 使用内置默认值。
 //
 // 线程安全：sessions 用 RWMutex，lockouts 用 Mutex；可并发校验会话与登录。
 type Service struct {
-	store      *persist.Store
-	sessions   map[string]SessionEntry
-	sessionsMu sync.RWMutex
-	lockouts   map[string]lockoutEntry
-	lockoutsMu sync.Mutex
-	maxAttempts int
-	lockoutSec  int
-	sessionTTL  time.Duration
+	store          *persist.Store
+	sessions       map[string]SessionEntry
+	sessionsMu     sync.RWMutex
+	webLockouts    map[string]lockoutEntry
+	tunnelLockouts map[string]lockoutEntry
+	lockoutsMu     sync.Mutex
+	maxAttempts    int
+	lockoutSec     int
+	sessionTTL     time.Duration
 }
 
 // SessionEntry 表示一条有效的 Web 管理端登录会话。
@@ -44,7 +46,7 @@ type SessionEntry struct {
 }
 
 type lockoutEntry struct {
-	Failures  int
+	Failures    int
 	LockedUntil time.Time
 }
 
@@ -64,11 +66,12 @@ func New(store *persist.Store, maxAttempts, lockoutSec, sessionTTLSec int) *Serv
 		sessionTTLSec = 28800
 	}
 	return &Service{
-		store:       store,
-		sessions:    map[string]SessionEntry{},
-		lockouts:    map[string]lockoutEntry{},
-		maxAttempts: maxAttempts,
-		lockoutSec:  lockoutSec,
-		sessionTTL:  time.Duration(sessionTTLSec) * time.Second,
+		store:          store,
+		sessions:       map[string]SessionEntry{},
+		webLockouts:    map[string]lockoutEntry{},
+		tunnelLockouts: map[string]lockoutEntry{},
+		maxAttempts:    maxAttempts,
+		lockoutSec:     lockoutSec,
+		sessionTTL:     timeutil.Seconds(sessionTTLSec),
 	}
 }

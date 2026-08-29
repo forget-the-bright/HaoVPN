@@ -33,10 +33,14 @@
       <h2 style="margin:0 0 1rem;font-size:1.1rem">设置新密码</h2>
       <form id="changeForm">
         <div class="form-group">
+          <label for="old_password">当前密码</label>
+          <input id="old_password" name="old_password" type="password" required autocomplete="current-password">
+        </div>
+        <div class="form-group">
           <label for="new_password">新密码（至少 8 位）</label>
           <input id="new_password" name="new_password" type="password" required minlength="8" autocomplete="new-password">
         </div>
-        <button type="submit" class="btn btn-primary btn-block">保存并进入控制台</button>
+        <button type="submit" class="btn btn-primary btn-block">保存并重新登录</button>
       </form>
     </div>
   </div>
@@ -64,6 +68,9 @@
         if (j.must_change_password) {
           document.getElementById('loginForm').classList.add('hidden');
           document.getElementById('changeBox').classList.remove('hidden');
+          // 须改密：当前密码即刚登录所用密码，便于用户粘贴
+          var pw = document.getElementById('password').value;
+          if (pw) document.getElementById('old_password').value = pw;
         } else {
           location.href = '/';
         }
@@ -78,8 +85,12 @@
       var fd = new FormData(e.target);
       try {
         var j = await HaoVPN.api('/api/v1/password', { method: 'POST', body: fd });
-        if (j.ok) location.href = '/';
-        else HaoVPN.toast(j.error || '修改失败', 'error');
+        if (j.ok) {
+          HaoVPN.toast('密码已更新，请使用新密码重新登录', 'ok');
+          location.href = '/login';
+        } else {
+          HaoVPN.toast(j.error || '修改失败', 'error');
+        }
       } catch (ex) {
         HaoVPN.toast(ex.message, 'error');
       }

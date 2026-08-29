@@ -2,7 +2,7 @@
 
 本文是重构后的**包导航单一来源**：分层、依赖规则、改代码去哪找。
 
-> 架构解耦第十一轮（2026-08-28）：vpnaccount `releaseDynamicIP`、PlanVPNPatch 归 patch.go、ErrAccountNotFound 对齐、users 列表 `onlineUserSet`、审计补测。第十轮摘要见 [dev-log.md](dev-log.md)。
+> 架构解耦第十二轮（2026-08-29）：叶子工具收敛、鉴权哨兵、封禁始终挂 Probe、握手回滚、改密旧密码+吊销 Session、双 lockout、明文钥默认拒绝。第十一轮摘要见 [dev-log.md](dev-log.md)。
 
 ---
 
@@ -16,7 +16,8 @@ clientapp / clientgui / serverapp        # 应用编排与桌面 UI
         │
         ├── api ──► vpnaccount           # HTTP 薄层；VPN 写经 ApplyVPNPatch/SetEnabled
         ├── tunnel ──► tun               # 握手协议；ServerHandler 持有 tun.Device
-        ├── transport                    # TLS-TCP 帧
+        ├── transport                    # TLS-TCP 帧（Probe 钩子）
+        ├── probedefense                 # 探针/封禁（有 Guard 即挂载 Accept）
         ├── netstack ──► platform        # 路由/DNS/杀开关；无窗口子进程
         ├── maintenance                  # 数据保留后台（serverapp 启动，与 api 解耦）
         └── persist, auth, sessionmgr    # 存储与会话
@@ -34,28 +35,35 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | 新增管理 API | `api/users_crud.go` + `handler_routes.go`；业务 `vpnaccount/` |
 | API JSON 错误 / `?since=` / 成功信封 | `api/httputil.go`（`writeAPIError`、`writeOK`、`writePage`、`parseSinceQuery`→`timeutil`） |
 | 管理 API 监听绑定 | `api/handler_listen.go`（`StartAllListeners`、`FormatBoundAddrs`） |
-| CSRF Token | `api/auth_handlers.go`（`handleCSRF`） |
-| VPN 策略 PATCH / 启禁 | `vpnaccount/patch.go`（`ApplyVPNPatch`）、`enable.go`（`SetAccountEnabled`） |
+| CSRF Token | `api/auth_handlers.go`（`handleCSRF`）；比较 `auth/session.go`（常量时间） |
+| VPN 策略 PATCH / 启禁 | `vpnaccount/patch.go`（`ApplyVPNPatch`）、`enable.go`（`SetAccountEnabled`）；禁用吊销 Web 会话 |
 | 删 VPN 账号（踢线+释 IP） | `vpnaccount/delete.go` |
-| 改密 / 须改密检查 | `auth/password_ops.go`（`ChangePassword`、`MustChangePassword`、`ResetPasswordByAdmin`） |
+| 自改密（须 old_password）/ 须改密 / 吊销会话 | `auth/password_ops.go`、`session.go`（`LogoutAllForUser`）；`api/auth_handlers.go` |
+| 登录/握手哨兵错误 | `auth/errors.go`；客户端致命判定 `clientapp/fatal_auth.go` |
+| Web/隧道分表锁定 | `auth/lockout.go` |
+| 探针防御 / 封禁表 | `probedefense/guard.go`；挂载 `serverapp/engine_boot.go`；API `handler_security.go`；UI `/security` |
+| 远端 host:port 拆分 | `netutil/hostport.go`（`SplitRemoteAddr`） |
+| 配置秒 → Duration | `timeutil/duration.go`（`Seconds`） |
+| 明文私钥兼容 | `security.allow_plaintext_private_keys`；`tunnel.ServerHandler.AllowPlaintextPrivateKeys` |
 | 分页 limit/offset / bool 查询 | `paginate/parse.go`（`ParseLimitOffset`、`ParseBoolQuery`）、`clamp.go` |
 | 默认 IP 租约秒数 | `persist/constants.go`（`DefaultIPLeaseSec`，与 schema 同源） |
 | 客户端 IP / 反代 XFF | `api/httputil.go`（`resolveClientIP`、`api.trusted_proxy_cidrs`） |
 | 日志脱敏 | `logger/redact.go`；`security.Redact` 委托 |
 | 密码强度 | `auth/password.go`（`ValidatePasswordStrength`） |
-| 审计/连接事件/日志保留 | `maintenance/retention.go`；默认天数 `config.DefaultRetentionDays` |
+| 审计/连接事件/日志/过期封禁保留 | `maintenance/retention.go`（封禁 prune 与事件保留解耦）；默认天数 `config.DefaultRetentionDays` |
 | 监控 online/accounts/events | `api/monitor_handler.go`；JOIN `persist/query_monitor.go` |
+| 安全事件/封禁 SQL | `persist/security_store.go` |
 | 用户/审计/事件列表 SQL | `persist/query_users.go`、`query_audit.go`、`query_events.go` |
-| 改握手/策略下发 | `tunnel/handshake.go`, `server_handler.go` |
-| 客户端拨号/重连 | `clientapp/engine_lifecycle.go`, `engine_connect.go`, `runtime.go` |
+| 改握手/策略下发 | `tunnel/handshake.go`, `server_handler.go`（OK 发送失败回滚会话） |
+| 客户端拨号/重连/致命鉴权 | `clientapp/engine_lifecycle.go`, `engine_connect.go`, `fatal_auth.go`, `credentials.go` |
 | 桌面 GUI（Fyne） | `internal/clientgui/`（入口 `cmd/client-gui` 仅 flag/UAC/主题） |
 | 服务端启动流程 | `serverapp/engine.go`、`engine_boot.go`、`engine_shutdown.go` |
 | YAML 默认值/校验 | `config/client.go`、`server.go` |
 | 默认 TLS 证书路径 | `config/paths.go`（`DefaultServerCertPath`、`ResolveServerCertPath`） |
 | 导出客户端 YAML | `config/client_export.go`；ZIP 在 `api/export_zip.go`；HTTP 附件 `writeAttachment` |
 | GUI 写回 client.yaml | `config/client_yaml_patch.go`（`SaveClient`）；Node 原语 `yaml_node.go` |
-| CIDR/地址/IPv4 工具 | `internal/netutil/`（`HostFromAddr` 供 api clientIP 与隧道共用） |
-| SQLite / RFC3339 时间 | `timeutil/sqlite.go`、`timeutil/rfc3339.go` |
+| CIDR/地址/IPv4 工具 | `internal/netutil/`（`HostFromAddr`、`SplitRemoteAddr`） |
+| SQLite / RFC3339 / Seconds | `timeutil/sqlite.go`、`rfc3339.go`、`duration.go` |
 | 敏感文件原子写 / exe 目录 | `fileutil/WriteFileAtomic`、`ExecutableDir` |
 | Web/API 读模型 | `readmodel/`（含 `audit.go` AuditLogView） |
 | Dashboard 字段 | `health/dashboard.go`（`DashboardMap`） |
@@ -83,30 +91,30 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 
 | 包 | 职责 | 关键文件 | 依赖 |
 |----|------|----------|------|
-| **clientapp** | CLI/GUI 共用拨号引擎 | `engine_state.go`, `engine_lifecycle.go`, `engine_connect.go`, `runtime.go`, `credentials.go` | config, transport, tunnel, netstack |
+| **clientapp** | CLI/GUI 共用拨号引擎；via 出口 | `engine_*.go`, `runtime.go`, `via_exit.go`, `credentials.go`, `fatal_auth.go` | config, transport, tunnel, netstack, persist, auth |
 | **clientgui** | Fyne 桌面 UI | `run.go`, `login.go`, `app.go`, `tray.go`, `notice.go` | clientapp, config, singleinstance |
-| **serverapp** | 服务端启动编排 | `engine.go`, `engine_boot.go`, `engine_shutdown.go` | api, tunnel, tun, netstack, vpnaccount, maintenance |
-| **api** | HTTP 管理 API + WebUI | `handler.go`, `handler_routes.go`, `handler_ops.go`, `handler_listen.go`, `auth_handlers.go`, `users_*.go`, `monitor_handler.go`, `httputil.go`, `export_zip.go` | auth, vpnaccount, persist, readmodel, config, netutil |
+| **serverapp** | 服务端启动编排 | `engine.go`, `engine_boot.go`, `engine_shutdown.go` | api, tunnel, transport, probedefense, tun, netstack, vpnaccount, maintenance |
+| **api** | HTTP 管理 API + WebUI | `handler_*.go`, `auth_handlers.go`, `users_*.go`, `handler_security.go`, `export_zip.go` | auth, vpnaccount, persist, probedefense, readmodel, config, netutil |
 | **readmodel** | Web/API 读模型 DTO | `types.go`, `monitor.go`, `audit.go` | timeutil |
 | **paginate** | 分页 / bool 查询 | `clamp.go`, `parse.go`（含 `ParseLimitOffset`） | — |
-| **maintenance** | 数据保留后台 | `retention.go`（`GoSafe` 启动） | persist, logstore, config, safeutil |
+| **maintenance** | 数据保留后台 | `retention.go`（`GoSafe` 启动；封禁 prune 独立） | persist, logstore, config, safeutil |
 | **fileutil** | 父目录 / 原子写 / exe 目录 | `mkdir.go`, `atomic.go`, `exe.go` | — |
-| **timeutil** | SQLite UTC + RFC3339 | `sqlite.go`, `rfc3339.go` | — |
-| **vpnaccount** | IP 模式、开户、PATCH、启禁、删号 | `service.go`, `provision.go`, `patch.go`, `enable.go`, `delete.go` | ippool, persist, netutil |
-| **tunnel** | 握手协议 | `handshake.go`, `client_handshake.go`, `server_handler.go` | transport, crypto, netutil, **tun** |
-| **transport** | TLS-TCP 帧、重连 | `transport.go`, `frame.go`, `reconnect.go` | netutil, config |
-| **sessionmgr** | 会话与报文路由 | `manager.go`, `register.go`, `kick.go`, `route.go`, `stats.go` | crypto, netutil, persist, config |
+| **timeutil** | SQLite UTC + RFC3339 + Seconds | `sqlite.go`, `rfc3339.go`, `duration.go` | — |
+| **vpnaccount** | IP 模式、开户、策略合并、启禁、删号 | `service.go`, `peer_policy.go`, `provision.go`, `patch.go` | ippool, persist, netutil |
+| **tunnel** | 握手协议 | `handshake.go`, `client_handshake.go`, `server_handler.go`, `source_ip.go` | transport, crypto, auth, sessionmgr, netutil, **tun** |
+| **transport** | TLS-TCP 帧、重连、Probe | `transport.go`, `frame.go`, `reconnect.go`, `config_from.go` | netutil, timeutil, config |
+| **sessionmgr** | 会话与报文路由 | `manager.go`, `register.go`, `kick.go`, `route.go`, `stats.go`；托管 via 索引、横向放行、grace 顶替续算 | crypto, netutil, persist, config |
 | **probedefense** | 公网探针识别/落库/封禁 | `guard.go`, `labels.go`, `ignorable.go`, `config_from.go` | persist, netutil, config, logger |
 
-| **netstack** | 路由/DNS/杀开关/NAT | `route_*.go`, `dns_*.go` | winnet, netutil, **platform** |
+| **netstack** | 路由/DNS/杀开关；服务端 NAT 与客户端 via 出口共用 | `route.go`, `route_*.go`, `dns_*.go`, `killswitch_*.go` | winnet, netutil, **platform** |
 | **tun** | TUN 抽象 | `tun.go`, `tun_windows.go` | winnet, **wintundll**, fileutil |
 | **wintundll** | 嵌入/释放 wintun.dll | `ensure.go` | fileutil |
 | **winnet** | Windows 网卡/netsh | `resolver_windows.go`, `netsh_windows.go` | platform |
-| **netutil** | CIDR/地址/监听/MTU | `cidr.go`, `addr.go`, `gateway.go`, `listen.go`, `constants.go` | — |
-| **config** | YAML 加载/导出/默认值 | `config.go`, `client_export.go`, `client_yaml_patch.go`, `yaml_node.go`, `paths.go`, `retention.go` | netutil, fileutil, brand |
+| **netutil** | CIDR/地址/监听/MTU/SplitRemoteAddr | `cidr.go`, `addr.go`, `hostport.go`, `gateway.go`, `listen.go`, `constants.go` | — |
+| **config** | YAML 加载/导出/默认值 | `config.go`, `client_export.go`, `client_yaml_patch.go`, `yaml_node.go`, `paths.go`, `retention.go`, `defaults.go` | netutil, fileutil, brand |
 | **security** | TLS、密钥加密、绑定自检 | `tls_client.go`, `datakey.go`, `keyenc.go` | netutil, fileutil |
-| **persist** | SQLite | `store.go`, `constants.go`, `users.go`, `query_*.go`, `security_store.go`, `session_store.go` | paginate, readmodel, timeutil |
-| **auth** | Web Session + 隧道密码校验 | `service.go`, `login.go`, `tunnel_login.go`, `session.go`, `lockout.go`, `password.go`, `password_ops.go` | persist |
+| **persist** | SQLite；托管路由/注册表/迁移 | `store.go`, `schema.sql`, `peer_store.go`, `lan_registry.go`, `migrate_peer_routes.go`, `users.go`, `query_*.go` | paginate, readmodel, timeutil |
+| **auth** | Web Session + 隧道密码 + 分表锁定 + 哨兵 | `errors.go`, `service.go`, `login.go`, `tunnel_login.go`, `session.go`, `lockout.go`, `password.go`, `password_ops.go` | persist |
 | **ippool** | VPN IP 池 | `pool.go` | — |
 | **health** | 启动自检 + Dashboard | `health.go`, `dashboard.go` | config, persist |
 | **logstore** | 结构化历史日志库 | `logstore.go` | paginate, timeutil |
@@ -143,8 +151,17 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 15. **monitor 查询**：经 persist JOIN（`ListMonitorAccountRows` / events JOIN username），禁止逐用户 N+1。
 16. **HTTP 成功/分页信封**：无载荷成功用 `writeOK`；标准分页用 `writePage`；禁止手写 `{"ok":true}` / items 信封样板。
 17. **账号 allowed_ips 校验**：经 `vpnaccount.ValidateAllowedIPs`（领域别名），api 不直接调 `netutil.ValidateNoFullTunnel`。
+18. **探针挂载**：`serverapp` 在 `probeGuard != nil` 时始终设置 `tcfg.Probe`；`Enabled` 只控制自动记录/自动封，封禁表 Accept 始终生效。
+19. **握手/登录错误分类**：用 `auth`/`sessionmgr` 哨兵 + `errors.Is`，禁止仅靠中文子串（客户端 fatal、探针 signature 同理）。
+20. **Web 与隧道锁定隔离**：`webLockouts` / `tunnelLockouts` 分表，VPN 喷洒不得锁死管理口。
 
 ---
+
+## 第十二轮要点（2026-08-29）
+
+- 叶子：`SplitRemoteAddr`、`Seconds`、`fillIPBlock`。
+- P0：Probe 始终挂载；握手 OK 失败回滚；改密须旧密码并 `LogoutAllForUser`；`requireAuth` 失败关闭。
+- P1：明文钥默认拒绝（`allow_plaintext_private_keys`）；导出不解密；双 lockout；CSRF 常量时间；retention 解耦；sessionmgr 回调/路由加固。
 
 ## HTTP API 路由表
 
@@ -156,7 +173,7 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | GET | `/api/v1/health` | handleHealth | 公开 |
 | GET | `/api/v1/system/info` | handleSystemInfo | 公开 |
 | POST | `/api/v1/logout` | handleLogout | Session |
-| POST | `/api/v1/password` | handleChangePassword | Session |
+| POST | `/api/v1/password` | handleChangePassword（须 `old_password`+`new_password`；成功吊销会话） | Session |
 | GET | `/api/v1/csrf` | handleCSRF | Session |
 | GET/POST | `/api/v1/users` | handleUsers | Session |
 | * | `/api/v1/users/{id}/…` | handleUserByID | Session |
@@ -170,8 +187,28 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | GET | `/api/v1/security/events` | handleSecurityEvents | Session |
 | GET/POST | `/api/v1/security/blocks` | handleSecurityBlocks | Session |
 | DELETE | `/api/v1/security/blocks/{ip}` | handleSecurityBlockByIP | Session |
+| GET/POST | `/api/v1/peer-routes` | handlePeerRoutes | Session |
+| DELETE | `/api/v1/peer-routes/{id}` | handlePeerRouteByID | Session |
+| PUT | `/api/v1/peer-routes/{id}/members` | replacePeerRouteMembers | Session |
+| GET | `/api/v1/lan-registry` | handleLANRegistry | Session |
+| GET/POST | `/api/v1/peer-access` | handlePeerAccess | Session |
+| GET/POST | `/api/v1/peers/apply` | handlePeersApply | Session |
+| GET/PUT | `/api/v1/security/vpn-peers` | handleVPNPeersPolicy | Session |
 
-**WebUI**：`/`, `/users`, `/connections`, `/audit`, `/security`（探针）、`/tools`；`/peers` → `/users`；`/login` 公开。
+**WebUI**：`/`, `/users`, `/peers`（托管路由 + 本地网段注册表）、`/connections`, `/audit`, `/security`（探针）、`/tools`；`/login` 公开。
+
+**AllowedIPs vs local_lans vs 托管路由（勿混用）**：
+
+| 概念 | 含义 | 存储 / 下发 |
+|------|------|-------------|
+| **AllowedIPs** | 经**服务端网关/NAT**可达的工控网段（及可选 VPN 子网） | `users.allowed_ips` + 默认 NAT CIDR；握手 `allowed_ips` |
+| **local_lans** | 客户端 YAML/GUI **手动**配置的本机后面 LAN；非空才开启 | `client.yaml` → 握手 `local_lans` → 临时表 `client_lan_registry`；客户端 `netstack` via 出口 |
+| **托管路由 Managed Routes** | `dest via 客户端`（hub 转 via，via 再出 LAN） | 定义 `peer_routes` + 访问方 `peer_route_members`（`user_id=0`=全部）；握手仅下发**非失效**项 |
+| **互访** | 默认可 ping 对方 `vpn_ip/32` 禁止 | `security.allow_all_vpn_peers` / `peer_access`（默认双向）；「应用生效」踢线刷新 |
+
+**失效**：via 离线，或注册表无匹配 `dest` → UI 标失效；握手跳过，不装客户端路由。注册表 alone **不转发**，须管理员从注册表创建托管路由。
+
+出站 `RouteOutbound`：仅 `dst==vpn_ip` 或托管 via 索引；**禁止**用会话 AllowedIPs（NAT）把流量错送回客户端。入站：横向 → via 匹配（优先于 writeTUN）→ 否则 writeTUN（网关 NAT）。
 
 > 探针事件码中英文对照与行为说明见 [security-hardening.md](security-hardening.md)「探针防御与安全事件」。改分类或 Label 须同步该文档与 `probedefense/labels.go`。
 

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -59,17 +60,56 @@ func (s *Service) Logout(token string) {
 	s.sessionsMu.Unlock()
 }
 
+// LogoutAllForUser 吊销某用户的全部 Web 会话（改密/重置/禁用后调用，防盗用 Cookie 继续有效）。
+//
+// 参数：userID — persist.User 主键。
+// 返回：被删除的会话数。
+func (s *Service) LogoutAllForUser(userID int64) int {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	n := 0
+	for tok, se := range s.sessions {
+		if se.UserID == userID {
+			delete(s.sessions, tok)
+			n++
+		}
+	}
+	return n
+}
+
+// PruneExpiredSessions 删除已过期的内存会话，防止长跑进程泄漏。
+//
+// 返回：删除条数；宜在登录成功路径轻量调用。
+func (s *Service) PruneExpiredSessions() int {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	n := 0
+	now := time.Now()
+	for tok, se := range s.sessions {
+		if now.After(se.ExpiresAt) {
+			delete(s.sessions, tok)
+			n++
+		}
+	}
+	return n
+}
+
 // ValidateCSRF 校验写请求是否携带与 session 匹配的 CSRF token。
 //
 // 参数：sessionToken 为 Cookie/Header 中的会话；csrf 为表单或 Header 中的 CSRF 值。
 // 返回：会话有效且 CSRF 一致时为 true；会话无效或 token 不匹配为 false。
-// 副作用：无；内部调用 ValidateSession。
+// 副作用：无；内部调用 ValidateSession；比较使用常量时间以防时序侧信道。
 func (s *Service) ValidateCSRF(sessionToken, csrf string) bool {
 	se, ok := s.ValidateSession(sessionToken)
 	if !ok {
 		return false
 	}
-	return se.CSRFToken == csrf
+	a := []byte(se.CSRFToken)
+	b := []byte(csrf)
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare(a, b) == 1
 }
 
 // GetCSRF 返回有效会话对应的 CSRF token，供模板或 API 下发给前端。

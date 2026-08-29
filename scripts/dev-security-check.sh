@@ -31,8 +31,8 @@ else
   ok "listen_hosts 未绑定 0.0.0.0"
 fi
 
-if grep -qE 'password:\s*"?changeme"?' "$CFG"; then
-  warn "admin 密码仍为 changeme"
+if grep -qE 'password:\s*"?changeme(12)?"?' "$CFG"; then
+  warn "admin 密码仍为默认模板值（changeme/changeme12）"
 else
   ok "admin 默认密码已修改（或不在配置文件中）"
 fi

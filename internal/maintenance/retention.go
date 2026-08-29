@@ -49,12 +49,13 @@ func RunDataRetention(store *persist.Store, logs *logstore.Store, cfg *config.Se
 		} else if n > 0 {
 			logger.Info("已清理安全事件 %d 条（保留 %d 天）", n, days)
 		}
-		n2, err := store.PruneExpiredIPBlocks(now)
-		if err != nil {
-			logger.Warn("过期封禁清理失败: %v", err)
-		} else if n2 > 0 {
-			logger.Info("已停用过期封禁 %d 条", n2)
-		}
+	}
+	// 过期封禁清理与事件保留天数解耦：只要有 store 就尝试停用已过期 ip_blocks。
+	n2, err := store.PruneExpiredIPBlocks(now)
+	if err != nil {
+		logger.Warn("过期封禁清理失败: %v", err)
+	} else if n2 > 0 {
+		logger.Info("已停用过期封禁 %d 条", n2)
 	}
 
 	if logs != nil && cfg.HistoryLogEnabled() {

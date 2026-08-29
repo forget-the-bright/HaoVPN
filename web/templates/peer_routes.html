@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>托管路由 · HaoVPN</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="logo-sm"><span class="logo-icon">VPN</span> HaoVPN</div>
+        <div class="sub">管理控制台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <a class="nav-item" data-page="dashboard" href="/"><span class="icon">◉</span> 总览</a>
+        <a class="nav-item" data-page="users" href="/users"><span class="icon">👤</span> 账号</a>
+        <a class="nav-item active" data-page="peers" href="/peers"><span class="icon">⇄</span> 托管路由</a>
+        <a class="nav-item" data-page="connections" href="/connections"><span class="icon">📡</span> 连接</a>
+        <a class="nav-item" data-page="audit" href="/audit"><span class="icon">📋</span> 审计</a>
+        <a class="nav-item" data-page="security" href="/security"><span class="icon">🛡</span> 探针</a>
+        <a class="nav-item" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
+      </nav>
+      <div class="sidebar-footer">
+        <button type="button" class="btn btn-ghost btn-block btn-sm" onclick="HaoVPN.logout()">退出登录</button>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      <header class="topbar">
+        <h1>托管路由 / Managed Routes</h1>
+        <span class="text-muted">对齐 ZeroTier：目标网段 via 客户端 VPN IP（服务端转发）</span>
+      </header>
+      <main class="content">
+        <div id="pendingBanner" class="card" style="display:none;margin-bottom:1rem;border-color:#c9a227;background:rgba(201,162,39,.08)">
+          <p style="margin:0 0 .5rem"><strong>有未生效的变更</strong> — 增删已写入数据库，须点击「应用生效」踢线受影响客户端以刷新策略。</p>
+          <button type="button" class="btn btn-primary btn-sm btn-apply" onclick="applyPeers()">
+            <span class="btn-label">应用生效</span>
+          </button>
+        </div>
+
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between;align-items:center">
+            <div>
+              <h2 class="card-title" style="margin:0">全局互访</h2>
+              <p class="text-muted" style="margin:.35rem 0 0">默认禁止 VPN 客户端互访对方虚拟 IP。开启后任意账号可互 ping（即时生效，无需应用）。</p>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm btn-apply" onclick="applyPeers()" title="踢线待应用账号">
+              <span class="btn-label">应用生效</span>
+            </button>
+          </div>
+          <label class="check-row" style="margin-top:.75rem">
+            <input type="checkbox" id="allowAllPeers"> 允许全部 VPN 互访
+          </label>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="savePeersPolicy()">保存开关</button>
+        </div>
+
+        <div class="card" style="margin-top:1rem">
+          <h2 class="card-title">在线本地网段注册表</h2>
+          <p class="text-muted">客户端配置 <code>local_lans</code> 后登录上报；断线清空。仅广告，不自动建托管路由。可从下行「从注册表创建」。</p>
+          <div class="toolbar">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="loadRegistry()">刷新注册表</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>账号</th><th>VPN IP</th><th>网段</th><th>主机</th><th>更新</th><th></th></tr>
+              </thead>
+              <tbody id="registryRows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1rem">
+          <h2 class="card-title">托管路由</h2>
+          <p class="text-muted">列表格式：<code>{dest} via {via_vpn_ip}</code>。via 表示服务端把流量转给该客户端；须 via 在线且注册表有匹配 dest 才有效。AllowedIPs（工控 NAT）请在账号页配置。</p>
+          <div class="toolbar">
+            <div class="form-group">
+              <label>目标网段</label>
+              <input id="destCidr" placeholder="192.168.0.0/24">
+            </div>
+            <div class="form-group">
+              <label>via 账号</label>
+              <select id="viaUser"></select>
+            </div>
+            <div class="form-group">
+              <label>适用范围</label>
+              <select id="routeScope">
+                <option value="all">全部账号</option>
+                <option value="user">指定账号</option>
+              </select>
+            </div>
+            <div class="form-group" id="accessorGroup" style="display:none">
+              <label>访问方账号</label>
+              <select id="accessorUser"></select>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAddRoute" onclick="addRoute()">新增</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="loadRoutes()">刷新</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>展示</th>
+                  <th>目标网段</th>
+                  <th>via</th>
+                  <th>访问方</th>
+                  <th>状态</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="routeRows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1rem">
+          <h2 class="card-title">互访白名单（双向）</h2>
+          <p class="text-muted">添加后默认 <strong>A ↔ B</strong> 双向可互 ping 对方当前 VPN IP。保存后须「应用生效」。</p>
+          <div class="toolbar">
+            <div class="form-group">
+              <label>账号 A</label>
+              <select id="accUser"></select>
+            </div>
+            <div class="form-group">
+              <label>账号 B</label>
+              <select id="peerUser"></select>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAddAccess" onclick="addAccess()">添加互访</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="loadAccess()">刷新</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>互访双方</th><th>VPN IP</th><th></th></tr>
+              </thead>
+              <tbody id="accessRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- 访问方多选：全部 / 勾选具体账号 -->
+  <div id="memberModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="memberModalTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3 id="memberModalTitle">选择访问方</h3>
+        <button type="button" class="btn btn-ghost btn-sm" id="memberModalClose" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint" id="memberModalHint"></p>
+        <div class="member-pick-list" id="memberPickList"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost btn-sm" id="memberModalCancel">取消</button>
+        <button type="button" class="btn btn-primary btn-sm" id="memberModalOk">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script>
+    HaoVPN.setActiveNav('peers');
+    var users = [];
+    var dirty = false;
+    var memberEditRoute = null; // 正在编辑访问方的路由行
+
+    document.getElementById('routeScope').addEventListener('change', function() {
+      document.getElementById('accessorGroup').style.display =
+        this.value === 'user' ? '' : 'none';
+    });
+
+    function setDirty(v) {
+      dirty = !!v;
+      document.getElementById('pendingBanner').style.display = dirty ? '' : 'none';
+    }
+
+    function fillUserSelects() {
+      var ids = ['viaUser', 'accessorUser', 'accUser', 'peerUser'];
+      ids.forEach(function(id) {
+        var sel = document.getElementById(id);
+        sel.innerHTML = '';
+        users.forEach(function(u) {
+          if (!u.has_vpn && !u.vpn_ip) return;
+          var opt = document.createElement('option');
+          opt.value = u.id;
+          opt.textContent = u.username + (u.vpn_ip ? ' (' + u.vpn_ip + ')' : '');
+          sel.appendChild(opt);
+        });
+      });
+    }
+
+    async function loadUsers() {
+      var data = await HaoVPN.api('/api/v1/users?limit=500');
+      users = data.items || data.users || [];
+      if (!users.length && Array.isArray(data)) users = data;
+      fillUserSelects();
+    }
+
+    async function loadPending() {
+      try {
+        var data = await HaoVPN.api('/api/v1/peers/apply');
+        setDirty(!!data.pending_apply);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
+    async function loadPeersPolicy() {
+      var data = await HaoVPN.api('/api/v1/security/vpn-peers');
+      document.getElementById('allowAllPeers').checked = !!data.allow_all_vpn_peers;
+    }
+
+    async function savePeersPolicy() {
+      await HaoVPN.refreshCSRF();
+      await HaoVPN.api('/api/v1/security/vpn-peers', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({allow_all_vpn_peers: document.getElementById('allowAllPeers').checked})
+      });
+      alert('全局互访开关已保存（即时生效）');
+    }
+
+    // 应用生效：全部 .btn-apply 同步 loading（保留 .btn-label 结构）
+    function setApplyLoading(on) {
+      document.querySelectorAll('.btn-apply').forEach(function(btn) {
+        btn.disabled = !!on;
+        var label = btn.querySelector('.btn-label');
+        var spin = btn.querySelector('.btn-spinner');
+        if (on) {
+          if (label) label.textContent = '应用中…';
+          if (!spin) {
+            spin = document.createElement('span');
+            spin.className = 'btn-spinner';
+            spin.setAttribute('aria-hidden', 'true');
+            btn.insertBefore(spin, btn.firstChild);
+          }
+        } else {
+          if (spin) spin.remove();
+          if (label) label.textContent = '应用生效';
+          else btn.textContent = '应用生效';
+        }
+      });
+    }
+
+    async function applyPeers() {
+      setApplyLoading(true);
+      try {
+        await HaoVPN.refreshCSRF();
+        var data = await HaoVPN.api('/api/v1/peers/apply', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({})
+        });
+        setDirty(false);
+        alert(data.message || ('已踢线 ' + (data.kicked || 0) + ' 个账号'));
+      } catch (e) {
+        alert('应用失败: ' + (e.message || e));
+      } finally {
+        setApplyLoading(false);
+      }
+    }
+
+    async function loadRegistry() {
+      var data = await HaoVPN.api('/api/v1/lan-registry');
+      var rows = data.items || [];
+      var tb = document.getElementById('registryRows');
+      tb.innerHTML = '';
+      if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="6" class="text-muted">暂无注册（客户端须配置 local_lans 并在线）</td></tr>';
+        return;
+      }
+      rows.forEach(function(r) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + esc(r.username || r.user_id) + '</td>' +
+          '<td>' + esc(r.vpn_ip) + '</td>' +
+          '<td><code>' + esc(r.dest_cidr) + '</code></td>' +
+          '<td>' + esc(r.host_id || '') + '</td>' +
+          '<td>' + esc(r.updated_at) + '</td>' +
+          '<td><button type="button" class="btn btn-primary btn-sm">创建托管路由</button></td>';
+        tr.querySelector('button').onclick = function() {
+          document.getElementById('destCidr').value = r.dest_cidr;
+          document.getElementById('viaUser').value = String(r.user_id);
+          document.getElementById('routeScope').value = 'all';
+          document.getElementById('accessorGroup').style.display = 'none';
+          window.scrollTo(0, document.getElementById('destCidr').offsetTop);
+        };
+        tb.appendChild(tr);
+      });
+    }
+
+    async function loadRoutes() {
+      var data = await HaoVPN.api('/api/v1/peer-routes');
+      var rows = data.items || [];
+      var tb = document.getElementById('routeRows');
+      tb.innerHTML = '';
+      if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="6" class="text-muted">暂无托管路由</td></tr>';
+        return;
+      }
+      rows.forEach(function(r) {
+        var tr = document.createElement('tr');
+        var scope = r.member_names || (r.scope === 'all' ? '全部账号' : '指定');
+        var via = r.via_username + (r.via_vpn_ip ? ' / ' + r.via_vpn_ip : ' (离线)');
+        var st = r.stale ? '<span style="color:#c9a227">失效</span>' : '<span style="color:#3a7">有效</span>';
+        tr.innerHTML =
+          '<td><code>' + esc(r.display) + '</code></td>' +
+          '<td>' + esc(r.dest_cidr) + '</td>' +
+          '<td>' + esc(via) + '</td>' +
+          '<td>' + esc(scope) + '</td>' +
+          '<td>' + st + '</td>' +
+          '<td>' +
+            '<button type="button" class="btn btn-ghost btn-sm btn-members">访问方</button> ' +
+            '<button type="button" class="btn btn-ghost btn-sm btn-del">删除</button>' +
+          '</td>';
+        tr.querySelector('.btn-del').onclick = function() { delRoute(r.id); };
+        tr.querySelector('.btn-members').onclick = function() { editMembers(r); };
+        tb.appendChild(tr);
+      });
+    }
+
+    function vpnUsers() {
+      return users.filter(function(u) { return u.has_vpn || u.vpn_ip; });
+    }
+
+    function closeMemberModal() {
+      memberEditRoute = null;
+      document.getElementById('memberModal').classList.add('hidden');
+    }
+
+    // 打开访问方多选框：第一项「全部账号」，其余为具体用户（via 本人不可选）
+    function openMemberModal(r) {
+      memberEditRoute = r;
+      var viaID = r.via_user_id;
+      var isAll = r.scope === 'all' || (r.member_user_ids || []).indexOf(0) >= 0;
+      var selected = {};
+      (r.member_user_ids || []).forEach(function(id) {
+        if (id > 0) selected[id] = true;
+      });
+
+      document.getElementById('memberModalTitle').textContent =
+        '选择访问方 · ' + (r.dest_cidr || '');
+      document.getElementById('memberModalHint').textContent =
+        'via：' + (r.via_username || viaID) +
+        (r.via_vpn_ip ? ' / ' + r.via_vpn_ip : '') +
+        '。勾选「全部账号」则任意客户端可经此 via 访问目标网段；或只勾选指定账号。';
+
+      var list = document.getElementById('memberPickList');
+      list.innerHTML = '';
+
+      var allRow = document.createElement('label');
+      allRow.className = 'member-pick-row all-row';
+      allRow.innerHTML =
+        '<input type="checkbox" id="memberPickAll">' +
+        '<span>全部账号</span>';
+      list.appendChild(allRow);
+      var allCb = allRow.querySelector('input');
+      allCb.checked = isAll;
+
+      vpnUsers().forEach(function(u) {
+        if (u.id === viaID) return; // via 不能是访问方自己
+        var row = document.createElement('label');
+        row.className = 'member-pick-row member-user-row';
+        row.innerHTML =
+          '<input type="checkbox" class="member-user-cb" value="' + u.id + '">' +
+          '<span>' + esc(u.username) + '</span>' +
+          '<span class="member-pick-meta">' + esc(u.vpn_ip || '未分配') + '</span>';
+        var cb = row.querySelector('input');
+        cb.checked = !isAll && !!selected[u.id];
+        cb.disabled = isAll;
+        list.appendChild(row);
+      });
+
+      function syncUserDisabled() {
+        var on = allCb.checked;
+        list.querySelectorAll('.member-user-cb').forEach(function(cb) {
+          cb.disabled = on;
+          if (on) cb.checked = false;
+        });
+      }
+      allCb.onchange = syncUserDisabled;
+      syncUserDisabled();
+
+      document.getElementById('memberModal').classList.remove('hidden');
+    }
+
+    async function saveMemberModal() {
+      if (!memberEditRoute) return;
+      var allCb = document.getElementById('memberPickAll');
+      var body = {};
+      if (allCb && allCb.checked) {
+        body.apply_all = true;
+      } else {
+        var ids = [];
+        document.querySelectorAll('.member-user-cb:checked').forEach(function(cb) {
+          var n = parseInt(cb.value, 10);
+          if (n > 0) ids.push(n);
+        });
+        if (!ids.length) {
+          alert('请勾选「全部账号」或至少一个访问方');
+          return;
+        }
+        body.member_user_ids = ids;
+      }
+      var okBtn = document.getElementById('memberModalOk');
+      okBtn.disabled = true;
+      var okLabel = okBtn.textContent;
+      okBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span> 保存中…';
+      try {
+        await HaoVPN.refreshCSRF();
+        await HaoVPN.api('/api/v1/peer-routes/' + memberEditRoute.id + '/members', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        closeMemberModal();
+        setDirty(true);
+        await loadRoutes();
+      } catch (e) {
+        alert('保存访问方失败: ' + (e.message || e));
+      } finally {
+        okBtn.disabled = false;
+        okBtn.textContent = okLabel || '确定';
+      }
+    }
+
+    function editMembers(r) {
+      openMemberModal(r);
+    }
+
+    document.getElementById('memberModalClose').onclick = closeMemberModal;
+    document.getElementById('memberModalCancel').onclick = closeMemberModal;
+    document.getElementById('memberModalOk').onclick = function() { saveMemberModal(); };
+    document.getElementById('memberModal').addEventListener('click', function(ev) {
+      if (ev.target === this) closeMemberModal();
+    });
+    document.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Escape' && !document.getElementById('memberModal').classList.contains('hidden')) {
+        closeMemberModal();
+      }
+    });
+
+    async function addRoute() {
+      var btn = document.getElementById('btnAddRoute');
+      btn.disabled = true;
+      try {
+        await HaoVPN.refreshCSRF();
+        var body = {
+          dest_cidr: document.getElementById('destCidr').value.trim(),
+          via_user_id: parseInt(document.getElementById('viaUser').value, 10),
+          apply_all: document.getElementById('routeScope').value === 'all'
+        };
+        if (!body.apply_all) {
+          body.user_id = parseInt(document.getElementById('accessorUser').value, 10);
+        }
+        await HaoVPN.api('/api/v1/peer-routes', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        document.getElementById('destCidr').value = '';
+        setDirty(true);
+        await loadRoutes();
+      } catch (e) {
+        alert('新增失败: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function delRoute(id) {
+      if (!confirm('删除该托管路由？删除后请点「应用生效」刷新相关客户端。')) return;
+      await HaoVPN.refreshCSRF();
+      await HaoVPN.api('/api/v1/peer-routes/' + id, {method: 'DELETE'});
+      setDirty(true);
+      await loadRoutes();
+    }
+
+    // 将双向 A→B / B→A 合并为一行展示
+    function collapseAccessPairs(rows) {
+      var seen = {};
+      var out = [];
+      rows.forEach(function(a) {
+        var lo = Math.min(a.user_id, a.peer_user_id);
+        var hi = Math.max(a.user_id, a.peer_user_id);
+        var key = lo + ':' + hi;
+        if (seen[key]) return;
+        seen[key] = true;
+        var left = a.user_id === lo ? a : null;
+        var rightName = a.peer_username, rightIP = a.peer_vpn_ip, leftName = a.username, leftIP = '';
+        rows.forEach(function(b) {
+          if (b.user_id === lo && b.peer_user_id === hi) {
+            leftName = b.username;
+          }
+          if (b.user_id === hi && b.peer_user_id === lo) {
+            rightName = b.username;
+            rightIP = b.peer_vpn_ip || rightIP;
+          }
+          if (b.user_id === lo) leftIP = ''; // 本侧 IP 从 users 补
+        });
+        var uLo = users.find(function(u) { return u.id === lo; });
+        var uHi = users.find(function(u) { return u.id === hi; });
+        out.push({
+          user_id: lo,
+          peer_user_id: hi,
+          label: (leftName || (uLo && uLo.username) || lo) + ' ↔ ' + (rightName || (uHi && uHi.username) || hi),
+          ips: ((uLo && uLo.vpn_ip) || '—') + ' / ' + ((uHi && uHi.vpn_ip) || rightIP || '—')
+        });
+      });
+      return out;
+    }
+
+    async function loadAccess() {
+      var data = await HaoVPN.api('/api/v1/peer-access');
+      var rows = collapseAccessPairs(data.items || []);
+      var tb = document.getElementById('accessRows');
+      tb.innerHTML = '';
+      if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="3" class="text-muted">暂无白名单</td></tr>';
+        return;
+      }
+      rows.forEach(function(a) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + esc(a.label) + '</td>' +
+          '<td>' + esc(a.ips) + '</td>' +
+          '<td><button type="button" class="btn btn-ghost btn-sm">删除</button></td>';
+        tr.querySelector('button').onclick = function() {
+          delAccess(a.user_id, a.peer_user_id);
+        };
+        tb.appendChild(tr);
+      });
+    }
+
+    async function addAccess() {
+      var btn = document.getElementById('btnAddAccess');
+      btn.disabled = true;
+      try {
+        await HaoVPN.refreshCSRF();
+        await HaoVPN.api('/api/v1/peer-access', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            user_id: parseInt(document.getElementById('accUser').value, 10),
+            peer_user_id: parseInt(document.getElementById('peerUser').value, 10)
+          })
+        });
+        setDirty(true);
+        await loadAccess();
+      } catch (e) {
+        alert('添加失败: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function delAccess(uid, pid) {
+      if (!confirm('删除该双向互访？')) return;
+      await HaoVPN.refreshCSRF();
+      await HaoVPN.api('/api/v1/peer-access?user_id=' + uid + '&peer_user_id=' + pid, {method: 'DELETE'});
+      setDirty(true);
+      await loadAccess();
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    (async function() {
+      try {
+        await HaoVPN.refreshCSRF();
+        await loadUsers();
+        await loadPeersPolicy();
+        await loadRegistry();
+        await loadRoutes();
+        await loadAccess();
+        await loadPending();
+      } catch (e) {
+        console.error(e);
+        alert('加载失败: ' + (e.message || e));
+      }
+    })();
+  </script>
+</body>
+</html>

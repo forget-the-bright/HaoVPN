@@ -15,6 +15,7 @@ import (
 //   Server — 隧道 TLS 连接目标与传输计时；
 //   Tun — 本地 Wintun/TUN 接口参数；
 //   Auth — 隧道账号密码（remember_password 可选明文写回）；
+//   LocalLANs — 可选本地网段列表；非空则登录上报并开启 via 出口；
 //   Security — Kill-switch 等客户端安全选项；
 //   Reconnect — 断线指数退避；
 //   Log — 日志级别与滚动文件路径。
@@ -22,12 +23,13 @@ import (
 // vpn_ip / allowed_ips / gateway / 私钥均由握手下发，client.yaml 不含 peer 段。
 // ApplyDefaults 填充缺省；Validate 在连接前校验。
 type ClientConfig struct {
-	Server    ClientServerSection    `yaml:"server"`    // 服务端地址、TLS、传输心跳/拨号超时
-	Tun       ClientTunSection       `yaml:"tun"`       // 本地 TUN 网卡名、MTU、DNS 策略
-	Auth      ClientAuthSection      `yaml:"auth"`      // 隧道账号密码
-	Security  ClientSecuritySection  `yaml:"security"`  // Kill-switch 等客户端安全选项
-	Reconnect ReconnectSection       `yaml:"reconnect"` // 断线指数退避重连
-	Log       LogSection             `yaml:"log"`       // 日志级别与文件路径
+	Server    ClientServerSection    `yaml:"server"`     // 服务端地址、TLS、传输心跳/拨号超时
+	Tun       ClientTunSection       `yaml:"tun"`        // 本地 TUN 网卡名、MTU、DNS 策略
+	Auth      ClientAuthSection      `yaml:"auth"`       // 隧道账号密码
+	LocalLANs []string               `yaml:"local_lans"` // 手动配置的本地网段；空=关闭 via 广告与出口
+	Security  ClientSecuritySection  `yaml:"security"`   // Kill-switch 等客户端安全选项
+	Reconnect ReconnectSection       `yaml:"reconnect"`  // 断线指数退避重连
+	Log       LogSection             `yaml:"log"`        // 日志级别与文件路径
 }
 
 // ClientServerSection 要连接的服务端地址、TLS 与传输层心跳/拨号超时。
