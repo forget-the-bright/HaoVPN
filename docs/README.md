@@ -35,6 +35,12 @@
 | [../cmd/README.md](../cmd/README.md) | 三个二进制入口 |
 | [../web/README.md](../web/README.md) | WebUI 模板与 `static/*.js` |
 
+## 手机客户端（尚未开工代码）
+
+| 文档 | 说明 |
+|------|------|
+| [mobile-client-plan.md](mobile-client-plan.md) | **实施蓝图**：架构、步骤、缺陷清单、安全、验收；按此即可开工 |
+
 ## 发版说明
 
 | 文档 | 说明 |
@@ -57,4 +63,4 @@
 3. 改行为（配置项、安全默认、自启、API）时同步：`deploy` / `security-hardening` / `troubleshooting` 中相关节。
 4. 文件名与链接保持一致：`development-principles`、`comment-style`、`licensing`、`deploy`、`dev-log`。
 
-*最后更新：2026-08-30 · 文档治理*
+*最后更新：2026-08-30 · 增补 mobile-client-plan*
