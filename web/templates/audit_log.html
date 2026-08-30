@@ -10,7 +10,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <div class="logo-sm"><span class="logo-icon">VPN</span> HaoVPN</div>
+        <div class="logo-sm"><img class="logo-icon-img" src="/static/logo.png" alt="" width="36" height="36"> HaoVPN</div>
         <div class="sub">管理控制台</div>
       </div>
       <nav class="sidebar-nav">
@@ -71,6 +71,7 @@
     async function load(off) {
       if (off !== undefined) offset = off;
       try {
+        await HaoVPN.ensureDisplayTZ();
         await HaoVPN.refreshCSRF();
         var limit = parseInt(document.getElementById('fLimit').value, 10) || 50;
         var q = HaoVPN.buildQuery({
@@ -92,10 +93,7 @@
             actionLabel = actionLabel + '（' + e.action_zh + '）';
           }
           var target = formatAuditTarget(e);
-          var ts = e.created_at || '';
-          if (typeof ts === 'string' && ts.indexOf('T') === -1 && ts.length > 10) {
-            ts = ts.replace(' ', 'T') + 'Z';
-          }
+          var ts = HaoVPN.formatTime(e.created_at);
           tr.innerHTML =
             '<td class="text-mono">' + ts + '</td>' +
             '<td><span class="badge badge-ok">' + actionLabel + '</span></td>' +

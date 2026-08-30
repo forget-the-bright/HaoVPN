@@ -58,7 +58,7 @@ func DefaultConfig() Config {
 		HeartbeatInterval: timeutil.Seconds(netutil.DefaultHeartbeatIntervalSec),
 		HeartbeatTimeout:  timeutil.Seconds(netutil.DefaultHeartbeatTimeoutSec),
 		WriteTimeout:      15 * time.Second,
-		MaxQueueSize:      256,
+		MaxQueueSize:      netutil.DefaultSendQueueSize,
 		ReconnectInitial:  timeutil.Seconds(netutil.DefaultReconnectInitialSec),
 		ReconnectMax:      timeutil.Seconds(netutil.DefaultReconnectMaxSec),
 		DialTimeout:       timeutil.Seconds(netutil.DefaultDialTimeoutSec),
@@ -135,7 +135,7 @@ type Conn struct {
 // 副作用：启动 3 个 goroutine；失败时不留泄漏连接。
 func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onClose func(error)) (*Conn, error) {
 	if cfg.MaxQueueSize <= 0 {
-		cfg.MaxQueueSize = 256
+		cfg.MaxQueueSize = netutil.DefaultSendQueueSize
 	}
 	c := &Conn{
 		cfg:     cfg,
@@ -173,7 +173,7 @@ func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onCl
 // 返回：*Conn 已 StateConnected；不负责关闭底层 net.Conn（Close 时关）。
 func AcceptConn(tlsConn *tls.Conn, cfg Config, onData func([]byte), onClose func(error)) *Conn {
 	if cfg.MaxQueueSize <= 0 {
-		cfg.MaxQueueSize = 256
+		cfg.MaxQueueSize = netutil.DefaultSendQueueSize
 	}
 	c := &Conn{
 		cfg:     cfg,

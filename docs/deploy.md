@@ -234,9 +234,12 @@ launchd 配置历史见 `docs/dev-log.md`。
 | `api.allow_public_bind` | `false` | **危险**：绑 0.0.0.0 须显式 true |
 | `api.port` | `8080` | 管理端口 |
 | `vpn.subnet` | `10.88.0.0/24` | VPN 地址池 |
+| `vpn.send_queue_size` | `256` | 服务端发送队列（帧条数）；大文件/电影可 `1024`；范围 64～8192，越界钳制 |
 | `vpn.session_policy` | `reject_second` | 同账号第二端：拒绝（安全事件 `account_online`）/ `kick_previous` 踢旧 |
 | `vpn.reconnect_grace_sec` | `60` | 同公网 IP 短窗顶替旧会话并续算 Rx/Tx；YAML `-1`→关闭 |
+| `api.display_timezone` | `UTC` | **仅 WebUI 展示**时区（`Asia/Shanghai` / `GMT+8` / `+08:00`）；SQLite 与 API JSON 仍 UTC |
 | `nat.allowed_lan_cidrs` | 工控网段 | 允许经**服务端 NAT**访问的现场网段（写入默认 AllowedIPs） |
+| 客户端 `server.send_queue_size` | `256` | 客户端发送队列；与服务端可不同；上传大文件可加大 |
 | `security.allow_all_vpn_peers` | `false` | 允许全部客户端互访对方 VPN IP；细粒度用控制台「托管路由」/白名单 |
 | `security.probe_defense` | 见下表 | 公网探针识别、落库、温和自动封禁；详解与特征对照见 [security-hardening.md](security-hardening.md) |
 | `security.allow_plaintext_private_keys` | `false` | 仅兼容旧库明文私钥；生产必须保持 false |
@@ -253,10 +256,10 @@ launchd 配置历史见 `docs/dev-log.md`。
 
 | 配置/表 | 作用 |
 |---------|------|
-| 账号 AllowedIPs / `nat.allowed_lan_cidrs` | 经**服务端网关 NAT**访问工控网 |
+| 账号 AllowedIPs / `nat.allowed_lan_cidrs` | 经**服务端网关 NAT**访问工控网；客户端托盘「分流」栏展示 |
 | 客户端 `local_lans` | 本机当 via 时广告并出口到家里/现场 LAN |
 | `client_lan_registry` | 在线临时广告（断线清空）；alone 不转发 |
-| `peer_routes` + `peer_route_members` | 管理员手工决定谁可走哪条 dest→via |
+| `peer_routes` + `peer_route_members` | 管理员手工决定谁可走哪条 dest→via；客户端托盘「对端托管」栏 |
 
 **via 出口现场步骤（家里共享 LAN）**：
 
@@ -315,44 +318,61 @@ Web 自改密：`POST /api/v1/password` 须带 `old_password` 与 `new_password`
 
 ### 5.2 Windows
 
-桌面 GUI（`haovpn-client-gui.exe`）**仅 Windows 提供**；GitHub Release 的 `HaoVPN-*-windows-*.zip` 已含 GUI + CLI + server。Linux/macOS 分发包仅 CLI。
+桌面 GUI（`haovpn-client-gui.exe`）**仅 Windows 发版包提供**；Linux/macOS 分发包以 CLI 为主。
+
+#### Windows GUI 托盘「配置」与开机自启（已实现）
+
+| 托盘项 | 行为 | 备注 |
+|--------|------|------|
+| 自动连接 | `gui.auto_connect`；须记住密码 | 会话内启动 GUI 后拨号 |
+| 无窗口模式 | `gui.start_minimized`；仅托盘，可再唤起 | 关主窗=隐藏，不是退出 |
+| 开机自启（登录后起本程序） | 计划任务 `HaoVPNClientGUI`，ONLOGON + Highest | 须用户登录（建议自动登录桌面）；免每次 UAC |
+| 开机自启（服务，无托盘） | SCM 服务 `HaoVPNClient`（可用 GUI.exe 作入口） | 开机即连、无托盘；再开 GUI 可「接管」；与界面版互斥 |
 
 ```powershell
-# 解压账号 zip 或公司测试包；bin\ 下仅 exe，无需 wintun.dll
 cd C:\haovpn-client
+.\haovpn-client-gui.exe -c .\client.yaml   # 须管理员 / UAC
+# 或 CLI：
 .\haovpn-client.exe -c .\client.yaml
-# 或 GUI：.\haovpn-client-gui.exe -c .\client.yaml（须管理员 / UAC）
-
-# 注册为服务（开机自连）
 .\haovpn-client.exe --service install
 .\haovpn-client.exe --service start
 ```
 
-首次连接时会在 **exe 同目录** 生成 `wintun.dll`（内嵌释放）；请保证该目录可写。
+首次连接会在 **exe 同目录** 释放 `wintun.dll`（须可写）。GUI 可「记住密码」（明文写入 `client.yaml`，限制 ACL、勿提交 git）；杀开关在 yaml `security.kill_switch` 或托盘「配置」。断线自动重连时保留 TUN/via（未变则不重跑 ICS）；登出 / 手动重连仍全清。
 
-**GUI 登录窗**：填写服务器/账号/密码；可勾选「记住密码」（明文写入 `client.yaml` 的 `auth.password`，须限制文件权限勿提交 git）。**杀开关**不在登录窗配置，请在 yaml 设置：
+### 5.3 Linux / macOS 客户端
 
-```yaml
-security:
-  kill_switch: true   # Windows 专用，须管理员；断线/重连期间 WFP 阻断 allowed_ips 出站
-```
-
-自动重连时客户端**保留** TUN 分流路由与 via/ICS（配置未变则不再重跑 ICS），仅换隧道会话；杀开关在断线间隙 Enable、连上后 Disable。登出 / Stop / 策略失败仍全清数据面。GUI「手动重新连接」等价 Stop 再连（全清）。
-
-CLI 若 yaml 已含 `auth.password`，可无 `HAOVPN_PASSWORD` 直连。
-
-### 5.3 Linux
+发版以 **CLI** 为主（当前无正式 GUI 包）。日常：
 
 ```bash
 chmod +x haovpn-client
 sudo ./haovpn-client -c ./client.yaml
 ```
 
-### 5.4 macOS
+#### 开机自启：两条概念，托盘未实现
+
+与 Windows 一样仍是「登录后有界面」和「开机无界面服务」两条路，但 **`internal/autostart` 非 Windows 只返回提示**，GUI 托盘那两项**不会**写单元文件。请手工配置，例如 Linux systemd：
 
 ```bash
-sudo ./haovpn-client -c ./client.yaml
+# /etc/systemd/system/haovpn-client.service（路径按现场改）
+[Unit]
+Description=HaoVPN Client
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/haovpn/haovpn-client -c /opt/haovpn/client.yaml
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
 ```
+
+```bash
+sudo systemctl enable --now haovpn-client.service
+```
+
+macOS：参考上文服务端 launchd 示例，把二进制换成 `haovpn-client` 做成 LaunchDaemon。登录后拉 GUI（若日后有桌面包）再用用户级 LaunchAgent / `.desktop`，与「系统服务」分开。
 
 ---
 

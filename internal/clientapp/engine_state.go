@@ -75,8 +75,11 @@ type Engine struct {
 	gateway   string
 	lastError string
 	ksOK      bool
-	managedRoutes []tunnel.ManagedRoute // 最近一次握手托管路由（托盘只读）
-	rt        *runtime
+	// 以下字段供托盘「本机路由」只读展示（与 runtime 装路由同源，握手成功时写入）。
+	managedRoutes []tunnel.ManagedRoute // peer_routes 下发的托管路由
+	allowedIPs    []string              // 会话 AllowedIPs（含 NAT 工控段）
+	vpnSubnet     string                // 握手 vpn_subnet；缺省时托盘可回退推导
+	rt            *runtime
 	reconnect *transport.ReconnectClient
 	cancel    context.CancelFunc
 	runCtx    context.Context
@@ -231,6 +234,20 @@ func (e *Engine) ManagedRoutes() []tunnel.ManagedRoute {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]tunnel.ManagedRoute{}, e.managedRoutes...)
+}
+
+// AllowedIPs 返回最近一次握手的会话分流前缀副本（含 nat.allowed_lan_cidrs 等）。
+func (e *Engine) AllowedIPs() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string{}, e.allowedIPs...)
+}
+
+// VPNSubnet 返回握手下发的 VPN 地址池 CIDR（托盘「本机TUN」行优先使用）。
+func (e *Engine) VPNSubnet() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.vpnSubnet
 }
 
 func (e *Engine) setState(st State) {

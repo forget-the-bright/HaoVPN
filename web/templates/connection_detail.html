@@ -10,7 +10,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <div class="logo-sm"><span class="logo-icon">VPN</span> HaoVPN</div>
+        <div class="logo-sm"><img class="logo-icon-img" src="/static/logo.png" alt="" width="36" height="36"> HaoVPN</div>
         <div class="sub">管理控制台</div>
       </div>
       <nav class="sidebar-nav">
@@ -53,7 +53,7 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>账号</th><th>VPN IP</th><th>状态</th><th>重连</th><th>AllowedIPs</th>
+                  <th>账号</th><th>VPN IP</th><th>状态</th><th>重连</th><th>会话分流前缀</th>
                   <th>连接时间</th><th>最后心跳</th><th>RX / TX</th><th>远端</th>
                 </tr>
               </thead>
@@ -99,8 +99,8 @@
         '<td>' + (p.online ? HaoVPN.statusBadge(true, '在线', '') : '<span class="badge badge-warn">离线</span>') + '</td>' +
         '<td class="text-mono">' + (p.reconnect_count != null ? p.reconnect_count : '—') + '</td>' +
         '<td class="text-mono">' + ((p.allowed_ips || []).join(', ') || '—') + '</td>' +
-        '<td class="text-mono">' + (p.connected_at || '—') + '</td>' +
-        '<td class="text-mono">' + (p.last_heartbeat || '—') + '</td>' +
+        '<td class="text-mono">' + HaoVPN.formatTime(p.connected_at) + '</td>' +
+        '<td class="text-mono">' + HaoVPN.formatTime(p.last_heartbeat) + '</td>' +
         '<td class="text-mono">' + HaoVPN.formatBytes(p.rx_bytes) + ' / ' + HaoVPN.formatBytes(p.tx_bytes) + '</td>' +
         '<td class="text-mono">' + (p.remote_addr || '') + '</td>';
       var tr = rowCache[key];
@@ -114,6 +114,7 @@
     }
 
     async function loadAccounts() {
+      await HaoVPN.ensureDisplayTZ();
       await HaoVPN.refreshCSRF();
       var q = HaoVPN.buildQuery({
         q: document.getElementById('fQ').value.trim(),
@@ -139,6 +140,7 @@
 
     async function loadEvents(off) {
       if (off !== undefined) evOffset = off;
+      await HaoVPN.ensureDisplayTZ();
       await HaoVPN.refreshCSRF();
       var q = HaoVPN.buildQuery({
         limit: 50,
@@ -151,7 +153,7 @@
       (ev.items || []).forEach(function (e) {
         var tr = document.createElement('tr');
         tr.innerHTML =
-          '<td class="text-mono">' + (e.created_at || '') + '</td>' +
+          '<td class="text-mono">' + HaoVPN.formatTime(e.created_at) + '</td>' +
           '<td>' + (e.username || e.user_id) + '</td>' +
           '<td><span class="badge badge-ok">' + (e.event_type || '') + '</span></td>' +
           '<td class="text-mono">' + (e.remote_addr || '') + '</td>';

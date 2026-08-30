@@ -15,6 +15,7 @@ import (
 //   Server — 隧道 TLS 连接目标与传输计时；
 //   Tun — 本地 Wintun/TUN 接口参数；
 //   Auth — 隧道账号密码（remember_password 可选明文写回）；
+//   GUI — 桌面客户端行为（自动连接、无窗口托盘）；
 //   LocalLANs — 可选本地网段列表；非空则登录上报并开启 via 出口；
 //   Security — Kill-switch 等客户端安全选项；
 //   Reconnect — 断线指数退避；
@@ -26,10 +27,19 @@ type ClientConfig struct {
 	Server    ClientServerSection    `yaml:"server"`     // 服务端地址、TLS、传输心跳/拨号超时
 	Tun       ClientTunSection       `yaml:"tun"`        // 本地 TUN 网卡名、MTU、DNS 策略
 	Auth      ClientAuthSection      `yaml:"auth"`       // 隧道账号密码
+	GUI       ClientGUISection       `yaml:"gui"`        // 桌面 GUI 行为（自动连接、无窗口）
 	LocalLANs []string               `yaml:"local_lans"` // 手动配置的本地网段；空=关闭 via 广告与出口
 	Security  ClientSecuritySection  `yaml:"security"`   // Kill-switch 等客户端安全选项
 	Reconnect ReconnectSection       `yaml:"reconnect"`  // 断线指数退避重连
 	Log       LogSection             `yaml:"log"`        // 日志级别与文件路径
+}
+
+// ClientGUISection 桌面客户端（Fyne）行为选项；CLI/服务模式可忽略。
+type ClientGUISection struct {
+	// AutoConnect 启动 GUI 后自动拨号；须 remember_password 且 password 非空。
+	AutoConnect bool `yaml:"auto_connect"`
+	// StartMinimized 无窗口模式：启动仅托盘，可再「显示主窗口」唤起。
+	StartMinimized bool `yaml:"start_minimized"`
 }
 
 // ClientServerSection 要连接的服务端地址、TLS 与传输层心跳/拨号超时。
@@ -41,6 +51,7 @@ type ClientServerSection struct {
 	HeartbeatIntervalSec int              `yaml:"heartbeat_interval_sec"` // 心跳发送间隔秒；默认 netutil.DefaultHeartbeatIntervalSec
 	HeartbeatTimeoutSec  int              `yaml:"heartbeat_timeout_sec"`  // 对端静默超时秒；默认 netutil.DefaultHeartbeatTimeoutSec
 	DialTimeoutSec       int              `yaml:"dial_timeout_sec"`       // TCP 拨号超时秒；默认 3
+	SendQueueSize        int              `yaml:"send_queue_size"`        // 传输待发帧队列深度；默认 256；范围 64～8192
 }
 
 // ClientTLSSection 客户端 TLS 校验选项（连接 server.address 时使用）。
@@ -121,12 +132,25 @@ func (c *ClientConfig) ApplyDefaults() {
 	if c.Server.DialTimeoutSec <= 0 {
 		c.Server.DialTimeoutSec = netutil.DefaultDialTimeoutSec
 	}
+	c.Server.SendQueueSize = clampSendQueueLogged("server.send_queue_size", c.Server.SendQueueSize)
 	if strings.TrimSpace(c.Log.Level) == "" {
 		c.Log.Level = "info"
 	}
 	if strings.TrimSpace(c.Log.File) == "" {
 		c.Log.File = "./logs/client.log"
 	}
+}
+
+// CanAutoConnect 是否允许 GUI 启动后自动拨号（须记住密码且密码非空）。
+func (c *ClientConfig) CanAutoConnect() bool {
+	if c == nil || !c.GUI.AutoConnect {
+		return false
+	}
+	if !c.Auth.RememberPassword {
+		return false
+	}
+	_, pass := c.ResolveAuth()
+	return strings.TrimSpace(pass) != ""
 }
 
 // Validate 校验客户端配置必填项与安全策略。
@@ -147,6 +171,9 @@ func (c *ClientConfig) Validate() error {
 	}
 	if !c.Server.TLS.InsecureSkipVerify && strings.TrimSpace(c.Server.TLS.CAFile) == "" {
 		return fmt.Errorf("配置错误: 须配置 server.tls.ca_file，或显式 insecure_skip_verify: true")
+	}
+	if c.GUI.AutoConnect && !c.CanAutoConnect() {
+		return fmt.Errorf("配置错误: gui.auto_connect 须同时开启 auth.remember_password 并保存密码")
 	}
 	return nil
 }

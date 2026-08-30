@@ -9,7 +9,8 @@
 | `embed.go` | `//go:embed templates/*.html static/*` → `web.FS`，供 `internal/api` 挂载 |
 | `templates/*.html` | 登录、用户列表、**托管路由**、连接详情、审计、探针、工具 |
 | `static/style.css` | 共用样式（无外部 CDN） |
-| `static/app.js` | 共用脚本：CSRF、fetch 封装、Toast、分页、格式化 |
+| `static/app.js` | 共用脚本：CSRF、fetch 封装、Toast、分页、`formatTime`（按 `api.display_timezone`） |
+| `static/logo.png` | 品牌图（登录页 / 侧栏）；源同 `docs/assets/haovpn-logo.png` |
 
 ## 与后端的对应关系
 
@@ -18,10 +19,12 @@
 - **CSRF**：`HaoVPN.refreshCSRF()` 从 `GET /api/v1/csrf` 取 token，写请求头 `X-CSRF-Token`。
 - **登录改密**：须改密时填当前密码+新密码；成功后跳转 `/login`（服务端已吊销全部 Web Session）。
 - **账号页**：`/users` — 新建、策略编辑、管理员改密、踢线、导出 ZIP/YAML（**POST+CSRF**，`downloadPost`；不含私钥）。
-- **审计页**：`/audit` — 动作 `码（中文）`、用户目标 `用户名 (#id)`；字典 `internal/audit/labels.go`。
+- **审计页**：`/audit` — 动作 `码（中文）`、用户目标 `用户名 (#id)`；字典 `internal/audit/labels.go`；时间经 `HaoVPN.formatTime`。
 - **工具页**：备份数据库为 **POST** `/api/v1/backup`（须 CSRF）。
-- **托管路由页**：`/peers` — 全局互访开关、Managed Routes（`dest via vpn_ip`）、互访白名单；API `/api/v1/peer-routes`、`/peer-access`、`/security/vpn-peers`。
-- **探针页**：`/security` — `security_events` / `ip_blocks`。
+- **托管路由页**：`/peers` — 全局互访开关、Managed Routes（`dest via vpn_ip`）、互访白名单；API `/api/v1/peer-routes`、`/peer-access`、`/security/vpn-peers`；注册表 `updated_at` 用 `formatTime`。
+- **探针页**：`/security` — `security_events` / `ip_blocks`；时间经 `formatTime`。
+- **连接详情**：`/connections/...` — 事件时间经 `formatTime`。
+- **展示时区**：`GET /api/v1/system/info` 的 `display_timezone` / `display_timezone_offset`；存库与 API JSON 仍为 UTC，仅页面转换。配置项 `api.display_timezone`（如 `Asia/Shanghai`、`GMT+8`）。
 - **静态资源**：`/static/style.css`、`/static/app.js` 由 embed FS 直接 Serve。
 
 ## 开发注意

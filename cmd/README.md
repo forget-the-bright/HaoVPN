@@ -6,7 +6,7 @@
 |------|--------|------|
 | `cmd/server` | `haovpn-server` | `-c server.yaml` → `serverapp.Engine.Run()` |
 | `cmd/client` | `haovpn-client` | CLI 拨号；Windows `--service` → `clientapp` |
-| `cmd/client-gui` | `haovpn-client-gui` | flag / UAC / 单实例 / 主题 → `clientgui.Run` |
+| `cmd/client-gui` | `haovpn-client-gui` | flag / UAC / 单实例 / 主题 / 服务入口 → `clientgui.Run`；亦可 `--service` |
 
 ## 通用 flag
 

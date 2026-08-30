@@ -6,7 +6,92 @@
 
 ---
 
-*最后更新：2026-08-30 · 架构解耦第十四轮*
+*最后更新：2026-08-30 · 文档：自启平台矩阵 + README 改写*
+
+---
+
+## 2026-08-30 · 文档：开机自启平台说明 + README 去 AI 味
+
+### 完成
+
+- 标明：托盘两个开机自启 **仅 Windows 实现**；Linux/macOS 概念仍两套，托盘未接，须 systemd/launchd 手工配 CLI。
+- 更新 deploy §5.2/5.3、troubleshooting、architecture、autostart/doc、internal README、根 README（压缩口号、按平台写清）。
+
+### 关联
+
+- `README.md`、`docs/deploy.md`、`docs/troubleshooting.md`、`docs/architecture.md`、`internal/autostart/doc.go`
+
+---
+
+## 2026-08-30 · GUI 托盘配置：自动连接 + 开机自启 + 退出不卡
+
+### 动机
+
+工控机重启后要自动连 VPN；退出因同步 ICS 假死；托盘需可配自动连接/无窗口/自启。
+
+### 改动摘要
+
+- **退出**：`quitApp` 异步 `stopEngineAsync`，提示「正在退出（清理网络）」；未 Setup via 不跑 DisableAllICS。
+- **gui.***：`auto_connect` / `start_minimized`；SaveClient patch；托盘「配置」菜单。
+- **autostart**：登录计划任务 HighestPrivileges；可选同一 GUI.exe 注册 Windows 服务；服务占用时 GUI 可接管。
+- **文档**：deploy / troubleshooting / architecture / README / 记忆。
+
+### 验证
+
+```powershell
+go test ./internal/config/... ./internal/autostart/... ./internal/clientgui/... -count=1
+go test ./... -count=1
+.\scripts\build-local.ps1
+```
+
+---
+
+## 2026-08-30 · 托盘本机路由分栏 + README 品牌
+
+### 动机
+
+托盘「托管路由」只列 peer `managed_routes`，不列 `nat.allowed_lan_cidrs` / AllowedIPs，日志已加 `192.168.3.0/24` 时菜单却显示「无对端托管」，易误判。顺带 README/WebUI 品牌图与术语澄清。
+
+### 改动摘要
+
+- **Engine**：握手保存 `allowedIPs`/`vpnSubnet`；导出 `AllowedIPs()`/`VPNSubnet()`；Stop 清空。
+- **托盘**：父项「本机路由」= 本机TUN（真实 subnet）+ 分流 AllowedIPs + 对端托管；Stale 标「失效」；`tray_routes` 单测。
+- **Web**：仪表盘列「会话分流前缀」；登录/侧栏用 `static/logo.png`。
+- **README**：`docs/assets/haovpn-logo.png`；压缩表述。
+- **文档**：troubleshooting / architecture / deploy / internal·web README / 记忆。
+
+### 验证
+
+```powershell
+go test ./internal/clientgui/... ./internal/clientapp/... -count=1
+go test ./... -count=1
+.\scripts\build-local.ps1
+```
+
+---
+
+## 2026-08-30 · 发送队列可配 + WebUI 展示时区 + defaults 全注释
+
+### 动机
+
+大文件/电影下载易打满默认发送队列（256）刷 WARN；中国现场 WebUI 默认 UTC 与本地差 8 小时。队列与展示时区做成 YAML 可配，并补全 defaults 模板注释。
+
+### 改动摘要
+
+- **队列**：`vpn.send_queue_size` / 客户端 `server.send_queue_size`（默认仍 256；钳制 64～8192 + Warn）→ `transport.MaxQueueSize`；启动日志 `transport send_queue_size=`。
+- **时区**：`api.display_timezone`（默认 UTC；`Asia/Shanghai` / `GMT+8` / `+08:00`）；`timeutil` + 嵌入 `tzdata`；`system/info` 下发；`HaoVPN.formatTime` 四页统一；LAN `updated_at` RFC3339。存库/API 仍 UTC。
+- **defaults / 示例 yaml**：服务端与客户端模板逐项中文注释；`config/*_example.yaml` 同步。
+- **文档**：deploy / architecture / troubleshooting / hardening / internal README / web README / 记忆。
+
+### 验证
+
+```powershell
+go test ./internal/config/... ./internal/timeutil/... ./internal/transport/... ./internal/api/... -count=1
+go test ./... -count=1
+.\scripts\build-local.ps1
+```
+
+手工：`display_timezone: GMT+8` 审计页应为东八；`send_queue_size: 1024` 大文件 WARN 应减少。
 
 ---
 

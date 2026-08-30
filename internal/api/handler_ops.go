@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"haovpn/internal/audit"
 	"haovpn/internal/health"
@@ -13,6 +14,7 @@ import (
 	"haovpn/internal/paginate"
 	"haovpn/internal/persist"
 	"haovpn/internal/readmodel"
+	"haovpn/internal/timeutil"
 	"haovpn/internal/version"
 )
 
@@ -26,9 +28,24 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-// handleSystemInfo 返回构建版本信息（GET /api/v1/system/info，公开）。
+// handleSystemInfo 返回构建版本与 WebUI 展示时区（GET /api/v1/system/info，公开）。
+//
+// display_timezone 为配置原文；display_timezone_offset 为相对 UTC 的简短标签（如 +08:00 / Z）。
+// 不敏感：仅影响控制台时间展示，存库仍为 UTC。
 func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, version.Info())
+	info := version.Info()
+	tz := "UTC"
+	if s.cfg != nil && strings.TrimSpace(s.cfg.API.DisplayTimezone) != "" {
+		tz = strings.TrimSpace(s.cfg.API.DisplayTimezone)
+	}
+	info["display_timezone"] = tz
+	loc, err := timeutil.LoadDisplayLocation(tz)
+	if err != nil {
+		info["display_timezone_offset"] = "Z"
+	} else {
+		info["display_timezone_offset"] = timeutil.OffsetLabel(loc, time.Now())
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 // handleAudit 分页查询管理审计日志（GET /api/v1/audit）。

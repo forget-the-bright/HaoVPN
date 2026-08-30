@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"haovpn/internal/netutil"
+	"haovpn/internal/timeutil"
 )
 
 // ServerConfig 服务端完整配置（对应 server.yaml）。
@@ -72,6 +73,7 @@ type VPNSection struct {
 	DNSServers           []string `yaml:"dns_servers"`            // 握手推送给客户端；可空则回退 gateway
 	SessionPolicy        string   `yaml:"session_policy"`         // reject_second（默认）| kick_previous
 	ReconnectGraceSec    int      `yaml:"reconnect_grace_sec"`    // 同公网 IP 短窗顶替旧会话并续算流量；默认 60；0=关闭
+	SendQueueSize        int      `yaml:"send_queue_size"`        // 传输待发帧队列深度；默认 256；范围 64～8192
 }
 
 // NATSection 工控/局域网 SNAT 与 IP 转发配置（internal/netstack）。
@@ -107,6 +109,7 @@ type APISection struct {
 	SessionTTLSec        int      `yaml:"session_ttl_sec"`         // Web 会话 Cookie 有效期秒
 	TrustedProxyCIDRs    []string `yaml:"trusted_proxy_cidrs"`   // 信任反代 CIDR；空则 clientIP 仅用 RemoteAddr（防 XFF 绕过锁定）
 	SecureCookies        bool     `yaml:"secure_cookies"`          // true 或 HTTPS 请求时 Session Cookie 设 Secure
+	DisplayTimezone      string   `yaml:"display_timezone"`        // WebUI 展示时区；默认 UTC；存库仍 UTC
 }
 
 // SecuritySection 隧道接入源 IP 限制、分流策略与公网探针防御。
@@ -199,8 +202,12 @@ func (c *ServerConfig) ApplyDefaults() {
 	case c.VPN.ReconnectGraceSec == 0:
 		c.VPN.ReconnectGraceSec = 60
 	}
+	c.VPN.SendQueueSize = clampSendQueueLogged("vpn.send_queue_size", c.VPN.SendQueueSize)
 	if len(c.API.ListenHosts) == 0 {
 		c.API.ListenHosts = []string{"127.0.0.1"}
+	}
+	if strings.TrimSpace(c.API.DisplayTimezone) == "" {
+		c.API.DisplayTimezone = "UTC"
 	}
 	if c.Database.AuditRetentionDays <= 0 {
 		c.Database.AuditRetentionDays = DefaultRetentionDays
@@ -295,6 +302,9 @@ func (c *ServerConfig) Validate() error {
 	}
 	if err := netutil.ValidateCIDRList("api.trusted_proxy_cidrs", c.API.TrustedProxyCIDRs); err != nil {
 		return fmt.Errorf("配置错误: %w", err)
+	}
+	if _, err := timeutil.LoadDisplayLocation(c.API.DisplayTimezone); err != nil {
+		return fmt.Errorf("配置错误: api.display_timezone: %w", err)
 	}
 	if _, _, err := net.SplitHostPort(c.Server.Listen); err != nil {
 		if net.ParseIP(strings.TrimSpace(c.Server.Listen)) == nil {

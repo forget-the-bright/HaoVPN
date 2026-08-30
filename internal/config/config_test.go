@@ -96,7 +96,31 @@ func TestClientApplyDefaults(t *testing.T) {
 	if cfg.Server.HeartbeatIntervalSec != 15 {
 		t.Fatalf("heartbeat=%d", cfg.Server.HeartbeatIntervalSec)
 	}
+	if cfg.Server.SendQueueSize != netutil.DefaultSendQueueSize {
+		t.Fatalf("queue=%d", cfg.Server.SendQueueSize)
+	}
 	if cfg.Log.File == "" {
 		t.Fatal("log file empty")
 	}
 }
+
+func TestSendQueueClampAndDisplayTimezoneValidate(t *testing.T) {
+	sc := &config.ServerConfig{
+		Server: config.ServerSection{Listen: "127.0.0.1:8443"},
+		VPN:    config.VPNSection{Subnet: "10.88.0.0/24", GatewayIP: "10.88.0.1", SendQueueSize: 99999},
+		Database: config.DatabaseSection{Path: "./data/t.db"},
+		API:      config.APISection{Port: 8080, DisplayTimezone: "GMT+8"},
+		Admin:    config.AdminSection{Username: "admin"},
+	}
+	if err := sc.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if sc.VPN.SendQueueSize != netutil.MaxSendQueueSize {
+		t.Fatalf("queue clamped=%d", sc.VPN.SendQueueSize)
+	}
+	sc.API.DisplayTimezone = "Not/Real"
+	if err := sc.Validate(); err == nil {
+		t.Fatal("非法 display_timezone 应失败")
+	}
+}
+

@@ -8,6 +8,7 @@ import (
 
 	"haovpn/internal/logger"
 	"haovpn/internal/persist"
+	"haovpn/internal/timeutil"
 )
 
 // peerRouteView 托管路由列表行（展示 dest via vpn_ip + 失效/成员）。
@@ -128,7 +129,7 @@ func (s *Server) handleLANRegistry(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		v := lanRegistryView{
 			UserID: row.UserID, DestCIDR: row.DestCIDR, VPNIP: row.VPNIP,
-			HostID: row.HostID, UpdatedAt: row.UpdatedAt.UTC().Format("2006-01-02 15:04:05"),
+			HostID: row.HostID, UpdatedAt: timeutil.FormatRFC3339(row.UpdatedAt),
 		}
 		if u, ok := byID[row.UserID]; ok {
 			v.Username = u.Username

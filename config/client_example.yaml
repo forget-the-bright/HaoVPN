@@ -1,26 +1,43 @@
 # 客户端配置参考示例（运行时由首次启动自动生成 client.yaml，或由服务端导出 zip 覆盖）
+# 字段释义以 internal/config/defaults.go 模板注释为准。
+# vpn_ip / allowed_ips / 私钥由握手下发，勿手写 peer 段。
 
 server:
   address: "vpn.example.com:8443"
   tls:
     ca_file: "./certs/ca.crt"
     insecure_skip_verify: false
+  heartbeat_interval_sec: 15
+  heartbeat_timeout_sec: 90
+  dial_timeout_sec: 3
+  # 本端发送队列；默认 256。上传大文件可试 1024；与服务端可不同
+  send_queue_size: 256
 
 tun:
   name: "haovpn0"
   mtu: 1420
 
-peer:
-  private_key: ""
-  public_key: ""
-  server_public_key: ""
-  vpn_ip: "10.88.0.2"
-  allowed_ips:
-    - "192.168.1.0/24"
+auth:
+  username: ""
+  remember_password: false
+  # password: ""   # 仅 remember_password=true 时由 GUI 写入；限制文件权限
+
+# 作托管路由出口机时填写本机后面的 LAN（RFC1918，前缀 ≥ /16）
+# local_lans:
+#   - "192.168.31.0/24"
 
 reconnect:
   initial_sec: 1
-  max_sec: 8
+  max_sec: 3
+
+security:
+  # Windows 杀开关；须管理员。断线时阻断 AllowedIPs 明文出站
+  kill_switch: false
+
+# 桌面 GUI：自动连接须记住密码；无窗口=仅托盘可再唤起
+gui:
+  auto_connect: false
+  start_minimized: false
 
 log:
   level: "info"

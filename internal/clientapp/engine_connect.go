@@ -123,7 +123,9 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	e.mu.Lock()
 	e.vpnIP = hsRes.Policy.VPNIP
 	e.gateway = hsRes.Policy.GatewayIP
+	e.vpnSubnet = strings.TrimSpace(hsRes.Policy.VPNSubnet)
 	e.managedRoutes = append([]tunnel.ManagedRoute{}, hsRes.Policy.ManagedRoutes...)
+	e.allowedIPs = append([]string{}, hsRes.Policy.AllowedIPs...)
 	e.state = StateConnected
 	e.lastError = ""
 	e.mu.Unlock()

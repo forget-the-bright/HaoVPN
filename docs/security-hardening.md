@@ -197,6 +197,7 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 |--------|------|
 | audit_logs | 启用且可查询 |
 | 敏感操作 | 导出配置、踢人、改密均有记录 |
+| 时间存库 | SQLite / JSON API / `?since=` **一律 UTC**；`api.display_timezone` **仅**影响 WebUI 页面展示，不改审计契约 |
 
 ---
 
@@ -240,6 +241,8 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 | 威胁模型 | **机器级**保护：本机任意能读凭据文件的本地主体均可解密；非用户绑定 DPAPI |
 | 为何如此 | 服务账户无交互桌面，须 LocalMachine 才能在开机自启时读密 |
 | 运维建议 | 限制凭据目录 ACL；生产机勿开共享登录；勿把凭据文件拷到非受信主机 |
+| GUI 托盘服务自启 | 启用前 `credentials.SaveService`；与 CLI `--service` 共用服务名 `HaoVPNClient` |
+| yaml 明文密码 | `remember_password` / `gui.auto_connect` 依赖 `client.yaml` 明文；限制文件 ACL |
 
 `ResolveCredentials`：YAML 已有 `username` 但密码空时，仍可从服务凭据库补密码。
 

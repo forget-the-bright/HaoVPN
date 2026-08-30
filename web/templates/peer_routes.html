@@ -10,7 +10,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <div class="logo-sm"><span class="logo-icon">VPN</span> HaoVPN</div>
+        <div class="logo-sm"><img class="logo-icon-img" src="/static/logo.png" alt="" width="36" height="36"> HaoVPN</div>
         <div class="sub">管理控制台</div>
       </div>
       <nav class="sidebar-nav">
@@ -265,6 +265,7 @@
     }
 
     async function loadRegistry() {
+      await HaoVPN.ensureDisplayTZ();
       var data = await HaoVPN.api('/api/v1/lan-registry');
       var rows = data.items || [];
       var tb = document.getElementById('registryRows');
@@ -280,7 +281,7 @@
           '<td>' + esc(r.vpn_ip) + '</td>' +
           '<td><code>' + esc(r.dest_cidr) + '</code></td>' +
           '<td>' + esc(r.host_id || '') + '</td>' +
-          '<td>' + esc(r.updated_at) + '</td>' +
+          '<td>' + esc(HaoVPN.formatTime(r.updated_at)) + '</td>' +
           '<td><button type="button" class="btn btn-primary btn-sm">创建托管路由</button></td>';
         tr.querySelector('button').onclick = function() {
           document.getElementById('destCidr').value = r.dest_cidr;

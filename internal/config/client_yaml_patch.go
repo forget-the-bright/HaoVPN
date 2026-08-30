@@ -16,6 +16,10 @@ type clientSavePatch struct {
 	RememberPassword bool
 	Password         string
 	LocalLANs        []string // nil=不改；非 nil（含空切片）=覆盖 local_lans
+	AutoConnect      bool
+	StartMinimized   bool
+	KillSwitch       bool
+	PatchGUI         bool // true 时写入 gui / security.kill_switch
 }
 
 // SaveClient 将 GUI 修改过的偏好写回 client.yaml（权限 0600）。
@@ -30,6 +34,10 @@ func SaveClient(path string, cfg *ClientConfig) error {
 		Username:         out.Auth.Username,
 		RememberPassword: out.Auth.RememberPassword,
 		LocalLANs:        append([]string{}, out.LocalLANs...),
+		AutoConnect:      out.GUI.AutoConnect,
+		StartMinimized:   out.GUI.StartMinimized,
+		KillSwitch:       out.Security.KillSwitch,
+		PatchGUI:         true,
 	}
 	if out.Auth.RememberPassword {
 		patch.Password = out.Auth.Password
@@ -76,6 +84,20 @@ func patchClientYAML(path string, patch clientSavePatch) error {
 	}
 	setMappingStringSequence(root, "local_lans", patch.LocalLANs)
 	deleteMappingKey(root, "peer")
+
+	if patch.PatchGUI {
+		guiMap, err := ensureNestedMapping(root, "gui")
+		if err != nil {
+			return err
+		}
+		setMappingBool(guiMap, "auto_connect", patch.AutoConnect)
+		setMappingBool(guiMap, "start_minimized", patch.StartMinimized)
+		secMap, err := ensureNestedMapping(root, "security")
+		if err != nil {
+			return err
+		}
+		setMappingBool(secMap, "kill_switch", patch.KillSwitch)
+	}
 
 	out, err := yaml.Marshal(&doc)
 	if err != nil {

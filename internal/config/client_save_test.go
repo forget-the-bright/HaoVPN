@@ -65,6 +65,22 @@ security:
 		t.Fatalf("security section should be preserved: %q", s)
 	}
 
+	cfg.GUI.AutoConnect = true
+	cfg.GUI.StartMinimized = true
+	cfg.Auth.RememberPassword = true
+	cfg.Auth.Password = "SecretPass123!"
+	if err := config.SaveClient(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = string(raw)
+	if !strings.Contains(s, "auto_connect: true") || !strings.Contains(s, "start_minimized: true") {
+		t.Fatalf("gui flags missing: %q", s)
+	}
+
 	cfg.Auth.RememberPassword = false
 	if err := config.SaveClient(path, cfg); err != nil {
 		t.Fatal(err)
@@ -76,6 +92,25 @@ security:
 	s = string(raw)
 	if strings.Contains(s, "SecretPass123!") {
 		t.Fatalf("password should be cleared when remember false: %q", s)
+	}
+}
+
+func TestCanAutoConnect(t *testing.T) {
+	cfg := &config.ClientConfig{
+		GUI:  config.ClientGUISection{AutoConnect: true},
+		Auth: config.ClientAuthSection{RememberPassword: true, Password: "x"},
+	}
+	if !cfg.CanAutoConnect() {
+		t.Fatal("expected CanAutoConnect")
+	}
+	cfg.Auth.Password = ""
+	if cfg.CanAutoConnect() {
+		t.Fatal("empty password should block")
+	}
+	cfg.Auth.Password = "x"
+	cfg.Auth.RememberPassword = false
+	if cfg.CanAutoConnect() {
+		t.Fatal("remember false should block")
 	}
 }
 

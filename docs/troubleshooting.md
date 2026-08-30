@@ -29,6 +29,7 @@
 | GUI 断线后不再自动重连 | 旧版登录 `failFast` 成功后未关，或 account_online 仅重试 5 次即停 | 升级客户端：鉴权成功后关 failFast；曾连接/重连中 account_online **持续**重试；首次登录最多约 40 次；并升级服务端半死会话顶替 |
 | 日志出现多余 `10.88.0.1/32` 路由 | 旧版始终加网关主机路由 | 新版：AllowedIPs 已含 VPN 子网时跳过网关 `/32` |
 | 能 ping 网关 / AllowedIPs LAN，不能 ping 其他客户端 VPN IP | **默认设计**：横向隔离；或未点「应用生效」；或服务端未直转对端会话 | 控制台 `/peers`：开「全部互访」、加**双向**白名单，或配托管路由（via 下一跳在服务端放行）；改完后点 **应用生效** 踢线刷新；升级含 hub 直转的服务端 |
+| 托盘「本机路由」只有 VPN 子网 /「无对端托管」但日志已加 `192.168.x.0/24` | 旧版菜单只列 peer 托管，不列 NAT AllowedIPs；或未升级客户端 | **升级 GUI**：托盘「分流」栏应显示工控段；「无对端托管」仅表示无 `peer_routes`，不等于没装工控路由 |
 | 托管路由不生效 / ping LAN 得「来自 via：无法访问目标网」 | hub 已送到 via，但 via 未开出口或 SNAT 失败；或未配 `local_lans`；或托管路由「失效」 | 家里客户端配 `local_lans` 并以管理员连接；日志 `via_exit_setup ok` / `ICS 已启用` / `SkipAsSource`；控制台注册表有行；点「应用生效」；勿写 ICS 网段进 `local_lans` |
 | 托管路由一直「失效」 | via 离线，或注册表无匹配 dest（未上报 / 已下线清空） | via 保持在线且 `local_lans` 含该 dest；换机后须重登上报 |
 | 未配 local_lans 却想共享 LAN | 能力默认关闭 | 在 `client.yaml` 或 GUI「本地网段」填写 CIDR |
@@ -44,7 +45,14 @@
 | 断线后「好久才连上」 | 旧版每次重连全清路由+重跑 ICS（via 机尤慢）；或 Dial/退避过长 | **升级客户端**：临时断线保留 TUN/路由/ICS，握手后差分（日志 `policy_apply mode=noop` / `dataplane_keep`）；另查 `dial_timeout_sec`/`reconnect.max_sec`。磁盘日志看 `client.live.log` |
 | 重连仍每次 `via_exit_setup` / ICS | 旧客户端；或 `local_lans`/`vpn_subnet`/VPN IP 真变了；或走了 Stop/手动重连 | 确认已更新客户端；改配置后首次会重建属正常；GUI「手动重新连接」会全清 |
 | 退出登录 / 手动重连时界面卡住数秒 | 旧版在 UI 线程同步 `Stop`（ICS PowerShell COM 很慢） | **升级客户端**：清理改后台；界面显示「正在断开…」；日志 `gui_engine_stop` / `DisableAllICS elapsed=` |
+| 点「退出」整窗假死很久 | 旧版退出同步等 ICS 清理 | **升级 GUI**：异步退出，先提示「正在退出（清理网络）…」，日志 `gui_quit` |
+| 要开机自动连且要托盘 | Windows：登录后自启 + 无窗口 + 自动连接 | 托盘「配置」三项；须自动登录桌面。**Linux/macOS 托盘自启未实现**，勿指望 GUI 勾选 |
+| 要开机即连、不要托盘 | Windows 服务；或 Linux systemd / macOS LaunchDaemon | Win：托盘「服务」或 `--service install`。Linux/macOS：见 [deploy.md §5.3](deploy.md)，手工 unit，**非托盘开关** |
+| Linux/macOS 点托盘开机自启无效 | 非 Windows 的 `autostart` 仅提示 | 预期行为；用 systemd/launchd 配 CLI |
+| 服务在跑再开 GUI 提示已在运行 | 旧版不区分服务 | 新版弹出接管对话框：停止服务并接管 / 保持服务 |
 | ping 网关间歇丢包 | 同上：底层 ZT 丢包会连带 `10.88.0.1` 丢 | 对比双 ping；ZT 稳后再看 VPN |
+| 日志大量 `send queue full` WARN | 发送队列（默认 256）被打满，属背压；大文件/看电影更易出现 | 加大易满一侧：`vpn.send_queue_size`（服务端）或 `server.send_queue_size`（客户端），如 `1024`；两端可不同。过大增延迟 |
+| WebUI 时间比本地差约 8 小时 | 存库/API 为 UTC；页面默认按 `api.display_timezone=UTC` 展示 | `server.yaml` 设 `api.display_timezone: Asia/Shanghai`（或 `GMT+8`）后重启；**不改**审计存库与 API JSON |
 
 **日志位置**：`./logs/client.log`、`./logs/client.live.log`（每次启动覆盖、逐行 Sync）。GUI 主窗口日志区默认只展示最近 **300** 行（不影响磁盘文件）。
 

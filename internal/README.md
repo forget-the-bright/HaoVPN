@@ -24,18 +24,21 @@
 | 登录 / Session / CSRF / 自改密 / 注销仅 POST | `api/auth_handlers.go`；`auth/login.go`、`password_ops.go`、`session.go`、`username.go` |
 | 登录/握手哨兵错误（含账号已在线） | `auth/errors.go`；客户端 `clientapp/fatal_auth.go` |
 | CIDR/LAN/列表工具 | `netutil`：`ValidLANCIDRs`、`NormalizeCIDRList`、`AppendCIDRUnique`、`ValidateAdvertisedLAN` |
-| 桌面 GUI / 托盘 / 日志面板 / eng 锁 | `clientgui/`（`engine_stop.go`；`log.go` UI 默认最近 300 行） |
+| 桌面 GUI / 托盘配置 / 路由 / eng 锁 | `clientgui/`（`tray_config.go` 自动连接/自启；`tray_routes.go`；`service_takeover.go`；`engine_stop.go`） |
+| GUI 开机自启（计划任务/服务） | `autostart/`（**仅 Windows 完整**；Linux/macOS 为 stub，见 deploy §5.3） |
 | Web/隧道分表锁定 | `auth/lockout.go` |
 | 隧道密码校验 | `auth/tunnel_login.go`（`VerifyTunnelLogin`） |
 | 探针 Accept/特征/自动封 | `probedefense/guard.go`；超时忽略 `ignorable.go`；中文 `labels.go` |
 | 挂载 Probe（封禁始终生效） | `serverapp/engine_boot.go`（`probeGuard != nil` 即挂） |
 | 握手 / 策略下发 / 明文钥策略 | `tunnel/server_handler.go`、`handshake.go`、`source_ip.go` |
-| 客户端拨号 / 重连 / 致命鉴权 | `clientapp/engine_*.go`、`fatal_auth.go`（account_online 有限重试）；临时断线 `protectForReconnect` 保留数据面 |
+| 客户端拨号 / 重连 / 致命鉴权 | `clientapp/engine_*.go`、`fatal_auth.go`（account_online 有限重试）；临时断线 `protectForReconnect` 保留数据面；托盘用 `AllowedIPs()`/`ManagedRoutes()`/`VPNSubnet()` |
 | 客户端策略差分 / ICS 跳过 | `clientapp/policy_diff.go`、`runtime.go`（`applyPolicy`）、`via_exit.go`（via 指纹） |
 | 客户端凭据解析 | `clientapp/credentials.go`（YAML 用户名可配服务库密码） |
 | 远端地址拆分 | `netutil/hostport.go`（`SplitRemoteAddr`） |
 | CIDR/LAN/广播工具 | `netutil`：`NormalizeCIDROrHost`、`ValidateAdvertisedLAN`、`IsLimitedBroadcast` |
 | 秒 → Duration | `timeutil/duration.go`（`Seconds`） |
+| WebUI 展示时区 | `timeutil/timezone.go`；配置 `api.display_timezone`；前端 `web/static/app.js` `formatTime` |
+| 发送队列可配 | `netutil.ClampSendQueueSize`；服务端 `vpn.send_queue_size`、客户端 `server.send_queue_size` → `transport` |
 | 审计中文标签 | `audit/labels.go`；页 `/audit`；对照表 `docs/security-hardening.md` §4.4 |
 | 备份/导出（POST+CSRF） | `api/handler_ops.go`、`users_export.go`；前端 `HaoVPN.downloadPost` |
 | 安全事件/封禁 SQL | `persist/security_store.go` |
@@ -62,7 +65,7 @@
 | | `policy_diff.go` / `runtime.go` / `via_exit.go` | 路由差分、增量 applyPolicy、via 指纹跳过 ICS |
 | | `engine_lifecycle.go` | `protectForReconnect` 保留数据面；`protectThenClearRoutes` 全清 |
 | **netutil** | `hostport.go` | `SplitRemoteAddr` |
-| **timeutil** | `duration.go` | `Seconds` |
+| **timeutil** | `duration.go` / `timezone.go` | `Seconds`；`LoadDisplayLocation` / `FormatInDisplay` |
 | **persist** | `security_store.go` | `fillIPBlock` 合一扫描 |
 | **sessionmgr** | `route.go` / `kick.go` | 发送前确认 Conn；回调锁内拷贝 |
 | **api** | `auth_handlers.go` | requireAuth 失败关闭；改密吊销会话 |

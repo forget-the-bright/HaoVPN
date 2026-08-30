@@ -119,7 +119,12 @@ func (u *uiApp) showMain() {
 
 	u.refreshTrayMenu()
 
-	w.Show()
+	// 无窗口模式：创建主窗但不弹出，仅托盘；用户可「显示主窗口」
+	if u.cfg != nil && u.cfg.GUI.StartMinimized {
+		w.Hide()
+	} else {
+		w.Show()
+	}
 	u.startPoll()
 }
 
@@ -210,14 +215,25 @@ func (u *uiApp) stopPoll() {
 	}
 }
 
-// shutdown 退出前清理：停轮询、Engine、logger sink。
+// shutdown 在 a.Run 返回后做兜底清理（正常退出已由 quitApp 异步 Stop）。
 //
-// 进程即将退出，须同步等待 Stop 完成以免 ICS/路由残留。
+// 若仍残留 Engine（异常关窗等），后台 Stop 并最多等待 15s，超时 Warn 后仍退出以免永久挂死。
 func (u *uiApp) shutdown() {
 	u.stopPoll()
 	logger.SetSink(nil)
 	if eng := u.takeEngine(); eng != nil {
-		eng.Stop()
+		done := make(chan struct{})
+		safeutil.GoSafe("gui-shutdown-stop", func() {
+			logger.Info("gui_shutdown_stop begin")
+			eng.Stop()
+			logger.Info("gui_shutdown_stop done")
+			close(done)
+		})
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			logger.Warn("gui_shutdown_stop 超时 15s，继续退出（可能残留 ICS，可手动检查）")
+		}
 	}
 	_ = logger.Close()
 }

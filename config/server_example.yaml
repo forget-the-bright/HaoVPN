@@ -1,5 +1,5 @@
 # 服务端配置参考示例（运行时由首次启动自动生成 server.yaml）
-# 详见 docs/meta-plan.md 与 docs/deploy.md
+# 字段释义以 internal/config/defaults.go 模板注释为准；部署说明见 docs/deploy.md
 
 server:
   listen: "0.0.0.0:8443"
@@ -14,6 +14,8 @@ vpn:
   mtu: 1420
   heartbeat_interval_sec: 15
   heartbeat_timeout_sec: 90
+  # 发送队列深度（帧条数）；默认 256。大文件/看电影可试 1024；范围 64～8192
+  send_queue_size: 256
   session_policy: reject_second
   # 同公网 IP 短窗内重连顶替旧会话并续算流量（秒）；-1 关闭
   reconnect_grace_sec: 60
@@ -35,6 +37,8 @@ api:
   login_max_attempts: 5
   login_lockout_sec: 900
   session_ttl_sec: 28800
+  # WebUI 展示时区（仅页面；SQLite/API 仍 UTC）。中国现场：Asia/Shanghai 或 GMT+8
+  display_timezone: "UTC"
 
 security:
   tunnel_allowed_source_ips: []

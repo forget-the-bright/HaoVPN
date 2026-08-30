@@ -303,6 +303,7 @@ func bootTunnel(bc *bootContext, tunDev tun.Device) (*transport.Server, crypto.K
 	}
 
 	tcfg := transport.FromServerVPN(cfg.VPN)
+	logger.Info("transport send_queue_size=%d", tcfg.MaxQueueSize)
 	// 有 Guard 即挂载：封禁表（IsBlocked）始终在 Accept 生效；Enabled 只控制自动记录/自动封。
 	if bc.probeGuard != nil {
 		tcfg.Probe = bc.probeGuard

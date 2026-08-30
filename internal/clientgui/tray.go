@@ -10,7 +10,7 @@ import (
 	"haovpn/internal/brand"
 	"haovpn/internal/clientapp"
 	"haovpn/internal/clientgui/icons"
-	"haovpn/internal/tunnel"
+	"haovpn/internal/logger"
 )
 
 // trayKind 托盘图标种类（避免无意义重设；SetSystemTrayMenu 会冲掉图标，须随后再设）。
@@ -95,7 +95,8 @@ func (u *uiApp) syncTrayFromEngine(forceMenu bool) {
 	switch {
 	case st == clientapp.StateConnected:
 		kind = trayKindConnected
-		menuKey = "up:" + eng.VPNIP()
+		// 含分流/托管数量，策略热更新后也能刷菜单
+		menuKey = fmt.Sprintf("up:%s:a%d:m%d", eng.VPNIP(), len(eng.AllowedIPs()), len(eng.ManagedRoutes()))
 	case st == clientapp.StateConnecting || st == clientapp.StateReconnecting:
 		kind = trayKindConnecting
 		menuKey = "connecting"
@@ -129,6 +130,8 @@ func (u *uiApp) refreshTrayMenu() {
 func (u *uiApp) loginTrayMenu() *fyne.Menu {
 	return fyne.NewMenu(brand.Name,
 		fyne.NewMenuItem("显示登录窗口", func() { u.showLoginWindow() }),
+		u.configMenuItem(),
+		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("退出", func() { u.quitApp() }),
 	)
 }
@@ -141,12 +144,13 @@ func (u *uiApp) mainTrayMenu() *fyne.Menu {
 		status := fyne.NewMenuItem("状态: 已连接 "+ip, nil)
 		status.Disabled = true
 		items = append(items, status)
-		items = append(items, u.managedRoutesMenuItem())
+		items = append(items, u.routesMenuItem(eng))
 		items = append(items, fyne.NewMenuItemSeparator())
 	}
 	items = append(items,
 		fyne.NewMenuItem("显示主窗口", func() { u.showMainWindow() }),
 		fyne.NewMenuItem("重新连接", func() { u.reconnectVPN() }),
+		u.configMenuItem(),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("退出登录", func() { u.doLogout() }),
 		fyne.NewMenuItem("退出", func() { u.quitApp() }),
@@ -154,58 +158,21 @@ func (u *uiApp) mainTrayMenu() *fyne.Menu {
 	return fyne.NewMenu(brand.Name, items...)
 }
 
-// managedRoutesMenuItem 托管路由只读子菜单（对齐 ZeroTier Managed Routes）。
-func (u *uiApp) managedRoutesMenuItem() *fyne.MenuItem {
-	parent := fyne.NewMenuItem("托管路由", nil)
-	var children []*fyne.MenuItem
-	if eng := u.getEngine(); eng != nil {
-		gw := strings.TrimSpace(eng.Gateway())
-		vpnIP := strings.TrimSpace(eng.VPNIP())
-		localLine := "VPN 本机"
-		if vpnIP != "" && gw != "" {
-			localLine = fmt.Sprintf("%s via %s (本机TUN)", deriveVPNSubnetHint(vpnIP), gw)
-		} else if gw != "" {
-			localLine = fmt.Sprintf("网关 %s via 本机TUN", gw)
-		}
-		loc := fyne.NewMenuItem(localLine, nil)
-		loc.Disabled = true
-		children = append(children, loc)
-
-		for _, mr := range eng.ManagedRoutes() {
-			line := formatManagedRouteLine(mr)
-			it := fyne.NewMenuItem(line, nil)
-			it.Disabled = true
-			children = append(children, it)
-		}
-	}
-	if len(children) == 1 {
-		hint := fyne.NewMenuItem("（无对端托管路由）", nil)
-		hint.Disabled = true
-		children = append(children, hint)
+// routesMenuItem 「本机路由」只读子菜单：本机TUN + 分流 AllowedIPs + 对端托管。
+func (u *uiApp) routesMenuItem(eng *clientapp.Engine) *fyne.MenuItem {
+	parent := fyne.NewMenuItem("本机路由", nil)
+	allowed := eng.AllowedIPs()
+	managed := eng.ManagedRoutes()
+	logger.Debug("tray_routes allowed_n=%d managed_n=%d", len(allowed), len(managed))
+	lines := trayRouteLines(eng.VPNSubnet(), eng.VPNIP(), eng.Gateway(), allowed, managed)
+	children := make([]*fyne.MenuItem, 0, len(lines))
+	for _, line := range lines {
+		it := fyne.NewMenuItem(line, nil)
+		it.Disabled = true
+		children = append(children, it)
 	}
 	parent.ChildMenu = fyne.NewMenu("", children...)
 	return parent
-}
-
-func formatManagedRouteLine(mr tunnel.ManagedRoute) string {
-	dest := strings.TrimSpace(mr.Dest)
-	via := strings.TrimSpace(mr.ViaIP)
-	if via != "" {
-		return fmt.Sprintf("%s via %s", dest, via)
-	}
-	name := strings.TrimSpace(mr.ViaUsername)
-	if name == "" {
-		name = "via"
-	}
-	return fmt.Sprintf("%s via %s(离线)", dest, name)
-}
-
-func deriveVPNSubnetHint(vpnIP string) string {
-	parts := strings.Split(vpnIP, ".")
-	if len(parts) == 4 {
-		return parts[0] + "." + parts[1] + "." + parts[2] + ".0/24"
-	}
-	return vpnIP
 }
 
 func (u *uiApp) showLoginWindow() {
@@ -256,6 +223,22 @@ func (u *uiApp) reconnectVPN() {
 }
 
 func (u *uiApp) quitApp() {
-	u.shutdown()
-	u.app.Quit()
+	if !u.beginEngineOp() {
+		u.appendLog("正在退出，请稍候…")
+		return
+	}
+	u.stopPoll()
+	if u.statusLbl != nil {
+		u.statusLbl.SetText("状态: 正在退出（清理网络）…")
+	}
+	u.appendLog("正在退出（清理网络可能需数秒）…")
+	logger.Info("gui_quit begin")
+	eng := u.takeEngine()
+	u.stopEngineAsync(eng, func() {
+		logger.Info("gui_quit done")
+		logger.SetSink(nil)
+		_ = logger.Close()
+		u.endEngineOp()
+		u.app.Quit()
+	})
 }

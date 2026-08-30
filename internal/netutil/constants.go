@@ -24,3 +24,29 @@ const (
 //
 // 用于以太网头/对齐余量，ReadBufferSize 返回 MTU + 本常量。
 const TunReadBufferExtra = 100
+
+// 传输发送队列深度（待发帧条数，非字节）。满则丢帧并 WARN。
+const (
+	// DefaultSendQueueSize 默认待发帧队列深度（与 transport.DefaultConfig 一致）。
+	DefaultSendQueueSize = 256
+	// MinSendQueueSize YAML 允许的最小队列（过小易打满）。
+	MinSendQueueSize = 64
+	// MaxSendQueueSize YAML 允许的最大队列（过大增延迟与内存）。
+	MaxSendQueueSize = 8192
+)
+
+// ClampSendQueueSize 将队列深度钳到 [Min, Max]；≤0 视为默认。
+//
+// 返回：钳制后的值，以及是否发生了钳制（调用方可打 Warn）。
+func ClampSendQueueSize(n int) (clamped int, changed bool) {
+	if n <= 0 {
+		return DefaultSendQueueSize, n != 0
+	}
+	if n < MinSendQueueSize {
+		return MinSendQueueSize, true
+	}
+	if n > MaxSendQueueSize {
+		return MaxSendQueueSize, true
+	}
+	return n, false
+}

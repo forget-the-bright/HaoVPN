@@ -64,7 +64,8 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | 改握手/策略下发 | `tunnel/handshake.go`, `server_handler.go`（OK 发送失败回滚会话） |
 | 客户端拨号/重连/致命鉴权 | `clientapp/engine_lifecycle.go`（`protectForReconnect` 保留数据面）、`engine_connect.go`、`fatal_auth.go`、`credentials.go` |
 | 客户端策略差分 / via 指纹 | `clientapp/policy_diff.go`、`runtime.go`（`applyPolicy`）、`via_exit.go` |
-| 桌面 GUI（Fyne） | `internal/clientgui/`（入口 `cmd/client-gui` 仅 flag/UAC/主题）；`engine_stop.go`（eng 锁）；日志 UI `log.go`（默认最近 300 行） |
+| 桌面 GUI（Fyne） | `internal/clientgui/`：托盘配置 `tray_config.go`；路由 `tray_routes.go`；异步退出 `engine_stop.go`；服务接管 `service_takeover.go` |
+| GUI 登录/服务自启 | `internal/autostart/`：**Windows** 计划任务 + SCM 已实现；**Linux/macOS 尚未写单元**（Status/Enable 仅中文提示） |
 | 服务端启动流程 | `serverapp/engine.go`、`engine_boot.go`、`engine_shutdown.go` |
 | YAML 默认值/校验 | `config/client.go`、`server.go` |
 | 默认 TLS 证书路径 | `config/paths.go`（`DefaultServerCertPath`、`ResolveServerCertPath`） |
@@ -72,6 +73,8 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | GUI 写回 client.yaml | `config/client_yaml_patch.go`（`SaveClient`）；Node 原语 `yaml_node.go` |
 | CIDR/地址/IPv4 工具 | `internal/netutil/`（含 `ValidLANCIDRs`、`NormalizeCIDRList`、`ValidateAdvertisedLAN`） |
 | SQLite / RFC3339 / Seconds | `timeutil/sqlite.go`、`rfc3339.go`、`duration.go` |
+| WebUI 展示时区 | `api.display_timezone` → `timeutil/timezone.go`；`GET /api/v1/system/info`；前端 `HaoVPN.formatTime` |
+| 发送队列深度 | `vpn.send_queue_size` / 客户端 `server.send_queue_size` → `transport.MaxQueueSize`（`netutil.ClampSendQueueSize`） |
 | 敏感文件原子写 / exe 目录 | `fileutil/WriteFileAtomic`、`ExecutableDir` |
 | Web/API 读模型 | `readmodel/`（含 `audit.go` AuditLogView） |
 | Dashboard 字段 | `health/dashboard.go`（`DashboardMap`，含 recent_errors；公开 health 不含） |
@@ -100,14 +103,15 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | 包 | 职责 | 关键文件 | 依赖 |
 |----|------|----------|------|
 | **clientapp** | CLI/GUI 共用拨号引擎；增量 applyPolicy；via 出口 | `engine_*.go`, `runtime.go`, `policy_diff.go`, `via_exit.go`, `credentials.go`, `fatal_auth.go` | config, transport, tunnel, netstack, netutil, auth |
-| **clientgui** | Fyne 桌面 UI；日志面板默认 300 行；eng 指针锁 | `run.go`, `login.go`, `app.go`, `tray.go`, `log.go`, `engine_stop.go` | clientapp, config, singleinstance |
+| **clientgui** | Fyne UI；托盘配置/路由；异步 Stop；服务接管 | `run.go`, `tray.go`, `tray_config.go`, `tray_routes.go`, `service_takeover.go`, `engine_stop.go` | clientapp, autostart, config |
+| **autostart** | Win：登录计划任务 + 服务；非 Win：stub 提示用 systemd/launchd | `logon_*.go`, `service_*.go` | brand |
 | **serverapp** | 服务端启动编排 | `engine.go`, `engine_boot.go`, `engine_shutdown.go` | api, tunnel, transport, probedefense, tun, netstack, vpnaccount, maintenance |
 | **api** | HTTP 管理 API + WebUI | `handler_*.go`, `auth_handlers.go`, `users_*.go`, `handler_security.go`, `export_zip.go` | auth, vpnaccount, persist, probedefense, readmodel, config, netutil |
 | **readmodel** | Web/API 读模型 DTO | `types.go`, `monitor.go`, `audit.go` | timeutil |
 | **paginate** | 分页 / bool 查询 | `clamp.go`, `parse.go`（含 `ParseLimitOffset`） | — |
 | **maintenance** | 数据保留后台 | `retention.go`（`GoSafe` 启动；封禁 prune 独立） | persist, logstore, config, safeutil |
 | **fileutil** | 父目录 / 原子写 / exe 目录 | `mkdir.go`, `atomic.go`, `exe.go` | — |
-| **timeutil** | SQLite UTC + RFC3339 + Seconds | `sqlite.go`, `rfc3339.go`, `duration.go` | — |
+| **timeutil** | SQLite UTC + RFC3339 + Seconds + 展示时区 | `sqlite.go`, `rfc3339.go`, `duration.go`, `timezone.go` | — |
 | **vpnaccount** | IP 模式、开户、策略合并、启禁、删号、末管理员保护 | `service.go`, `peer_policy.go`, `provision.go`, `patch.go`, `delete.go`, `enable.go` | ippool, persist, netutil, auth |
 | **tunnel** | 握手协议 | `handshake.go`, `client_handshake.go`, `server_handler.go`, `source_ip.go` | transport, crypto, auth, sessionmgr, netutil, **tun** |
 | **transport** | TLS-TCP 帧、重连、Probe | `transport.go`, `frame.go`, `reconnect.go`, `config_from.go` | netutil, timeutil, config |
@@ -227,6 +231,8 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | **local_lans** | 客户端 YAML/GUI **手动**配置的本机后面 LAN；非空才开启 | `client.yaml` → 握手 `local_lans` → 临时表 `client_lan_registry`；客户端 `netstack` via 出口 |
 | **托管路由 Managed Routes** | `dest via 客户端`（hub 转 via，via 再出 LAN） | 定义 `peer_routes` + 访问方 `peer_route_members`（`user_id=0`=全部）；握手仅下发**非失效**项 |
 | **互访** | 默认可 ping 对方 `vpn_ip/32` 禁止 | `security.allow_all_vpn_peers` / `peer_access`（默认双向）；「应用生效」踢线刷新 |
+
+客户端托盘「本机路由」：本机 TUN（`vpn_subnet`）+ **分流**（AllowedIPs，含 `nat.allowed_lan_cidrs`）+ **对端托管**（`managed_routes`）。「无对端托管」≠ 未装工控路由。
 
 **失效**：via 离线，或注册表无匹配 `dest` → UI 标失效；握手跳过，不装客户端路由。注册表 alone **不转发**，须管理员从注册表创建托管路由。
 

@@ -285,6 +285,7 @@ func (rt *runtime) clearRoutes() {
 }
 
 func (rt *runtime) clearRoutesLocked() {
+	// 仅当本会话曾 Setup via（rt.via != nil）时 Teardown 才会 DisableAllICS；未开 via 则跳过慢速 COM。
 	rt.teardownViaExitLocked()
 	rt.viaFP = ""
 	rt.viaFPKnown = false

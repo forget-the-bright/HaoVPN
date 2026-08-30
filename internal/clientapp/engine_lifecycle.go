@@ -87,6 +87,7 @@ func (e *Engine) Start() error {
 	e.mu.Unlock()
 
 	tcfg := transport.FromClientConfig(e.cfg)
+	logger.Info("transport send_queue_size=%d", tcfg.MaxQueueSize)
 	e.reconnect = transport.NewReconnectClient(e.cfg.Server.Address, tlsCfg, tcfg, nil, e.onConnect)
 	e.reconnect.SetOnDialError(e.onDialError)
 	e.reconnect.Start()
@@ -112,6 +113,10 @@ func (e *Engine) Stop() {
 	e.reconnect = nil
 	e.state = StateIdle
 	e.vpnIP = ""
+	e.gateway = ""
+	e.vpnSubnet = ""
+	e.managedRoutes = nil
+	e.allowedIPs = nil
 	e.mu.Unlock()
 
 	if rc != nil {

@@ -81,6 +81,67 @@
     return s + 's';
   }
 
+  /** 展示时区相对 UTC 的分钟偏移（东为正）；由 /api/v1/system/info 填充 */
+  let displayOffsetMin = 0;
+  let displayTZName = 'UTC';
+  const displayTZReady = (async function initDisplayTZ() {
+    try {
+      const r = await fetch('/api/v1/system/info');
+      if (!r.ok) return;
+      const j = await r.json();
+      displayTZName = j.display_timezone || 'UTC';
+      displayOffsetMin = parseOffsetMinutes(j.display_timezone_offset || 'Z');
+    } catch (_) { /* 保持 UTC */ }
+  })();
+
+  /** 解析 +08:00 / Z 为分钟偏移 */
+  function parseOffsetMinutes(off) {
+    if (!off || off === 'Z' || off === 'z') return 0;
+    const m = /^([+-])(\d{2}):(\d{2})$/.exec(String(off).trim());
+    if (!m) return 0;
+    const sign = m[1] === '-' ? -1 : 1;
+    return sign * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10));
+  }
+
+  function formatOffsetLabel(mins) {
+    if (!mins) return 'Z';
+    const sign = mins < 0 ? '-' : '+';
+    const abs = Math.abs(mins);
+    const h = Math.floor(abs / 60);
+    const m = abs % 60;
+    return sign + (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+  }
+
+  /**
+   * 将 API 返回的 UTC 时间串格式化为 api.display_timezone 展示串。
+   * 支持 RFC3339（含 Z）与无后缀的「YYYY-MM-DD HH:MM:SS」（按 UTC 解析）。
+   */
+  function formatTime(s) {
+    if (s == null || s === '') return '—';
+    if (typeof s !== 'string') s = String(s);
+    var ms = Date.parse(s);
+    if (isNaN(ms) && s.indexOf('T') === -1 && s.length >= 19) {
+      ms = Date.parse(s.replace(' ', 'T') + 'Z');
+    }
+    if (isNaN(ms)) return s;
+    var shifted = new Date(ms + displayOffsetMin * 60000);
+    function pad(n) { return n < 10 ? '0' + n : String(n); }
+    var out =
+      shifted.getUTCFullYear() + '-' +
+      pad(shifted.getUTCMonth() + 1) + '-' +
+      pad(shifted.getUTCDate()) + ' ' +
+      pad(shifted.getUTCHours()) + ':' +
+      pad(shifted.getUTCMinutes()) + ':' +
+      pad(shifted.getUTCSeconds()) + ' ' +
+      formatOffsetLabel(displayOffsetMin);
+    return out;
+  }
+
+  /** 等待展示时区初始化（各页 load 前 await） */
+  function ensureDisplayTZ() {
+    return displayTZReady;
+  }
+
   /** 生成 OK/异常 状态徽章 HTML 片段 */
   function statusBadge(ok, okText, failText) {
     return ok
@@ -125,6 +186,8 @@
     downloadPost: downloadPost,
     formatBytes: formatBytes,
     formatUptime: formatUptime,
+    formatTime: formatTime,
+    ensureDisplayTZ: ensureDisplayTZ,
     statusBadge: statusBadge,
     setActiveNav: setActiveNav,
     /** 读取当前内存中的 CSRF token（模板注入或 refreshCSRF 设置） */

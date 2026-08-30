@@ -10,7 +10,7 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <div class="logo-sm"><span class="logo-icon">VPN</span> HaoVPN</div>
+        <div class="logo-sm"><img class="logo-icon-img" src="/static/logo.png" alt="" width="36" height="36"> HaoVPN</div>
         <div class="sub">管理控制台</div>
       </div>
       <nav class="sidebar-nav">
@@ -91,6 +91,7 @@
 
     async function loadBlocks() {
       try {
+        await HaoVPN.ensureDisplayTZ();
         await HaoVPN.refreshCSRF();
         var data = await HaoVPN.api('/api/v1/security/blocks?limit=100');
         var rows = data.items || [];
@@ -111,7 +112,7 @@
             '<td>' + (b.reason || '') + '</td>' +
             '<td>' + sig + '</td>' +
             '<td>' + (b.hits || 0) + '</td>' +
-            '<td class="text-mono">' + (b.expires_at || '永久') + '</td>' +
+            '<td class="text-mono">' + (b.expires_at ? HaoVPN.formatTime(b.expires_at) : '永久') + '</td>' +
             '<td><button type="button" class="btn btn-ghost btn-sm" data-ip="' + b.ip + '">解封</button></td>';
           tr.querySelector('button').onclick = function () { unban(b.ip); };
           tb.appendChild(tr);
@@ -152,6 +153,7 @@
     async function loadEvents(off) {
       if (off !== undefined) offset = off;
       try {
+        await HaoVPN.ensureDisplayTZ();
         await HaoVPN.refreshCSRF();
         var q = HaoVPN.buildQuery({
           limit: 50,
@@ -174,7 +176,7 @@
             : (e.signature_zh || e.signature || '');
           var act = e.action_zh && e.action ? (e.action_zh + ' (' + e.action + ')') : (e.action_zh || e.action || '');
           tr.innerHTML =
-            '<td class="text-mono">' + (e.created_at || '') + '</td>' +
+            '<td class="text-mono">' + HaoVPN.formatTime(e.created_at) + '</td>' +
             '<td class="text-mono">' + (e.client_ip || '') + '</td>' +
             '<td class="text-mono">' + (e.client_port || '') + '</td>' +
             '<td>' + phase + '</td>' +
