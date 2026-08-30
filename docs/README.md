@@ -23,6 +23,7 @@
 |------|------|
 | [deploy.md](deploy.md) | 部署拓扑、配置、验收、客户端自启 |
 | [troubleshooting.md](troubleshooting.md) | 现场排障 |
+| [traffic-routing.md](traffic-routing.md) | **流量/路由走向**：分流 vs 托管、代码路径、与 OpenVPN 对照 |
 | [security-hardening.md](security-hardening.md) | 生产加固清单 |
 | [../scripts/README.md](../scripts/README.md) | 构建 / 验收脚本 |
 
@@ -63,4 +64,4 @@
 3. 改行为（配置项、安全默认、自启、API）时同步：`deploy` / `security-hardening` / `troubleshooting` 中相关节。
 4. 文件名与链接保持一致：`development-principles`、`comment-style`、`licensing`、`deploy`、`dev-log`。
 
-*最后更新：2026-08-30 · 增补 mobile-client-plan*
+*最后更新：2026-08-30 · 增补 traffic-routing（流量走向）*

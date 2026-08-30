@@ -265,6 +265,8 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 
 客户端托盘「本机路由」：本机 TUN（`vpn_subnet`）+ **分流**（AllowedIPs，含 `nat.allowed_lan_cidrs`）+ **对端托管**（`managed_routes`）。「无对端托管」≠ 未装工控路由。
 
+> **流量怎么走、代码落点、与 OpenVPN push/iroute 对照**：见 [traffic-routing.md](traffic-routing.md)。
+
 **失效**：via 离线，或注册表无匹配 `dest` → UI 标失效；握手跳过，不装客户端路由。注册表 alone **不转发**，须管理员从注册表创建托管路由。
 
 出站 `RouteOutbound`：仅 `dst==vpn_ip` 或托管 via 索引；**禁止**用会话 AllowedIPs（NAT）把流量错送回客户端。入站：横向 → via 匹配（优先于 writeTUN）→ 否则 writeTUN（网关 NAT）。

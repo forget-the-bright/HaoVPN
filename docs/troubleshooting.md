@@ -37,7 +37,8 @@
 | ExitLAN 回程不能到对端 VPN IP / 被横向隔离挡住 | 本机不是任何托管路由的 via，或未点「应用生效」 | 仅 **via** 会话才允许 ExitLAN→对端 VPN 旁路；在 `/peers` 配托管路由并以本账号为 via，再「应用生效」；`local_lans` 须 RFC1918 且 ≥/16 |
 | `lan_cidr_reject` / 注册表无行 | local_lans 过宽（如 `/8`）或非私网 | 改为如 `192.168.x.0/24`；查服务端 Warn 日志 |
 | 家/本机能连 VPN，ping 对端 VPN IP 通，但不通服务端 NAT（如 `192.168.3.1`），且开了 local_lans/ICS | ICS 在 TUN 挂 `192.168.137.1` 后 **Windows 错选发包源** | **升级客户端**：ICS 后对非 VPN 地址 `SkipAsSource`，并重装 AllowedIPs；日志 `本机发包源优先 10.88.x.x`。`Get-NetIPAddress` 看 137 地址应为 SkipAsSource |
-| Windows 路由表「在链路上」且接口是本机 VPN IP | **预期**：进 haovpn0，不是把 via 配成自己 | 控制台 `via 10.88.x.x` 只在服务端选路；本机不必出现「下一跳=via」 |
+| Windows 路由表「在链路上」且接口是本机 VPN IP | **预期**：进 haovpn0，不是把 via 配成自己 | 控制台 `via 10.88.x.x` 只在服务端选路；本机不必出现「下一跳=via」。原理见 [traffic-routing.md](traffic-routing.md) |
+| 托盘同分段既有 via `.1`（分流）又有 via `.2`（托管） | **预期**：两层 via；非冲突 | 分流=本机进 TUN；托管=服务端转 peer。见 [traffic-routing.md](traffic-routing.md) |
 | `/peers` 增删很卡 | 旧版保存时同步踢线抢 SQLite | 新版保存只写库；点「应用生效」再踢受影响账号 |
 | 点了「应用生效」仍显示待应用 / pending | 部分账号 `IncrementPolicyVer` 失败；或踢线过程中又改了策略 | 看服务端日志 `peers_apply kicked=… failed=…`；失败 ID 会保留 dirty（领域在 `vpnaccount.PeerPolicyApplier`）。修好库后重点应用生效；勿假设一次 POST 必清空全部 dirty |
 | 服务刚重启，「待应用」没了但有人还像旧策略 | peer dirty **仅内存**，重启清空；启动 WARN 提示 | 库内已是新策略；对仍在线客户端再「应用生效」或踢线。属预期，不是丢库 |
