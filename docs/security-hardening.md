@@ -15,7 +15,13 @@
 
 ### 公开健康探针（有意设计）
 
-`GET /api/v1/health` 与 `/api/v1/system/info` **无需登录**，用于就绪探针与版本定位。返回在线数、DB/TUN/NAT 状态等**非敏感**摘要；**不含** `recent_errors`（栈/路径仅经需登录的 `/api/v1/dashboard` 暴露）。不包含密码、密钥或用户明细。若需隐藏，请在前置反代层限制来源 IP。
+`GET /api/v1/health` 与 `/api/v1/system/info` **无需登录**，用于就绪探针与版本定位。
+
+- **health**：仅 `ok` + `uptime_sec`（进程存活）。**不**返回 `db_ok` / `tun_ok` / `nat_ok` / `online_*` / `recent_errors`。
+- **Dashboard**（需登录）：完整数据面状态与 `recent_errors`。
+- **system/info**：构建版本与展示时区（非敏感）。
+
+若需完全隐藏探针，请在前置反代层限制来源 IP。
 
 ---
 
@@ -23,7 +29,7 @@
 
 | 检查项 | 要求 |
 |--------|------|
-| admin 默认密码 | 已修改，非模板初始值（`changeme`/`changeme12`）；`dev-security-check` 会 WARN |
+| admin 默认密码 | 已修改，非模板初始值（模板为 `changeme12`）；`dev-security-check` 会 WARN |
 | 密码强度 | ≥8 位，**须含字母与数字**（代码强制） |
 | 自改密 | Web `POST /api/v1/password` 须 `old_password` + `new_password`；成功后吊销该用户全部 Web Session |
 | 闲置账号 | 禁用或删除（禁用同时踢 VPN + 吊销 Web 会话）；**不可**删除/禁用最后一个启用的管理员（防 Web 锁死） |
@@ -133,8 +139,9 @@
 ### 4.3 ExitLAN / local_lans 信任边界
 
 - 客户端可上报 `local_lans`（须 **RFC1918** 且前缀 **≥ /16**，禁 `0.0.0.0/0`）；写入 `client_lan_registry` 并进入会话 `ExitLANs`（允许该源入站回程校验）。
+- **禁止与 VPN 地址池重叠**：`local_lans` 不得与 `vpn.subnet`（及同池前缀）相交。否则 via 可把 VPN 网段广告为 ExitLAN，再经 hub 旁路 `peer_access` 伪造他户 VPN 源。服务端握手用 `netutil.ValidateAdvertisedLANNotForbidden` 拒绝；过宽/重叠记 `lan_cidr_reject`，不入库。
 - **ExitLAN → 其他账号 VPN IP 的 hub 直转**仅当该会话是「已应用托管路由」中的 **via**（`sessionmgr.viaIndex`）。非 via 即使广告了 LAN，也不得绕过 `peer_access`。
-- 过宽/非法 CIDR：握手日志 `lan_cidr_reject`；不写入注册表。
+- **应用生效语义**：托管路由/互访变更只写库并打 dirty；须点「应用生效」才 `IncrementPolicyVer`+踢线。成员收窄时 dirty=**旧∪新**（被移除访问方也须踢）。apply 仅清除**本次成功**的 dirty；失败或并发新增保留 pending，避免 UI 伪「已应用」。
 
 ### 4.4 管理审计动作 / 目标字典
 
@@ -205,7 +212,7 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 
 | 检查项 | 说明 |
 |--------|------|
-| CSP `unsafe-inline` | **有意保留**：零构建链 HTML 模板需内联 script/style；不引外站 CDN。勿随意收紧 CSP，否则登录页白屏。 |
+| CSP `unsafe-inline` | **有意保留（残留风险）**：多数 `templates/*.html` 仍有内联 script/style。登录页已外置 `web/static/login.js`；其它页未迁完前**勿**去掉 CSP 中的 `'unsafe-inline'`，否则管理页白屏。 |
 
 ---
 

@@ -99,7 +99,7 @@ func (c *Checker) RunStartupChecks() ([]Result, error) {
 
 
 
-	certOK := fileExists(c.cfg.Server.TLS.CertFile) && fileExists(c.cfg.Server.TLS.KeyFile)
+	certOK := fileutil.Exists(c.cfg.Server.TLS.CertFile) && fileutil.Exists(c.cfg.Server.TLS.KeyFile)
 
 	if !certOK && c.cfg.Server.TLS.AutoGenerate {
 
@@ -156,29 +156,9 @@ func (c *Checker) RunStartupChecks() ([]Result, error) {
 
 
 func warnFilePerm(path string) {
-
-	if path == "" || runtime.GOOS == "windows" {
-
-		return
-
-	}
-
-	fi, err := os.Stat(path)
-
-	if err != nil {
-
-		return
-
-	}
-
-	perm := fi.Mode().Perm()
-
-	if perm&0o077 != 0 {
-
+	if open, perm := fileutil.CheckWorldReadable(path); open {
 		logger.Warn("文件权限过宽 %s: %o，建议 chmod 600（生产环境）", path, perm)
-
 	}
-
 }
 
 
@@ -250,16 +230,6 @@ func dirOf(path string) string {
 	}
 
 	return "."
-
-}
-
-
-
-func fileExists(path string) bool {
-
-	_, err := os.Stat(path)
-
-	return err == nil
 
 }
 

@@ -9,8 +9,8 @@ import (
 
 	"haovpn/internal/audit"
 	"haovpn/internal/health"
-	"haovpn/internal/logstore"
 	"haovpn/internal/logger"
+	"haovpn/internal/logstore"
 	"haovpn/internal/paginate"
 	"haovpn/internal/persist"
 	"haovpn/internal/readmodel"
@@ -18,14 +18,17 @@ import (
 	"haovpn/internal/version"
 )
 
-// handleHealth 健康检查（GET /api/v1/health，公开）。
+// handleHealth 公开存活探针（GET /api/v1/health，无需登录）。
 //
-// 故意不返回 recent_errors：公开探针不应泄漏 WARN/ERROR 栈与路径；
-// 近期错误仅经需登录的 /api/v1/dashboard 暴露。
+// 仅返回 ok + uptime_sec。数据面细节（db/tun/nat/在线数）与 recent_errors
+// 只出现在需登录的 /api/v1/dashboard，降低未鉴权侦察面。
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	dbOK, online, _ := s.dataplaneSnapshot()
-	st := health.NewStatus(s.startedAt, online, dbOK, s.tunOK, s.natOK, nil)
-	writeJSON(w, http.StatusOK, st)
+	// 公开存活探针：只返回 ok + uptime_sec。
+	// db_ok/tun_ok/nat_ok/online_* 与 recent_errors 仅经需登录的 Dashboard 暴露，避免未鉴权侦察。
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"uptime_sec": int64(time.Since(s.startedAt).Seconds()),
+	})
 }
 
 // handleSystemInfo 返回构建版本与 WebUI 展示时区（GET /api/v1/system/info，公开）。
@@ -199,4 +202,3 @@ func LogPublicBindAudit(auditLog *audit.Logger) {
 func stringsToLowerTrim(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
-

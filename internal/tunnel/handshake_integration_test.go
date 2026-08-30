@@ -98,7 +98,7 @@ func TestHandshakeIntegration(t *testing.T) {
 	defer conn.Close()
 
 	hs := tunnel.NewClientHandshake()
-	res, err := hs.RunAuthWithTimeout(conn, "u1", "testpass12", 5*time.Second)
+	res, err := hs.RunAuthWithTimeout(conn, "u1", "testpass12", 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,13 +192,14 @@ func TestHandshakeDisabledAccountRejected(t *testing.T) {
 	defer conn.Close()
 
 	hs := tunnel.NewClientHandshake()
-	_, err = hs.RunAuthWithTimeout(conn, "u1", "testpass12", 5*time.Second)
+	_, err = hs.RunAuthWithTimeout(conn, "u1", "testpass12", 30*time.Second)
 	if err == nil {
 		t.Fatal("disabled account should reject handshake")
 	}
 }
 
 // TestHandshakeRejectSecond 默认 reject_second：第二端须收到「已在其他设备在线」，旧会话保持。
+// 超时取 30s：全量 ./... 并行时 bcrypt+TLS 易被其它包抢 CPU，10s 曾偶发握手超时。
 func TestHandshakeRejectSecond(t *testing.T) {
 	dir := t.TempDir()
 	store, err := persist.Open(filepath.Join(dir, "reconn.db"))
@@ -269,7 +270,7 @@ func TestHandshakeRejectSecond(t *testing.T) {
 		t.Fatalf("dial1: %v", err)
 	}
 	defer c1.Close()
-	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c1, "u1", "testpass12", 10*time.Second); err != nil {
+	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c1, "u1", "testpass12", 30*time.Second); err != nil {
 		t.Fatalf("handshake1: %v", err)
 	}
 	if sessMgr.OnlineCount() != 1 {
@@ -281,7 +282,7 @@ func TestHandshakeRejectSecond(t *testing.T) {
 		t.Fatalf("dial2: %v", err)
 	}
 	defer c2.Close()
-	_, err = tunnel.NewClientHandshake().RunAuthWithTimeout(c2, "u1", "testpass12", 10*time.Second)
+	_, err = tunnel.NewClientHandshake().RunAuthWithTimeout(c2, "u1", "testpass12", 30*time.Second)
 	if err == nil || !strings.Contains(err.Error(), "已在其他设备在线") {
 		t.Fatalf("第二端应拒绝已在线, err=%v", err)
 	}
@@ -361,7 +362,7 @@ func TestHandshakeKickPreviousNoDeadlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial1: %v", err)
 	}
-	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c1, "u1", "testpass12", 10*time.Second); err != nil {
+	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c1, "u1", "testpass12", 30*time.Second); err != nil {
 		t.Fatalf("handshake1: %v", err)
 	}
 
@@ -370,7 +371,7 @@ func TestHandshakeKickPreviousNoDeadlock(t *testing.T) {
 		t.Fatalf("dial2: %v", err)
 	}
 	defer c2.Close()
-	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c2, "u1", "testpass12", 10*time.Second); err != nil {
+	if _, err := tunnel.NewClientHandshake().RunAuthWithTimeout(c2, "u1", "testpass12", 30*time.Second); err != nil {
 		t.Fatalf("handshake2 (kick): %v", err)
 	}
 	if sessMgr.OnlineCount() != 1 {
@@ -459,7 +460,7 @@ func TestHandshakePasswordAuth(t *testing.T) {
 	defer conn.Close()
 
 	hs := tunnel.NewClientHandshake()
-	res, err := hs.RunAuthWithTimeout(conn, "eng", "testpass12", 5*time.Second)
+	res, err := hs.RunAuthWithTimeout(conn, "eng", "testpass12", 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -151,7 +151,7 @@ func ValidLANCIDRs(cidrs []string) []string {
 //
 // 规则：可解析为 CIDR/单 IP；禁止默认路由；须为 RFC1918；IPv4 前缀长度 ≥ MinAdvertisedLANPrefix。
 // 返回：规范化 CIDR 字符串；不满足时 error（含中文原因）。
-// 关联：ValidLANCIDRs、握手 ExitLANs；托管路由 dest 仍用 ForbidDefaultRoute（管理员可控，不强制 RFC1918）。
+// 关联：ValidLANCIDRs、握手 ExitLANs；与 VPN 池重叠须再调 ValidateAdvertisedLANNotForbidden。
 func ValidateAdvertisedLAN(cidr string) (string, error) {
 	n, err := ParseCIDROrHost(cidr)
 	if err != nil {
@@ -177,4 +177,62 @@ func ValidateAdvertisedLAN(cidr string) (string, error) {
 		return "", fmt.Errorf("local_lans 须为 RFC1918 私网: %s", n.String())
 	}
 	return n.String(), nil
+}
+
+// CIDRsOverlap 判断两个 CIDR/单 IP 是否有地址交集（含互相包含）。
+//
+// 用途：拒绝 local_lans 与 vpn.subnet 重叠，防止 ExitLAN 旁路横向隔离后伪造他户 VPN 源。
+// 算法：任一方网络地址落在另一方网段内即视为重叠（相邻等长不重叠）。
+func CIDRsOverlap(a, b string) (bool, error) {
+	na, err := ParseCIDROrHost(a)
+	if err != nil {
+		return false, err
+	}
+	nb, err := ParseCIDROrHost(b)
+	if err != nil {
+		return false, err
+	}
+	return na.Contains(nb.IP) || nb.Contains(na.IP), nil
+}
+
+// ValidateAdvertisedLANNotForbidden 在 ValidateAdvertisedLAN 基础上拒绝与 forbidden 列表重叠的网段。
+//
+// 参数：cidr — 客户端广告；forbidden — 通常为 vpn.subnet（及将来其它不可广告前缀）。
+// 返回：规范化 CIDR；与任一 forbidden 重叠时中文 error。
+// 关联：tunnel.applyLANRegistry；空 forbidden 项跳过。
+func ValidateAdvertisedLANNotForbidden(cidr string, forbidden ...string) (string, error) {
+	n, err := ValidateAdvertisedLAN(cidr)
+	if err != nil {
+		return "", err
+	}
+	for _, f := range forbidden {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		ov, err := CIDRsOverlap(n, f)
+		if err != nil {
+			// forbidden 自身不可解析时跳过该项（启动配置错误应由别处拦截）
+			continue
+		}
+		if ov {
+			return "", fmt.Errorf("local_lans 不得与 VPN 地址池重叠: %s ∩ %s", n, f)
+		}
+	}
+	return n, nil
+}
+
+// ValidLANCIDRsNotForbidden 过滤并规范化 CIDR 列表，并剔除与 forbidden 重叠项。
+//
+// 无效或重叠项静默跳过（调用方逐条校验时可打日志）；保序去重。
+func ValidLANCIDRsNotForbidden(cidrs []string, forbidden ...string) []string {
+	var out []string
+	for _, c := range cidrs {
+		n, err := ValidateAdvertisedLANNotForbidden(c, forbidden...)
+		if err != nil {
+			continue
+		}
+		out = append(out, n)
+	}
+	return DedupTrimNonEmpty(out)
 }

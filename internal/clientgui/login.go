@@ -13,7 +13,6 @@ import (
 	"haovpn/internal/clientapp"
 	"haovpn/internal/clientgui/icons"
 	"haovpn/internal/config"
-	"haovpn/internal/platform"
 	"haovpn/internal/safeutil"
 	"haovpn/internal/version"
 )
@@ -93,8 +92,7 @@ func (u *uiApp) showLogin(elevHint string) {
 //
 // 密码错误、账号已在线等失败留在登录页并显示 errLbl。
 func (u *uiApp) tryConnect() {
-	if !platform.IsAdmin() {
-		u.errLbl.SetText("须以管理员运行（TUN/路由/杀开关）")
+	if !u.requireAdmin("须以管理员运行（TUN/路由/杀开关）", func(m string) { u.errLbl.SetText(m) }) {
 		return
 	}
 	addr := strings.TrimSpace(u.serverEntry.Text)

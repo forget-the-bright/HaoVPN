@@ -28,7 +28,7 @@ func TestLoginMultipartForm(t *testing.T) {
 	defer store.Close()
 
 	authSvc := auth.New(store, 5, 900, 3600)
-	if err := ensureTestAdmin(store, authSvc, "admin", "changeme123"); err != nil {
+	if err := ensureTestAdmin(store, authSvc, "admin", "changeme12"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -48,7 +48,7 @@ func TestLoginMultipartForm(t *testing.T) {
 	if err := w.WriteField("username", "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.WriteField("password", "changeme123"); err != nil {
+	if err := w.WriteField("password", "changeme12"); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {

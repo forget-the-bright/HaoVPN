@@ -19,9 +19,9 @@ func TestLoginAndLockout(t *testing.T) {
 	defer store.Close()
 
 	svc := auth.New(store, 3, 60, 3600)
-	_ = svc.EnsureAdmin("admin", "changeme123", false)
+	_ = svc.EnsureAdmin("admin", "changeme12", false)
 
-	token, user, err := svc.Login("admin", "changeme123", "127.0.0.1")
+	token, user, err := svc.Login("admin", "changeme12", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestLoginAndLockout(t *testing.T) {
 			t.Fatal("wrong password should fail")
 		}
 	}
-	_, _, err = svc.Login("admin", "changeme123", "192.168.1.5")
+	_, _, err = svc.Login("admin", "changeme12", "192.168.1.5")
 	if err == nil {
 		t.Fatal("expected lockout after 3 failures")
 	}

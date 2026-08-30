@@ -349,30 +349,42 @@ chmod +x haovpn-client
 sudo ./haovpn-client -c ./client.yaml
 ```
 
-#### 开机自启：两条概念，托盘未实现
+#### 开机自启：托盘可写（须 root / 用户目录）
 
-与 Windows 一样仍是「登录后有界面」和「开机无界面服务」两条路，但 **`internal/autostart` 非 Windows 只返回提示**，GUI 托盘那两项**不会**写单元文件。请手工配置，例如 Linux systemd：
+与 Windows 相同两条能力，由 `internal/autostart` 实现：
+
+| 能力 | Linux | macOS |
+|------|-------|-------|
+| 登录后起 GUI | `~/.config/autostart/haovpn-client-gui.desktop`（XDG） | `~/Library/LaunchAgents/com.haovpn.client.gui.plist` |
+| 开机无界面 | `/etc/systemd/system/haovpn-client.service`（须 root；`ExecStart=… service`） | `/Library/LaunchDaemons/com.haovpn.client.plist`（须 root） |
+
+托盘开关在 Linux/macOS 会真实写文件；无权限时返回明确中文错误（不再伪成功）。单元内容生成见 `autostart/gen.go`。
+
+手工等价示例（Linux systemd，与 autostart 生成一致）：
 
 ```bash
 # /etc/systemd/system/haovpn-client.service（路径按现场改）
 [Unit]
-Description=HaoVPN Client
+Description=HaoVPN 客户端（开机无界面）
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/haovpn/haovpn-client -c /opt/haovpn/client.yaml
+ExecStart=/opt/haovpn/haovpn-client-gui service
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```bash
+sudo systemctl daemon-reload
 sudo systemctl enable --now haovpn-client.service
 ```
 
-macOS：参考上文服务端 launchd 示例，把二进制换成 `haovpn-client` 做成 LaunchDaemon。登录后拉 GUI（若日后有桌面包）再用用户级 LaunchAgent / `.desktop`，与「系统服务」分开。
+macOS：LaunchDaemon 标签 `com.haovpn.client`，`ProgramArguments` 含 `service`；登录 GUI 用 LaunchAgent `com.haovpn.client.gui`。
 
 ---
 

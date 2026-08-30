@@ -52,7 +52,7 @@ func openPlatform(cfg Config) (Device, error) {
 	if name == "" {
 		name = brand.DefaultTunName
 	}
-	ip, ipNet, err := ParseCIDR(cfg.CIDR)
+	ip, ipNet, err := parseCIDR(cfg.CIDR)
 	if err != nil {
 		return nil, err
 	}

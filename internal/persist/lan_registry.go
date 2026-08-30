@@ -10,6 +10,10 @@ import (
 	"haovpn/internal/timeutil"
 )
 
+// MaxLANRegistryHostIDLen 注册表 host_id 最大字符数（防超长刷库/日志）。
+// 超出则截断写入；握手侧也应尽量控制长度。
+const MaxLANRegistryHostIDLen = 128
+
 // ClientLANRegistry 客户端上报的本地网段临时广告一行。
 type ClientLANRegistry struct {
 	UserID    int64     `json:"user_id"`
@@ -19,25 +23,26 @@ type ClientLANRegistry struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// NormalizeLANCIDR 薄包装：委托 netutil（兼容旧调用方；新代码请直接用 netutil）。
-//
-// 关联：netutil.NormalizeLANCIDR / ValidateAdvertisedLAN；与托管路由 dest 策略分离。
-func NormalizeLANCIDR(cidr string) (string, error) {
-	return netutil.NormalizeLANCIDR(cidr)
-}
-
-// ValidLANCIDRs 薄包装：委托 netutil.ValidLANCIDRs（兼容旧调用方）。
-func ValidLANCIDRs(cidrs []string) []string {
-	return netutil.ValidLANCIDRs(cidrs)
+// clampHostID 截断过长 host_id，避免无界字符串入库与日志膨胀。
+func clampHostID(hostID string) string {
+	h := strings.TrimSpace(hostID)
+	if len(h) <= MaxLANRegistryHostIDLen {
+		return h
+	}
+	return h[:MaxLANRegistryHostIDLen]
 }
 
 // ReplaceClientLANRegistry 用本次上报列表整表替换该账号注册行（换机覆盖）。
+//
+// CIDR 规范化请直接用 netutil.NormalizeLANCIDR / ValidLANCIDRs（本包不再薄包装）。
+// 与 VPN 池重叠的拒绝在 tunnel.applyLANRegistry 完成；此处假定 cidrs 已过滤。
 //
 // cidrs 空：仅清空（等价于未配 local_lans 的客户端不应调用；服务端也可用于断线清理）。
 func (s *Store) ReplaceClientLANRegistry(userID int64, vpnIP, hostID string, cidrs []string) error {
 	if userID <= 0 {
 		return fmt.Errorf("user_id 无效")
 	}
+	hostID = clampHostID(hostID)
 	var normalized []string
 	seen := map[string]struct{}{}
 	for _, c := range cidrs {
@@ -65,7 +70,7 @@ func (s *Store) ReplaceClientLANRegistry(userID int64, vpnIP, hostID string, cid
 		if _, err := tx.Exec(
 			`INSERT INTO client_lan_registry(user_id, dest_cidr, vpn_ip, host_id, updated_at)
 			 VALUES(?,?,?,?,datetime('now'))`,
-			userID, dest, strings.TrimSpace(vpnIP), strings.TrimSpace(hostID),
+			userID, dest, strings.TrimSpace(vpnIP), hostID,
 		); err != nil {
 			return err
 		}
@@ -124,4 +129,18 @@ func (s *Store) ListClientLANRegistry(viaUserID int64) ([]ClientLANRegistry, err
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// HasLanRegistryMatch via 账号是否在注册表登记了该 dest（有效出口广告）。
+func (s *Store) HasLanRegistryMatch(viaUserID int64, destCIDR string) (bool, error) {
+	dest, err := NormalizePeerRouteDest(destCIDR)
+	if err != nil {
+		return false, err
+	}
+	var n int
+	err = s.db.QueryRow(
+		`SELECT COUNT(*) FROM client_lan_registry WHERE user_id=? AND dest_cidr=?`,
+		viaUserID, dest,
+	).Scan(&n)
+	return n > 0, err
 }

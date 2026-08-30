@@ -39,7 +39,7 @@ func openPlatform(cfg Config) (Device, error) {
 			continue
 		}
 		file := os.NewFile(uintptr(fd), name)
-		ip, ipNet, err := ParseCIDR(cfg.CIDR)
+		ip, ipNet, err := parseCIDR(cfg.CIDR)
 		if err != nil {
 			file.Close()
 			return nil, err

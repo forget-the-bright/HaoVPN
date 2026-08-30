@@ -6,7 +6,56 @@
 
 ---
 
-*最后更新：2026-08-30 · 文档：自启平台矩阵 + README 改写*
+*最后更新：2026-08-30 · 架构解耦第十六轮*
+
+---
+
+## 2026-08-30 · 架构解耦第十六轮（正确性 / 叶子 / 拆分 / 文档）
+
+### 动机
+
+审计发现：托管路由成员收窄未脏旧成员、应用生效 TOCTOU 清空脏集、`GetPeerRoute` 空指针风险、`local_lans` 可广告 VPN 网段绕过横向隔离；已有 helper 未统一采用；transport/peer_store/runtime/route/engine_boot 仍偏胖；peer DTO 留在 api；CODEMAP 略旧。一次收口，不留「下次」。
+
+### 改动摘要
+
+- **正确性/安全**：成员替换 dirty=旧∪新；apply 仅清成功 done；`GetPeerRoute` 判空；ExitLAN 禁与 `vpn.subnet` 重叠；via/成员须 VPN 账号；`host_id` 长度上限。
+- **叶子收敛**：`paginate.ParseBoolQuery`；`httputil` writeItems/parse*Int64/requireMethod；`fileutil.Exists`/`AbsPair`/`CheckWorldReadable`；证书原子写；GUI `requireAdmin`；autostart unix AbsPair。
+- **同包拆分**：transport config/conn_loops/server/mtu；persist peer_*；sessionmgr route_*；clientapp runtime_*；serverapp boot_*。
+- **边界**：peer 视图→`readmodel/peers.go`；`api/doc.go` 写清 vpnaccount vs persist+sessionmgr；systemd ExecStart 空格引号。
+- **文档**：architecture CODEMAP、internal README、hardening §4.3、troubleshooting、dev-log、记忆。
+
+### 验证
+
+```powershell
+go test ./internal/api/... ./internal/netutil/... ./internal/persist/... ./internal/fileutil/... ./internal/autostart/... -count=1
+go test ./... -count=1
+.\scripts\build-local.ps1
+```
+
+---
+
+## 2026-08-30 · 架构解耦第十五轮（SCM / 自启 / peer / health）
+
+### 动机
+
+审计发现：CLI 与 GUI 两套 Windows SCM 实现、非 Windows Disable 伪成功、`handler_peers.go` 过胖、公开 health 泄漏数据面、死 re-export、默认口令测试不一致。一次收口，不留「下次」。
+
+### 改动摘要
+
+- **autostart**：SCM install/start/stop/uninstall 唯一写路径；`DefaultServiceStopTimeout`；Linux XDG+systemd、macOS LaunchAgent/Daemon；`gen.go` 生成物单测；stub Disable 诚实报错。
+- **clientapp**：`--service` 委托 autostart；Unix `service` 无界面入口。
+- **叶子**：`tun.parseCIDR` 不导出；删 persist LAN 薄包装；`security.Redact` 防循环注释。
+- **api**：拆 peer handlers；`writeOKWith`/`writePendingApply`；公开 health 仅 `ok`+`uptime_sec`。
+- **安全**：测试口令对齐 `changeme12`；登录脚本 `web/static/login.js`；CSP 残留文档化。
+- **文档**：architecture / internal README / deploy §5.3 / hardening / cmd README / 记忆。
+
+### 验证
+
+```powershell
+go test ./internal/autostart/... ./internal/clientapp/... ./internal/api/... -count=1
+go test ./... -count=1
+.\scripts\build-local.ps1
+```
 
 ---
 

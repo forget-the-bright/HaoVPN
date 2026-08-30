@@ -50,6 +50,41 @@ func TestValidateAdvertisedLAN(t *testing.T) {
 	}
 }
 
+// TestValidateAdvertisedLANNotForbidden 拒绝与 VPN 池重叠，放行不重叠私网。
+func TestValidateAdvertisedLANNotForbidden(t *testing.T) {
+	vpn := "10.88.0.0/24"
+	if _, err := netutil.ValidateAdvertisedLANNotForbidden("10.88.0.0/24", vpn); err == nil {
+		t.Fatal("应拒绝与 VPN 池完全相同")
+	}
+	if _, err := netutil.ValidateAdvertisedLANNotForbidden("10.88.0.5/32", vpn); err == nil {
+		t.Fatal("应拒绝落在 VPN 池内的 /32")
+	}
+	if _, err := netutil.ValidateAdvertisedLANNotForbidden("10.88.0.0/16", vpn); err == nil {
+		t.Fatal("应拒绝覆盖 VPN 池的更宽前缀")
+	}
+	s, err := netutil.ValidateAdvertisedLANNotForbidden("192.168.31.0/24", vpn)
+	if err != nil || s != "192.168.31.0/24" {
+		t.Fatalf("不重叠应通过 got %q err=%v", s, err)
+	}
+	got := netutil.ValidLANCIDRsNotForbidden(
+		[]string{"192.168.1.0/24", "10.88.0.0/24", "10.0.0.0/8"}, vpn)
+	if len(got) != 1 || got[0] != "192.168.1.0/24" {
+		t.Fatalf("过滤后应仅私网 LAN, got %v", got)
+	}
+}
+
+// TestCIDRsOverlap 相邻等长不重叠；包含关系重叠。
+func TestCIDRsOverlap(t *testing.T) {
+	ov, err := netutil.CIDRsOverlap("10.0.0.0/25", "10.0.0.128/25")
+	if err != nil || ov {
+		t.Fatalf("相邻等长应不重叠 ov=%v err=%v", ov, err)
+	}
+	ov, err = netutil.CIDRsOverlap("10.0.0.0/24", "10.0.0.128/25")
+	if err != nil || !ov {
+		t.Fatalf("包含应重叠 ov=%v err=%v", ov, err)
+	}
+}
+
 // TestIsLimitedBroadcast 255.255.255.255。
 func TestIsLimitedBroadcast(t *testing.T) {
 	if !netutil.IsLimitedBroadcast(net.IPv4(255, 255, 255, 255)) {

@@ -10,6 +10,7 @@ import (
 
 // accountOnlineMaxRetries 首次登录时「账号已在线」的最大自动重试次数。
 // 须覆盖服务端半死会话静默阈值（约 8～20s）+ 退避，避免未等顶替就停。
+// 仅 clientapp 拨号路径使用，不与 SCM DefaultServiceStopTimeout 混用。
 const accountOnlineMaxRetries = 40
 
 // IsFatalHandshakeError 判断握手/鉴权失败是否应停止自动重连。

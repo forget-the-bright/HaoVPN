@@ -7,7 +7,8 @@
 // 关键文件：
 //   cidr.go — ValidateCIDRList、SplitCIDR、ParseCIDRToV4Mask、ValidateIPInSubnet、ValidateNoFullTunnel
 //   addr.go — HostFromAddr、NormalizeRemoteHost、IsLimitedBroadcast、ValidateAdvertisedLAN、
-//             NormalizeLANCIDR、ValidLANCIDRs、DedupTrimNonEmpty
+//             ValidateAdvertisedLANNotForbidden、CIDRsOverlap、NormalizeLANCIDR、ValidLANCIDRs、
+//             ValidLANCIDRsNotForbidden、DedupTrimNonEmpty
 //   hostport.go — SplitHostPortLoose、SplitRemoteAddr（探针/握手共用远端拆分）
 //   gateway.go — InferGatewayFromVPNIP、ResolveGateway、IsLoopbackHost
 //   listen.go — 管理口监听地址合并与校验

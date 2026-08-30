@@ -10,7 +10,6 @@ import (
 	"haovpn/internal/config"
 	"haovpn/internal/credentials"
 	"haovpn/internal/logger"
-	"haovpn/internal/platform"
 )
 
 // configMenuItem 托盘「配置」子菜单。
@@ -90,8 +89,7 @@ func (u *uiApp) toggleKillSwitch() {
 }
 
 func (u *uiApp) toggleLogonAutostart() {
-	if !platform.IsAdmin() {
-		u.appendLog("开机自启（登录后）须以管理员运行")
+	if !u.requireAdmin("开机自启（登录后）须以管理员运行", u.appendLog) {
 		return
 	}
 	on, _, _ := autostart.LogonStatus()
@@ -122,8 +120,7 @@ func (u *uiApp) toggleLogonAutostart() {
 }
 
 func (u *uiApp) toggleServiceAutostart() {
-	if !platform.IsAdmin() {
-		u.appendLog("服务开机自启须以管理员运行")
+	if !u.requireAdmin("服务开机自启须以管理员运行", u.appendLog) {
 		return
 	}
 	inst, _, _, _ := autostart.ServiceStatus()
@@ -170,8 +167,7 @@ func (u *uiApp) maybeAutoConnect() {
 	if u.cfg == nil || !u.cfg.CanAutoConnect() {
 		return
 	}
-	if !platform.IsAdmin() {
-		logger.Info("gui_auto_connect skip: not admin")
+	if !u.requireAdmin("", func(string) { logger.Info("gui_auto_connect skip: not admin") }) {
 		return
 	}
 	logger.Info("gui_auto_connect begin")

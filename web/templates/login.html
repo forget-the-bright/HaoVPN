@@ -46,55 +46,6 @@
   </div>
 
   <script src="/static/app.js"></script>
-  <script>
-    if (location.search.includes('change=1')) {
-      document.getElementById('loginAlert').classList.remove('hidden');
-    }
-
-    document.getElementById('loginForm').addEventListener('submit', async function (e) {
-      e.preventDefault();
-      var errEl = document.getElementById('loginError');
-      errEl.classList.add('hidden');
-      var fd = new FormData(e.target);
-      try {
-        var r = await fetch('/api/v1/login', { method: 'POST', body: fd });
-        var j = await r.json();
-        if (!j.ok) {
-          errEl.textContent = j.error || '登录失败';
-          errEl.classList.remove('hidden');
-          return;
-        }
-        HaoVPN.setCSRF(j.csrf_token || '');
-        if (j.must_change_password) {
-          document.getElementById('loginForm').classList.add('hidden');
-          document.getElementById('changeBox').classList.remove('hidden');
-          // 须改密：当前密码即刚登录所用密码，便于用户粘贴
-          var pw = document.getElementById('password').value;
-          if (pw) document.getElementById('old_password').value = pw;
-        } else {
-          location.href = '/';
-        }
-      } catch (ex) {
-        errEl.textContent = ex.message || '网络错误';
-        errEl.classList.remove('hidden');
-      }
-    });
-
-    document.getElementById('changeForm').addEventListener('submit', async function (e) {
-      e.preventDefault();
-      var fd = new FormData(e.target);
-      try {
-        var j = await HaoVPN.api('/api/v1/password', { method: 'POST', body: fd });
-        if (j.ok) {
-          HaoVPN.toast('密码已更新，请使用新密码重新登录', 'ok');
-          location.href = '/login';
-        } else {
-          HaoVPN.toast(j.error || '修改失败', 'error');
-        }
-      } catch (ex) {
-        HaoVPN.toast(ex.message, 'error');
-      }
-    });
-  </script>
+  <script src="/static/login.js"></script>
 </body>
 </html>

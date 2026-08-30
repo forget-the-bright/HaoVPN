@@ -75,10 +75,10 @@ func WaitSingleInstanceFree(timeout time.Duration) bool {
 	return !singleinstance.ClientAlreadyRunning()
 }
 
-// StopServiceForTakeover 停止 HaoVPN 客户端服务并等待。
+// StopServiceForTakeover 停止 HaoVPN 客户端服务并等待（超时见 autostart.DefaultServiceStopTimeout）。
 func StopServiceForTakeover() error {
 	logger.Info("gui_takeover stop_service begin")
-	err := autostart.ServiceStopAndWait(20 * time.Second)
+	err := autostart.ServiceStopAndWait(autostart.DefaultServiceStopTimeout)
 	if err != nil {
 		logger.Warn("gui_takeover stop_service: %v", err)
 		return err
@@ -93,9 +93,5 @@ func resolveGUIExe() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepathAbs(exe)
-}
-
-func filepathAbs(p string) (string, error) {
-	return absPath(p)
+	return absPath(exe)
 }

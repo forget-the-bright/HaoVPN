@@ -2,6 +2,7 @@
 package security
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -12,7 +13,6 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"os"
 	"strings"
 	"time"
 
@@ -38,7 +38,7 @@ type CertGenOptions struct {
 // 副作用：可能写入 cert/key PEM 文件（权限 0600）；打 Warn/Info 日志。
 // 并发：启动时单线程调用；并发生成同一文件应由调用方避免。
 func EnsureServerCert(certFile, keyFile string, autoGenerate bool, opts *CertGenOptions) error {
-	if fileExists(certFile) && fileExists(keyFile) {
+	if fileutil.Exists(certFile) && fileutil.Exists(keyFile) {
 		return nil
 	}
 	if !autoGenerate {
@@ -147,27 +147,21 @@ func generateSelfSigned(certFile, keyFile string, opts *CertGenOptions) error {
 	if err != nil {
 		return err
 	}
-	certOut, err := os.OpenFile(certFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
+	var certPEM bytes.Buffer
+	if err := pem.Encode(&certPEM, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
 		return err
 	}
-	defer certOut.Close()
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
-		return err
-	}
-	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer keyOut.Close()
 	b, err := x509.MarshalECPrivateKey(priv)
 	if err != nil {
 		return err
 	}
-	return pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: b})
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	var keyPEM bytes.Buffer
+	if err := pem.Encode(&keyPEM, &pem.Block{Type: "EC PRIVATE KEY", Bytes: b}); err != nil {
+		return err
+	}
+	// 原子写：崩溃不留半截密钥；权限 0600
+	if err := fileutil.WriteFileAtomic(certFile, certPEM.Bytes(), 0o600); err != nil {
+		return err
+	}
+	return fileutil.WriteFileAtomic(keyFile, keyPEM.Bytes(), 0o600)
 }

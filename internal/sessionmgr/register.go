@@ -218,6 +218,8 @@ func sameRemoteHost(a, b string) bool {
 
 // reconnectStaleAfter 半死会话判定阈值：对端静默超过此时间则允许密码重连顶替。
 // 取 grace 与 20s 中较小者（至少 8s），以便客户端持续重试窗口内能顶替 ZT 黑洞会话。
+//
+// 刻意留在本包：仅 sessionmgr 注册路径使用，与传输层 HeartbeatTimeout / SCM 停服超时语义不同。
 func reconnectStaleAfter(grace time.Duration) time.Duration {
 	const minStale = 8 * time.Second
 	const maxStale = 20 * time.Second

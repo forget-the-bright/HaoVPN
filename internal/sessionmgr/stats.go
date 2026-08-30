@@ -1,8 +1,13 @@
 package sessionmgr
 
 import (
+	"time"
+
+	"haovpn/internal/logger"
 	"haovpn/internal/persist"
 )
+
+// stats.go：在线会话查询与 session_stats 节流刷新。
 
 // OnlineCount 返回当前内存中在线 VPN 账号数。
 func (m *Manager) OnlineCount() int {
@@ -54,3 +59,44 @@ var (
 type AccessError struct{ Msg string }
 
 func (e *AccessError) Error() string { return e.Msg }
+
+// noteInboundRx 累加入站字节并节流刷新 session_stats。
+func (m *Manager) noteInboundRx(ps *AccountSession, userID int64, n int) {
+	if ps == nil || n <= 0 {
+		return
+	}
+	ps.RxBytes.Add(int64(n))
+	now := time.Now()
+	last := ps.lastStatFlush.Load()
+	if now.UnixNano()-last < int64(5*time.Second) {
+		return
+	}
+	if !ps.lastStatFlush.CompareAndSwap(last, now.UnixNano()) || m.store == nil {
+		return
+	}
+	m.flushSessionStat(userID, &ps.ConnectedAt, &now, ps.RxBytes.Load(), ps.TxBytes.Load(), ps.RemoteAddr)
+}
+
+// flushSessionStat 写入/更新 session_stats，保留既有 reconnect_count。
+//
+// route 节流刷新与 kick 断线共用，避免两处字段漂移。
+func (m *Manager) flushSessionStat(userID int64, connectedAt, lastHB *time.Time, rx, tx int64, remoteAddr string) {
+	if m.store == nil {
+		return
+	}
+	rc := 0
+	if st, err := m.store.GetSessionStat(userID); err == nil && st != nil {
+		rc = st.ReconnectCount
+	}
+	if err := m.store.UpsertSessionStat(persist.SessionStat{
+		UserID:         userID,
+		ConnectedAt:    connectedAt,
+		LastHeartbeat:  lastHB,
+		RxBytes:        rx,
+		TxBytes:        tx,
+		ReconnectCount: rc,
+		RemoteAddr:     remoteAddr,
+	}); err != nil {
+		logger.Warn("更新 session_stats 失败 user_id=%d: %v", userID, err)
+	}
+}

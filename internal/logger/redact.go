@@ -23,7 +23,9 @@ func needsRedact(s string) bool {
 
 // RedactSensitive 脱敏日志行中的密码、token 与疑似密钥材料。
 //
-// 用于写盘/API 返回前；无敏感关键词时原样返回。
+// 用于写盘/控制台前；无敏感关键词时原样返回。
+// security.Redact 故意委托本函数（而非反向依赖），以打断 logger↔security 循环；
+// 新代码优先直接调本函数。
 func RedactSensitive(s string) string {
 	if !needsRedact(s) {
 		return s

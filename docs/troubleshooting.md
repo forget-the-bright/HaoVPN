@@ -39,6 +39,9 @@
 | 家/本机能连 VPN，ping 对端 VPN IP 通，但不通服务端 NAT（如 `192.168.3.1`），且开了 local_lans/ICS | ICS 在 TUN 挂 `192.168.137.1` 后 **Windows 错选发包源** | **升级客户端**：ICS 后对非 VPN 地址 `SkipAsSource`，并重装 AllowedIPs；日志 `本机发包源优先 10.88.x.x`。`Get-NetIPAddress` 看 137 地址应为 SkipAsSource |
 | Windows 路由表「在链路上」且接口是本机 VPN IP | **预期**：进 haovpn0，不是把 via 配成自己 | 控制台 `via 10.88.x.x` 只在服务端选路；本机不必出现「下一跳=via」 |
 | `/peers` 增删很卡 | 旧版保存时同步踢线抢 SQLite | 新版保存只写库；点「应用生效」再踢受影响账号 |
+| 点了「应用生效」仍显示待应用 / pending | 部分账号 `IncrementPolicyVer` 失败；或踢线过程中又改了策略 | 看服务端日志 `peers_apply kicked=… failed=…`；失败 ID 会保留 dirty。修好库后重点应用生效；勿假设一次 POST 必清空全部 dirty |
+| 收窄托管路由访问方后，被踢出的客户端仍能走旧 via | 旧版只 dirty 新成员 | **升级服务端**：成员替换 dirty=旧∪新；对被移除账号也须应用生效踢线 |
+| via 上报 `local_lans` 含 VPN 网段后可伪造成员 VPN 源 | 旧版未禁与 `vpn.subnet` 重叠 | **升级服务端**：握手拒绝与 VPN 池重叠的广告；查 `lan_cidr_reject` |
 | 手动封禁 IP 仍能连上 | 旧版仅在 `probe_defense.enabled=true` 时挂 Probe | 升级服务端：有 Guard 即挂载，封禁表 Accept 始终生效；查 `/security` 与 `ip_blocks` |
 | 提示「账号密钥须加密存储」 | 库内明文私钥且 `allow_plaintext_private_keys=false` | 重新开户/轮换密钥使私钥加密入库；临时兼容才开 `allow_plaintext_private_keys`（勿用于生产） |
 | 反复断连 | 心跳超时、ZeroTier 等损耗链路抖动 | 客户端 `heartbeat_timeout_sec` 建议 60～90；默认已 90s；**先 `ping` 底层 ZT IP**（如 192.168.196.17），若底层也超时则属 ZeroTier/运营商问题，不是隧道逻辑 |
@@ -46,9 +49,9 @@
 | 重连仍每次 `via_exit_setup` / ICS | 旧客户端；或 `local_lans`/`vpn_subnet`/VPN IP 真变了；或走了 Stop/手动重连 | 确认已更新客户端；改配置后首次会重建属正常；GUI「手动重新连接」会全清 |
 | 退出登录 / 手动重连时界面卡住数秒 | 旧版在 UI 线程同步 `Stop`（ICS PowerShell COM 很慢） | **升级客户端**：清理改后台；界面显示「正在断开…」；日志 `gui_engine_stop` / `DisableAllICS elapsed=` |
 | 点「退出」整窗假死很久 | 旧版退出同步等 ICS 清理 | **升级 GUI**：异步退出，先提示「正在退出（清理网络）…」，日志 `gui_quit` |
-| 要开机自动连且要托盘 | Windows：登录后自启 + 无窗口 + 自动连接 | 托盘「配置」三项；须自动登录桌面。**Linux/macOS 托盘自启未实现**，勿指望 GUI 勾选 |
-| 要开机即连、不要托盘 | Windows 服务；或 Linux systemd / macOS LaunchDaemon | Win：托盘「服务」或 `--service install`。Linux/macOS：见 [deploy.md §5.3](deploy.md)，手工 unit，**非托盘开关** |
-| Linux/macOS 点托盘开机自启无效 | 非 Windows 的 `autostart` 仅提示 | 预期行为；用 systemd/launchd 配 CLI |
+| 要开机自动连且要托盘 | Windows：登录后自启 + 无窗口 + 自动连接 | 托盘「配置」三项；须自动登录桌面。Linux/macOS：托盘可写 XDG/LaunchAgent（见 deploy §5.3） |
+| Linux/macOS 点托盘「服务自启」失败 | systemd/LaunchDaemon 须 root | 以 root 运行 GUI 或手工装 unit；看错误文案 |
+| 要开机即连、不要托盘 | Windows 服务；或 Linux systemd / macOS LaunchDaemon | Win：托盘「服务」或 `--service install`。Linux/macOS：托盘「服务」或手工 unit（deploy §5.3）；ExecStart 须带 `service` |
 | 服务在跑再开 GUI 提示已在运行 | 旧版不区分服务 | 新版弹出接管对话框：停止服务并接管 / 保持服务 |
 | ping 网关间歇丢包 | 同上：底层 ZT 丢包会连带 `10.88.0.1` 丢 | 对比双 ping；ZT 稳后再看 VPN |
 | 日志大量 `send queue full` WARN | 发送队列（默认 256）被打满，属背压；大文件/看电影更易出现 | 加大易满一侧：`vpn.send_queue_size`（服务端）或 `server.send_queue_size`（客户端），如 `1024`；两端可不同。过大增延迟 |

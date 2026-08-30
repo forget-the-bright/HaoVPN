@@ -6,16 +6,20 @@ import (
 	"fmt"
 	"os"
 
+	"haovpn/internal/autostart"
 	"haovpn/internal/brand"
 	"haovpn/internal/config"
 	"haovpn/internal/safeutil"
 	"haovpn/internal/singleinstance"
 
 	"golang.org/x/sys/windows/svc"
-	"golang.org/x/sys/windows/svc/mgr"
 )
 
-// RunServiceCommand 处理 Windows 服务 install/start/stop 与 SCM 启动入口。
+// RunServiceCommand 处理 Windows 服务 install/start/stop/uninstall 与 SCM 启动入口。
+//
+// SCM 安装/启停/卸载全部委托 internal/autostart（与 GUI 托盘共用单一真相源）。
+// 本文件只保留：CLI 薄封装 + svc.Run 主循环（VPN 领域在 clientapp）。
+//
 // 参数 args 通常为 os.Args；已处理时返回 true，main 应直接 return。
 func RunServiceCommand(args []string) bool {
 	if len(args) < 2 {
@@ -29,13 +33,13 @@ func RunServiceCommand(args []string) bool {
 		}
 		switch args[2] {
 		case "install":
-			installService()
+			cliServiceInstall()
 		case "start":
-			startService()
+			cliServiceStart()
 		case "stop":
-			stopService()
+			cliServiceStop()
 		case "uninstall":
-			uninstallService()
+			cliServiceUninstall()
 		default:
 			fmt.Println("未知子命令:", args[2])
 			os.Exit(1)
@@ -49,8 +53,7 @@ func RunServiceCommand(args []string) bool {
 	return false
 }
 
-const serviceName = brand.WinServiceName
-
+// clientService 实现 golang.org/x/sys/windows/svc.Handler。
 type clientService struct{}
 
 func (m *clientService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
@@ -90,70 +93,39 @@ func (m *clientService) Execute(args []string, r <-chan svc.ChangeRequest, chang
 	}
 }
 
-func installService() {
-	exe, _ := os.Executable()
-	m, err := mgr.Connect()
+func cliServiceInstall() {
+	exe, err := os.Executable()
 	if err != nil {
-		fmt.Println("连接服务管理器失败:", err)
+		fmt.Println("解析本程序路径失败:", err)
 		os.Exit(1)
 	}
-	defer m.Disconnect()
-	s, err := m.OpenService(serviceName)
-	if err == nil {
-		s.Close()
-		fmt.Println("服务已存在")
-		return
-	}
-	cfg := mgr.Config{
-		DisplayName: brand.WinServiceDisplay,
-		Description: "工控现场 VPN 客户端，开机自动连接",
-		StartType:   mgr.StartAutomatic,
-	}
-	s, err = m.CreateService(serviceName, exe, cfg, "service")
-	if err != nil {
+	if err := autostart.ServiceInstall(exe); err != nil {
 		fmt.Println("安装失败:", err)
 		os.Exit(1)
 	}
-	defer s.Close()
 	fmt.Println("服务已安装，执行 --service start 启动")
 }
 
-func startService()  { controlService("start") }
-func stopService()   { controlService("stop") }
-func uninstallService() {
-	m, _ := mgr.Connect()
-	defer m.Disconnect()
-	s, err := m.OpenService(serviceName)
-	if err != nil {
-		return
+func cliServiceStart() {
+	if err := autostart.ServiceStart(); err != nil {
+		fmt.Println("启动失败:", err)
+		os.Exit(1)
 	}
-	defer s.Close()
-	_ = s.Delete()
-	fmt.Println("服务已卸载")
+	fmt.Println("服务已启动")
 }
 
-func controlService(action string) {
-	m, err := mgr.Connect()
-	if err != nil {
-		fmt.Println(err)
+func cliServiceStop() {
+	if err := autostart.ServiceStop(); err != nil {
+		fmt.Println("停止失败:", err)
 		os.Exit(1)
 	}
-	defer m.Disconnect()
-	s, err := m.OpenService(serviceName)
-	if err != nil {
-		fmt.Println("服务未安装")
+	fmt.Println("服务已停止")
+}
+
+func cliServiceUninstall() {
+	if err := autostart.ServiceUninstall(); err != nil {
+		fmt.Println("卸载失败:", err)
 		os.Exit(1)
 	}
-	defer s.Close()
-	switch action {
-	case "start":
-		if err := s.Start(); err != nil {
-			fmt.Println("启动失败:", err)
-			os.Exit(1)
-		}
-		fmt.Println("服务已启动")
-	case "stop":
-		_, _ = s.Control(svc.Stop)
-		fmt.Println("服务已停止")
-	}
+	fmt.Println("服务已卸载")
 }

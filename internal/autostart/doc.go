@@ -2,12 +2,16 @@
 //
 // 两条能力与平台实现状态：
 //
-//   | 能力           | Windows                         | Linux / macOS                          |
-//   |----------------|---------------------------------|----------------------------------------|
-//   | 登录后起 GUI   | 计划任务 ONLOGON + Highest      | 未实现（Enable 返回提示）；应对 XDG/LaunchAgent |
-//   | 开机无界面服务 | SCM 服务 HaoVPNClient           | 未实现（Enable 返回提示）；应对 systemd/LaunchDaemon |
+//	| 能力           | Windows                         | Linux                              | macOS                                   |
+//	|----------------|---------------------------------|------------------------------------|-----------------------------------------|
+//	| 登录后起 GUI   | 计划任务 ONLOGON + Highest      | XDG ~/.config/autostart/*.desktop  | LaunchAgent ~/Library/LaunchAgents      |
+//	| 开机无界面服务 | SCM（brand.WinServiceName）     | systemd /etc/systemd/system（须 root） | LaunchDaemon /Library/LaunchDaemons（须 root） |
 //
-// GUI 托盘两个开关在非 Windows 上可点，但不会写入系统配置；现场请按 docs/deploy.md §5.3 手工配置 CLI。
+// 关键文件：gen.go（纯函数生成物；systemd ExecStart 对含空格路径加引号）；
+// paths_unix.go（linux|darwin：AbsPair 解析 exe+可选配置）；
+// logon_*.go / service_*.go / stub_other.go。
+//
+// 安装/启停经本包导出 API；clientapp 仅保留「service」无界面主循环与 Windows CLI 薄封装。
 package autostart
 
 import "haovpn/internal/brand"

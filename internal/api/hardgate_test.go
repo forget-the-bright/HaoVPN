@@ -43,7 +43,7 @@ func TestAccountPrivateKeyAESAndExport(t *testing.T) {
 	}
 
 	authSvc := auth.New(store, 5, 60, 3600)
-	_ = ensureTestAdmin(store, authSvc, "admin", "changeme123")
+	_ = ensureTestAdmin(store, authSvc, "admin", "changeme12")
 
 	cfg := &config.ServerConfig{
 		Server: config.ServerSection{Listen: "127.0.0.1:8443", TLS: config.TLSSection{CertFile: filepath.Join(dir, "c.crt")}},
@@ -63,7 +63,7 @@ func TestAccountPrivateKeyAESAndExport(t *testing.T) {
 
 	client := &http.Client{}
 	loginResp, err := client.Post(ts.URL+"/api/v1/login", "application/x-www-form-urlencoded",
-		strings.NewReader("username=admin&password=changeme123"))
+		strings.NewReader("username=admin&password=changeme12"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestLogsAPIContainsMarker(t *testing.T) {
 	}
 	defer store.Close()
 	authSvc := auth.New(store, 5, 60, 3600)
-	_ = ensureTestAdmin(store, authSvc, "admin", "changeme123")
+	_ = ensureTestAdmin(store, authSvc, "admin", "changeme12")
 
 	cfg := &config.ServerConfig{
 		Server: config.ServerSection{Listen: "127.0.0.1:8443"},
@@ -185,7 +185,7 @@ func TestLogsAPIContainsMarker(t *testing.T) {
 
 	client := &http.Client{}
 	loginResp, _ := client.Post(ts.URL+"/api/v1/login", "application/x-www-form-urlencoded",
-		strings.NewReader("username=admin&password=changeme123"))
+		strings.NewReader("username=admin&password=changeme12"))
 	cookies := loginResp.Cookies()
 	loginResp.Body.Close()
 

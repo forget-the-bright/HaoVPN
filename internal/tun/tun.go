@@ -48,7 +48,9 @@ func Open(cfg Config) (Device, error) {
 	return openPlatform(cfg)
 }
 
-// ParseCIDR 解析 CIDR 并返回主机 IP 与网段（委托 netutil，保留 tun 包 API 兼容）。
-func ParseCIDR(cidr string) (net.IP, *net.IPNet, error) {
+// parseCIDR 解析 CIDR 并返回主机 IP 与网段（委托 netutil）。
+//
+// 故意不导出：外部请直接调 netutil.ParseCIDR，避免再造一层薄 re-export。
+func parseCIDR(cidr string) (net.IP, *net.IPNet, error) {
 	return netutil.ParseCIDR(cidr)
 }

@@ -16,8 +16,8 @@ import (
 	"haovpn/internal/sessionmgr"
 )
 
-// TestLoginPageCSPAllowsInlineScript 验证登录页响应头允许内联 JS（白屏根因回归）。
-func TestLoginPageCSPAllowsInlineScript(t *testing.T) {
+// TestLoginPageLoadsExternalLoginScript 登录页引用 static/login.js；CSP 仍允许 unsafe-inline（其它页残留内联）。
+func TestLoginPageLoadsExternalLoginScript(t *testing.T) {
 	dir := t.TempDir()
 	store, err := persist.Open(filepath.Join(dir, "csp.db"))
 	if err != nil {
@@ -25,7 +25,7 @@ func TestLoginPageCSPAllowsInlineScript(t *testing.T) {
 	}
 	defer store.Close()
 	authSvc := auth.New(store, 5, 60, 3600)
-	_ = ensureTestAdmin(store, authSvc, "admin", "changeme123")
+	_ = ensureTestAdmin(store, authSvc, "admin", "changeme12")
 	cfg := testServerCfg()
 	pool, _ := ippool.New(cfg.VPN.Subnet)
 	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "pk")
@@ -37,11 +37,11 @@ func TestLoginPageCSPAllowsInlineScript(t *testing.T) {
 		t.Fatalf("status=%d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "loginForm") || !strings.Contains(body, "<script>") {
-		t.Fatal("登录页应含表单与内联脚本")
+	if !strings.Contains(body, "loginForm") || !strings.Contains(body, "/static/login.js") {
+		t.Fatal("登录页应含表单并引用 /static/login.js")
 	}
 	csp := w.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "script-src") || !strings.Contains(csp, "'unsafe-inline'") {
-		t.Fatalf("CSP 未允许内联脚本，浏览器会白屏/登录无效: %q", csp)
+		t.Fatalf("CSP 仍须允许 unsafe-inline（其它管理页内联未迁完）: %q", csp)
 	}
 }

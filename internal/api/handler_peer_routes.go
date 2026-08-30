@@ -1,0 +1,248 @@
+package api
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"haovpn/internal/logger"
+	"haovpn/internal/paginate"
+	"haovpn/internal/persist"
+	"haovpn/internal/readmodel"
+)
+
+// handlePeerRoutes GET 列表 / POST 新增托管路由（只写库，不踢线）。
+func (s *Server) handlePeerRoutes(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s.listPeerRoutes(w, r)
+	case http.MethodPost:
+		s.createPeerRoute(w, r)
+	}
+}
+
+// handlePeerRouteByID DELETE 或 PUT members：/api/v1/peer-routes/{id}
+func (s *Server) handlePeerRouteByID(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/peer-routes/")
+	idStr = strings.Trim(idStr, "/")
+	// 子路径 members
+	if strings.HasSuffix(idStr, "/members") {
+		idStr = strings.TrimSuffix(idStr, "/members")
+		idStr = strings.Trim(idStr, "/")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			writeAPIError(w, http.StatusBadRequest, "无效路由 id")
+			return
+		}
+		s.replacePeerRouteMembers(w, r, id)
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "无效路由 id")
+		return
+	}
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+	old, err := s.store.GetPeerRoute(id)
+	if err != nil || old == nil {
+		writeAPIError(w, http.StatusNotFound, "路由不存在")
+		return
+	}
+	if err := s.store.DeletePeerRoute(id); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	s.audit.Log(s.actorFromRequest(r), "peer_route_delete", "peer_route", &id, s.clientIP(r), map[string]string{
+		"dest": old.DestCIDR, "via_user_id": strconv.FormatInt(old.ViaUserID, 10),
+	})
+	s.markDirtyForMembers(old.MemberUserIDs)
+	writePendingApply(w, nil)
+}
+
+func (s *Server) markDirtyForMembers(members []int64) {
+	if persist.PeerRouteHasAllMembers(members) {
+		s.markPeerDirtyAll()
+		return
+	}
+	s.markPeerDirtyUsers(members...)
+}
+
+// markDirtyForMembersUnion 对旧∪新访问方打脏（成员收窄时被移除方也须踢线）。
+func (s *Server) markDirtyForMembersUnion(oldMembers, newMembers []int64) {
+	s.markDirtyForMembers(persist.UnionMemberUserIDs(oldMembers, newMembers))
+}
+
+func (s *Server) replacePeerRouteMembers(w http.ResponseWriter, r *http.Request, id int64) {
+	if !requireMethod(w, r, http.MethodPut, http.MethodPost) {
+		return
+	}
+	var body struct {
+		MemberUserIDs []int64 `json:"member_user_ids"`
+		ApplyAll      bool    `json:"apply_all"`
+	}
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	if body.ApplyAll {
+		body.MemberUserIDs = []int64{persist.PeerRouteMemberAll}
+	}
+	old, err := s.store.GetPeerRoute(id)
+	if err != nil || old == nil {
+		writeAPIError(w, http.StatusNotFound, "路由不存在")
+		return
+	}
+	if err := s.store.ReplacePeerRouteMembers(id, body.MemberUserIDs); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.audit.Log(s.actorFromRequest(r), "peer_route_members", "peer_route", &id, s.clientIP(r), nil)
+	// 旧∪新：收窄访问方时被踢出者也须应用生效后丢弃旧 ViaRoutes
+	s.markDirtyForMembersUnion(old.MemberUserIDs, body.MemberUserIDs)
+	rt, err := s.store.GetPeerRoute(id)
+	if err != nil || rt == nil {
+		logger.Warn("peer_route_members 写库成功但回读失败 id=%d: %v", id, err)
+		writePendingApply(w, nil)
+		return
+	}
+	byID, err := s.userDirMap()
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	writePendingApply(w, map[string]any{
+		"item": s.toPeerRouteView(*rt, byID),
+	})
+}
+
+func (s *Server) listPeerRoutes(w http.ResponseWriter, r *http.Request) {
+	routes, err := s.store.ListPeerRoutes()
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	byID, err := s.userDirMap()
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	items := make([]readmodel.PeerRouteView, 0, len(routes))
+	for _, rt := range routes {
+		items = append(items, s.toPeerRouteView(rt, byID))
+	}
+	writeItems(w, items)
+}
+
+func (s *Server) createPeerRoute(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		DestCIDR      string  `json:"dest_cidr"`
+		ViaUserID     int64   `json:"via_user_id"`
+		UserID        *int64  `json:"user_id"` // 兼容旧字段：单访问方
+		MemberUserIDs []int64 `json:"member_user_ids"`
+		ApplyAll      bool    `json:"apply_all"`
+	}
+	if !decodeJSONOrForm(w, r, &body, func() {
+		body.DestCIDR = r.FormValue("dest_cidr")
+		body.ViaUserID = parseFormInt64(r, "via_user_id")
+		if v, ok := paginate.ParseBoolQuery(r.FormValue("apply_all")); ok {
+			body.ApplyAll = v
+		}
+		if uid := r.FormValue("user_id"); uid != "" && !body.ApplyAll {
+			v := parseFormInt64(r, "user_id")
+			body.UserID = &v
+		}
+	}) {
+		return
+	}
+	members := body.MemberUserIDs
+	if body.ApplyAll {
+		members = []int64{persist.PeerRouteMemberAll}
+	} else if len(members) == 0 && body.UserID != nil {
+		members = []int64{*body.UserID}
+	}
+	if body.ViaUserID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "须指定 via 账号")
+		return
+	}
+	via, err := s.store.GetUserByID(body.ViaUserID)
+	if err != nil || via == nil {
+		writeAPIError(w, http.StatusBadRequest, "via 账号不存在")
+		return
+	}
+	if !via.HasVPN() {
+		writeAPIError(w, http.StatusBadRequest, "via 须为 VPN 账号")
+		return
+	}
+	id, err := s.store.InsertPeerRoute(body.DestCIDR, body.ViaUserID, members)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.audit.Log(s.actorFromRequest(r), "peer_route_create", "peer_route", &id, s.clientIP(r), map[string]string{
+		"dest": body.DestCIDR, "via_user_id": strconv.FormatInt(body.ViaUserID, 10),
+		"apply_all": strconv.FormatBool(persist.PeerRouteHasAllMembers(members)),
+	})
+	s.markDirtyForMembers(persist.NormalizeMemberUserIDs(members))
+	rt, err := s.store.GetPeerRoute(id)
+	if err != nil || rt == nil {
+		logger.Warn("peer_route_create 写库成功但回读失败 id=%d: %v", id, err)
+		writePendingApply(w, nil)
+		return
+	}
+	byID, err := s.userDirMap()
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	writePendingApply(w, map[string]any{
+		"item": s.toPeerRouteView(*rt, byID),
+	})
+}
+
+func (s *Server) toPeerRouteView(rt persist.PeerRoute, byID map[int64]persist.UserDirectoryEntry) readmodel.PeerRouteView {
+	v := readmodel.PeerRouteView{
+		ID: rt.ID, DestCIDR: rt.DestCIDR, ViaUserID: rt.ViaUserID,
+		MemberUserIDs: rt.MemberUserIDs, Scope: "user",
+	}
+	if persist.PeerRouteHasAllMembers(rt.MemberUserIDs) {
+		v.Scope = "all"
+		v.MemberNames = "全部账号"
+	} else {
+		var names []string
+		for _, mid := range rt.MemberUserIDs {
+			if u, ok := byID[mid]; ok {
+				names = append(names, u.Username)
+			} else {
+				names = append(names, fmt.Sprintf("#%d", mid))
+			}
+		}
+		v.MemberNames = strings.Join(names, ", ")
+	}
+	via := byID[rt.ViaUserID]
+	v.ViaUsername = via.Username
+	v.ViaVPNIP = strings.TrimSpace(via.VPNIP)
+	regOK := false
+	if ok, err := s.store.HasLanRegistryMatch(rt.ViaUserID, rt.DestCIDR); err == nil {
+		regOK = ok
+	}
+	v.ViaOffline = v.ViaVPNIP == ""
+	v.Stale = v.ViaOffline || !regOK
+	name := v.ViaUsername
+	if name == "" {
+		name = fmt.Sprintf("user#%d", rt.ViaUserID)
+	}
+	switch {
+	case v.Stale && v.ViaOffline:
+		v.Display = fmt.Sprintf("%s via %s(离线·失效)", rt.DestCIDR, name)
+	case v.Stale:
+		v.Display = fmt.Sprintf("%s via %s(注册失效)", rt.DestCIDR, v.ViaVPNIP)
+	default:
+		v.Display = fmt.Sprintf("%s via %s", rt.DestCIDR, v.ViaVPNIP)
+	}
+	return v
+}

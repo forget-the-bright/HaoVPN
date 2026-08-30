@@ -30,7 +30,10 @@ func RunTicker(ctx context.Context, interval time.Duration, fn func(context.Cont
 	}
 }
 
-// RunTickerStop 在 stop 关闭前按 interval 周期调用 fn；stop 收到信号后立即退出。
+// RunTickerStop 在 stop 通道关闭前按 interval 周期调用 fn；收到 stop 后立即退出。
+//
+// 与 RunTicker 的区别：用 chan struct{} 而非 context，便于旧式 stop 信号集成。
+// interval≤0：直接返回。fn 应短小；耗时工作请另起 GoSafe goroutine。
 func RunTickerStop(stop <-chan struct{}, interval time.Duration, fn func()) {
 	if interval <= 0 {
 		return

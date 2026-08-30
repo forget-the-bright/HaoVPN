@@ -18,7 +18,8 @@
 ## cmd/client
 
 - **单实例**：`singleinstance`（127.0.0.1 TCP 协调）；重复启动打印 `AlreadyRunningMessage` 后退出。
-- **Windows 服务**：`--service install|uninstall|start|stop` → `clientapp.RunServiceCommand`（实现见 `internal/clientapp/service_windows.go`）。
+- **Windows 服务**：`--service install|uninstall|start|stop` → `clientapp.RunServiceCommand`（CLI 薄封装；**SCM 安装/启停实现在 `internal/autostart`**，与 GUI 托盘共用）。
+- **无界面运行**：argv `service`（SCM/systemd/launchd 启动）→ VPN 主循环，无 Fyne。
 - **拨号**：`clientapp.RunCLI` / `Engine`。
 
 ## cmd/client-gui

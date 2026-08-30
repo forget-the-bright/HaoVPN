@@ -59,7 +59,12 @@ func BindCheck(listenHosts []string, allowPublic bool) error {
 
 // Redact 从日志或 API 响应字符串中脱敏密码、token 与疑似密钥材料。
 //
-// 实现委托 logger.RedactSensitive，避免 logger↔security 循环依赖。
+// 为何保留此薄委托（禁止「顺手删掉」）：
+//   - 脱敏实现落在 logger（写日志路径天然需要）；
+//   - security 检查清单/测试/部分调用方习惯 security.Redact；
+//   - 若把实现放进 security 再让 logger 引用 → logger↔security 循环依赖。
+// 新业务代码优先直接调 logger.RedactSensitive；本函数仅为防循环的兼容入口。
+// 见 docs/architecture.md「依赖规则」与 logger/redact.go 注释。
 func Redact(s string) string {
 	return logger.RedactSensitive(s)
 }
@@ -67,15 +72,18 @@ func Redact(s string) string {
 // SecurityHeaders 返回 Web 管理端推荐的 HTTP 安全响应头。
 //
 // 参数：无。
-// 返回：header 名 → 值的 map；CSP 允许同源内联 script/style（模板无外链 CDN）。
+// 返回：header 名 → 值的 map。
 // 副作用：无。
 //
-// WebUI 模板使用内联 <script>/<style>（无外链 CDN）。若仅设 default-src 'self'，
-// 浏览器会拦截内联脚本，表现为「白屏 / 登录按钮无反应」。因此显式允许同源内联。
+// CSP 残留风险（诚实说明，不假装已消除）：
+//   - 仍含 script-src/style-src 'unsafe-inline'，因多数 templates/*.html 仍有内联 <script>/<style>；
+//   - 登录页已外置到 static/login.js，其它管理页外置属后续增量；
+//   - 若去掉 unsafe-inline 而未迁完脚本，浏览器会拦截 → 白屏/按钮无反应。
+// 关联：docs/security-hardening.md；web/static/login.js。
 func SecurityHeaders() map[string]string {
 	return map[string]string{
-		"X-Content-Type-Options": "nosniff",
-		"X-Frame-Options":        "DENY",
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
 		"Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
 	}
 }

@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 
 	"haovpn/internal/netutil"
 	"haovpn/internal/paginate"
@@ -20,7 +19,7 @@ func (s *Server) handleMonitorOnline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := s.buildMonitorItems(rows, true, online)
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeItems(w, items)
 }
 
 // handleMonitorAccounts 返回 VPN 账号监控摘要（GET /api/v1/monitor/accounts）。
@@ -37,7 +36,7 @@ func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	online := s.onlineUserSet()
 	items := s.buildMonitorItems(rows, onlineOnly, online)
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	writeItemsTotal(w, items, len(items))
 }
 
 // handleMonitorEvents 分页返回连接事件（GET /api/v1/monitor/events）。
@@ -46,7 +45,7 @@ func (s *Server) handleMonitorAccounts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMonitorEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, offset := paginate.ParseLimitOffset(q, 50, 200)
-	userID, _ := strconv.ParseInt(q.Get("user_id"), 10, 64)
+	userID := parseQueryInt64(r, "user_id")
 
 	rows, total, err := s.store.ListConnectionEventsFiltered(readmodel.ConnectionEventFilter{
 		UserID: userID, EventType: q.Get("event_type"), Limit: limit, Offset: offset,

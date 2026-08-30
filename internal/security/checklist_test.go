@@ -83,7 +83,7 @@ nat: { enabled: false, allowed_lan_cidrs: [] }
 database: { path: "./data.db" }
 api: { listen_hosts: ["0.0.0.0"], port: 8080, allow_public_bind: ` + ap + ` }
 security: { enforce_split_tunnel: true }
-admin: { username: "admin", password: "changeme123" }
+admin: { username: "admin", password: "changeme12" }
 log: { level: "info", file: "./s.log" }
 `
 }

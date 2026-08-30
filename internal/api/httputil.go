@@ -126,11 +126,57 @@ func writeOK(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// writeOKWith 返回 {"ok": true} 并合并 extra 字段（同名键覆盖 ok）。
+//
+// 用于带附加数据的成功响应（如 kicked、allow_all_vpn_peers），避免各 handler 手写 map。
+func writeOKWith(w http.ResponseWriter, extra map[string]any) {
+	out := map[string]any{"ok": true}
+	for k, v := range extra {
+		out[k] = v
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// writePendingApply 返回 {"ok": true, "pending_apply": true} 并合并 extra。
+//
+// 托管路由/互访变更只写库不踢线时使用；控制台据此显示「须应用生效」黄条。
+func writePendingApply(w http.ResponseWriter, extra map[string]any) {
+	out := map[string]any{"ok": true, "pending_apply": true}
+	for k, v := range extra {
+		out[k] = v
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // writePage 返回标准分页 JSON 信封（items、total、limit、offset）。
 func writePage(w http.ResponseWriter, code int, items any, total, limit, offset int) {
 	writeJSON(w, code, map[string]any{
 		"items": items, "total": total, "limit": limit, "offset": offset,
 	})
+}
+
+// writeItems 返回仅含 items 的列表信封（无分页元数据）。
+//
+// 用途：peer-routes / peer-access / lan-registry / monitor/online 等全量或过滤列表。
+func writeItems(w http.ResponseWriter, items any) {
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// writeItemsTotal 返回 items + total（无 limit/offset，适合内存过滤后的列表）。
+func writeItemsTotal(w http.ResponseWriter, items any, total int) {
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// parseFormInt64 解析表单字段为 int64；空或非法时返回 0（调用方自行判 ≤0）。
+func parseFormInt64(r *http.Request, key string) int64 {
+	v, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue(key)), 10, 64)
+	return v
+}
+
+// parseQueryInt64 解析 URL 查询参数为 int64；空或非法时返回 0。
+func parseQueryInt64(r *http.Request, key string) int64 {
+	v, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get(key)), 10, 64)
+	return v
 }
 
 // writeAttachment 以附件形式写出二进制/文本响应体。

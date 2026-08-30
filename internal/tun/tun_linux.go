@@ -50,7 +50,7 @@ func openPlatform(cfg Config) (Device, error) {
 			break
 		}
 	}
-	ip, ipNet, err := ParseCIDR(cfg.CIDR)
+	ip, ipNet, err := parseCIDR(cfg.CIDR)
 	if err != nil {
 		syscall.Close(fd)
 		return nil, err

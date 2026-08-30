@@ -2,6 +2,7 @@ package persist_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"haovpn/internal/auth"
@@ -158,5 +159,51 @@ func TestNormalizePeerRouteDest(t *testing.T) {
 	}
 	if _, err := persist.NormalizePeerRouteDest("0.0.0.0/0"); err == nil {
 		t.Fatal("default route should fail")
+	}
+}
+
+// TestUnionMemberUserIDs 任一侧 all 则结果为 all；否则并集去重。
+func TestUnionMemberUserIDs(t *testing.T) {
+	u := persist.UnionMemberUserIDs([]int64{1, 2}, []int64{2, 3})
+	if len(u) != 3 {
+		t.Fatalf("want 3, got %v", u)
+	}
+	u = persist.UnionMemberUserIDs([]int64{persist.PeerRouteMemberAll}, []int64{1})
+	if len(u) != 1 || u[0] != persist.PeerRouteMemberAll {
+		t.Fatalf("want [0], got %v", u)
+	}
+}
+
+// TestInsertPeerRouteRejectsUnknownMember 不存在的访问方须拒绝。
+func TestInsertPeerRouteRejectsUnknownMember(t *testing.T) {
+	store, err := persist.Open(filepath.Join(t.TempDir(), "mem.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	via := createPeerTestUser(t, store, "viax", "10.88.0.50")
+	if _, err := store.InsertPeerRoute("10.1.0.0/24", via, []int64{99999}); err == nil {
+		t.Fatal("未知成员应失败")
+	}
+}
+
+// TestLanRegistryHostIDClamp 超长 host_id 截断入库。
+func TestLanRegistryHostIDClamp(t *testing.T) {
+	store, err := persist.Open(filepath.Join(t.TempDir(), "host.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	u := createPeerTestUser(t, store, "viah", "10.88.0.51")
+	long := strings.Repeat("a", persist.MaxLANRegistryHostIDLen+40)
+	if err := store.ReplaceClientLANRegistry(u, "10.88.0.51", long, []string{"192.168.9.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.ListClientLANRegistry(u)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list: %v err=%v", list, err)
+	}
+	if len(list[0].HostID) != persist.MaxLANRegistryHostIDLen {
+		t.Fatalf("host_id len=%d want %d", len(list[0].HostID), persist.MaxLANRegistryHostIDLen)
 	}
 }

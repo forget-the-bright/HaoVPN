@@ -71,8 +71,7 @@ func toBlockViews(items []persist.IPBlock) []ipBlockView {
 
 // handleSecurityEvents 分页查询探针安全事件（GET /api/v1/security/events）。
 func (s *Server) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	q := r.URL.Query()
@@ -92,6 +91,9 @@ func (s *Server) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
 
 // handleSecurityBlocks 列出或手动新增封禁（GET/POST /api/v1/security/blocks）。
 func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		q := r.URL.Query()
@@ -145,15 +147,12 @@ func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
 			"ip": ip, "reason": reason,
 		})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ip": ip})
-	default:
-		writeMethodNotAllowed(w)
 	}
 }
 
 // handleSecurityBlockByIP 解封（DELETE /api/v1/security/blocks/{ip}）。
 func (s *Server) handleSecurityBlockByIP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		writeMethodNotAllowed(w)
+	if !requireMethod(w, r, http.MethodDelete) {
 		return
 	}
 	se, ok := s.sessionFromRequest(r)

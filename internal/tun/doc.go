@@ -1,7 +1,7 @@
 // Package tun 提供跨平台 TUN 设备抽象（Linux / Windows Wintun / macOS utun）。
 //
 // 关键文件：
-//   tun.go — Device 接口、Open、ParseCIDR
+//   tun.go — Device 接口、Open、parseCIDR（包内；外部用 netutil.ParseCIDR）
 //   tun_windows.go — Wintun 会话（复用、配 IP、Read/Write）
 //   wintun_adapter_windows.go — 适配器 Open/Create、孤儿网卡清理、固定 GUID
 //   wintun_log_windows.go — Wintun DLL 日志桥接（预期噪声降为 Debug）

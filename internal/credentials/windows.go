@@ -31,7 +31,9 @@ type dataBlob struct {
 	pbData *byte
 }
 
-// CredPath 返回 DPAPI 凭据文件路径（ProgramData\HaoVPN\credentials）。
+// CredPath 返回 DPAPI 凭据文件路径（ProgramData\<brand>\credentials）。
+//
+// 为何用 LocalMachine：Windows 服务以 LocalSystem 运行，CurrentUser DPAPI 无法解密交互用户保存的密文。
 func CredPath() string {
 	base := os.Getenv("ProgramData")
 	if base == "" {

@@ -59,7 +59,7 @@ func newTestAPI(t *testing.T) (*httptest.Server, *http.Client, []*http.Cookie, s
 		t.Fatal(err)
 	}
 	authSvc := auth.New(store, 5, 60, 3600)
-	_ = ensureTestAdmin(store, authSvc, "admin", "changeme123")
+	_ = ensureTestAdmin(store, authSvc, "admin", "changeme12")
 	cfg := &config.ServerConfig{
 		Server:   config.ServerSection{Listen: "127.0.0.1:8443"},
 		VPN:      config.VPNSection{Subnet: "10.88.0.0/24", GatewayIP: "10.88.0.1", MTU: 1420},
@@ -72,7 +72,7 @@ func newTestAPI(t *testing.T) (*httptest.Server, *http.Client, []*http.Cookie, s
 	ts := httptest.NewServer(srv.Handler())
 	client := &http.Client{}
 	login, err := client.Post(ts.URL+"/api/v1/login", "application/x-www-form-urlencoded",
-		strings.NewReader("username=admin&password=changeme123"))
+		strings.NewReader("username=admin&password=changeme12"))
 	if err != nil {
 		t.Fatal(err)
 	}

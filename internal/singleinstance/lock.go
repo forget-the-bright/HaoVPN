@@ -15,6 +15,10 @@ type Lock struct {
 }
 
 // AcquireClient 尝试成为唯一客户端实例（127.0.0.1 协调口 Listen）。
+//
+// 成功：返回 Lock，进程退出前须 Release。
+// 失败：若已有实例返回 ErrAlreadyRunning（配合 AlreadyRunningMessage 提示用户）。
+// 关联：cmd/client、cmd/client-gui、Windows 服务 Execute 入口。
 func AcquireClient() (*Lock, error) {
 	if ClientAlreadyRunning() {
 		return nil, ErrAlreadyRunning
@@ -79,7 +83,7 @@ func ClientAlreadyRunning() bool {
 	return true
 }
 
-// AlreadyRunningMessage 返回面向用户的提示文案。
+// AlreadyRunningMessage 返回面向用户的中文提示（CLI/GUI/服务启动失败时打印）。
 func AlreadyRunningMessage() string {
 	return "HaoVPN 客户端已在运行。请先退出已有实例再启动。"
 }

@@ -3,6 +3,8 @@ package persist
 import (
 	"database/sql"
 	"fmt"
+
+	"haovpn/internal/paginate"
 )
 
 const (
@@ -39,7 +41,11 @@ func (s *Store) GetAllowAllVPNPeersSetting() (allow bool, ok bool, err error) {
 	if err != nil || v == "" {
 		return false, false, err
 	}
-	return v == "1" || v == "true", true, nil
+	val, parsed := paginate.ParseBoolQuery(v)
+	if !parsed {
+		return false, false, nil
+	}
+	return val, true, nil
 }
 
 // SetAllowAllVPNPeersSetting 持久化互访全局开关。

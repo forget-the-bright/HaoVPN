@@ -29,7 +29,7 @@ func TestAcceptanceAPIFlow(t *testing.T) {
 	defer store.Close()
 
 	authSvc := auth.New(store, 5, 900, 3600)
-	_ = ensureTestAdmin(store, authSvc, "admin", "changeme123")
+	_ = ensureTestAdmin(store, authSvc, "admin", "changeme12")
 
 	cfg := &config.ServerConfig{
 		Server: config.ServerSection{Listen: "127.0.0.1:8443", TLS: config.TLSSection{CertFile: filepath.Join(dir, "c.crt"), KeyFile: filepath.Join(dir, "c.key"), AutoGenerate: true}},
@@ -59,7 +59,7 @@ func TestAcceptanceAPIFlow(t *testing.T) {
 
 	client := &http.Client{}
 	loginResp, err := client.Post(ts.URL+"/api/v1/login", "application/x-www-form-urlencoded",
-		strings.NewReader("username=admin&password=changeme123"))
+		strings.NewReader("username=admin&password=changeme12"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestAcceptanceAPIFlow(t *testing.T) {
 	if strings.Contains(string(exportBody), "private_key:") {
 		t.Fatal("export yaml should not embed private_key")
 	}
-	if strings.Contains(string(exportBody), "changeme123") {
+	if strings.Contains(string(exportBody), "changeme12") {
 		t.Fatal("export should not contain admin password")
 	}
 
