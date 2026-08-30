@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -41,18 +40,10 @@ func AbsPair(exe, cfg string) (exeAbs, cfgAbs string, err error) {
 	return exeAbs, cfgAbs, nil
 }
 
-// CheckWorldReadable 检测 Unix 上路径是否对「组/其他人」开放权限位。
-//
-// 返回：worldReadable 为 true 表示 perm&0o077≠0；Windows 或 Stat 失败返回 false。
-// 为何不直接打日志：本包不得依赖 logger（logger→fileutil 会循环）；由 health 等调用方 Warn。
-func CheckWorldReadable(path string) (worldReadable bool, perm os.FileMode) {
-	if path == "" || runtime.GOOS == "windows" {
-		return false, 0
+// EnsureDir 确保目录自身存在（MkdirAll）；与 EnsureParentDir（父目录）互补。
+func EnsureDir(dir string, perm os.FileMode) error {
+	if strings.TrimSpace(dir) == "" {
+		return nil
 	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		return false, 0
-	}
-	p := fi.Mode().Perm()
-	return p&0o077 != 0, p
+	return os.MkdirAll(dir, perm)
 }

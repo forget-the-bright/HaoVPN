@@ -20,6 +20,13 @@ func TestValidatePasswordStrength(t *testing.T) {
 	if err := auth.ValidatePasswordStrength("Secure123"); err != nil {
 		t.Fatalf("valid password rejected: %v", err)
 	}
+	tooLong := strings.Repeat("a", 71) + "1" // 72 ok
+	if err := auth.ValidatePasswordStrength(tooLong); err != nil {
+		t.Fatalf("72 位合法密码被拒: %v", err)
+	}
+	if err := auth.ValidatePasswordStrength(tooLong + "x"); err == nil {
+		t.Fatal("预期拒绝超过 72 位密码")
+	}
 }
 
 func TestHashPasswordStrength(t *testing.T) {

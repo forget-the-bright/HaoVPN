@@ -39,7 +39,8 @@
 | 家/本机能连 VPN，ping 对端 VPN IP 通，但不通服务端 NAT（如 `192.168.3.1`），且开了 local_lans/ICS | ICS 在 TUN 挂 `192.168.137.1` 后 **Windows 错选发包源** | **升级客户端**：ICS 后对非 VPN 地址 `SkipAsSource`，并重装 AllowedIPs；日志 `本机发包源优先 10.88.x.x`。`Get-NetIPAddress` 看 137 地址应为 SkipAsSource |
 | Windows 路由表「在链路上」且接口是本机 VPN IP | **预期**：进 haovpn0，不是把 via 配成自己 | 控制台 `via 10.88.x.x` 只在服务端选路；本机不必出现「下一跳=via」 |
 | `/peers` 增删很卡 | 旧版保存时同步踢线抢 SQLite | 新版保存只写库；点「应用生效」再踢受影响账号 |
-| 点了「应用生效」仍显示待应用 / pending | 部分账号 `IncrementPolicyVer` 失败；或踢线过程中又改了策略 | 看服务端日志 `peers_apply kicked=… failed=…`；失败 ID 会保留 dirty。修好库后重点应用生效；勿假设一次 POST 必清空全部 dirty |
+| 点了「应用生效」仍显示待应用 / pending | 部分账号 `IncrementPolicyVer` 失败；或踢线过程中又改了策略 | 看服务端日志 `peers_apply kicked=… failed=…`；失败 ID 会保留 dirty（领域在 `vpnaccount.PeerPolicyApplier`）。修好库后重点应用生效；勿假设一次 POST 必清空全部 dirty |
+| 服务刚重启，「待应用」没了但有人还像旧策略 | peer dirty **仅内存**，重启清空；启动 WARN 提示 | 库内已是新策略；对仍在线客户端再「应用生效」或踢线。属预期，不是丢库 |
 | 收窄托管路由访问方后，被踢出的客户端仍能走旧 via | 旧版只 dirty 新成员 | **升级服务端**：成员替换 dirty=旧∪新；对被移除账号也须应用生效踢线 |
 | via 上报 `local_lans` 含 VPN 网段后可伪造成员 VPN 源 | 旧版未禁与 `vpn.subnet` 重叠 | **升级服务端**：握手拒绝与 VPN 池重叠的广告；查 `lan_cidr_reject` |
 | 手动封禁 IP 仍能连上 | 旧版仅在 `probe_defense.enabled=true` 时挂 Probe | 升级服务端：有 Guard 即挂载，封禁表 Accept 始终生效；查 `/security` 与 `ip_blocks` |
@@ -87,6 +88,7 @@
 | 已在运行提示 | 单实例锁占用（CLI/GUI/服务共用） | 托盘「退出」或结束已有 `haovpn-client`/`haovpn-client-gui` 进程 |
 | 找不到配置 | 未传 `-c` 时按 **exe 同目录 `client.yaml`** → 当前目录；双击 exe 建议把 yaml 放在 `bin\` 旁 |
 | TUN 失败 / 提示须管理员 | 非管理员会弹 UAC；拒绝则登录窗中文提示；同意后以提权实例继续 |
+| UAC 后找不到配置（路径含空格） | 旧版重启命令行未正确转义 `-c` 路径 | **升级 GUI**：`EscapeArg`；把 `client.yaml` 放在含空格目录下应仍可加载 |
 | 日志区字看不清 | 已用可读主题（深色字）；请用新版 GUI |
 | 启动多一个黑控制台 | 新版 GUI 以 `-H windowsgui` 构建，应无控制台；CLI `haovpn-client.exe` 仍有控制台属正常 |
 | 关窗后进程还在 | 正常：登录窗/主窗关窗仅 Hide，托盘仍在；须托盘「退出」或主窗「退出程序」 |
@@ -110,7 +112,8 @@ CLI 等效：`auth.username` + yaml 内 `auth.password` 或 `HAOVPN_PASSWORD` �
 | 本机 127.0.0.1 不通 | 服务未起、端口错 | `curl http://127.0.0.1:8080/api/v1/health` |
 | VPN 内不通 | 未绑 TUN IP | 确认 TUN 已启动；看 `listen_hosts` |
 | 登录失败 | 密码错 / 账户锁定 / **非 admin 账号** | 等锁定过期；工程师账号仅隧道登录，Web 须 admin |
-| CSRF 错误 | 浏览器缓存 | 清缓存重登 |
+| CSRF 错误 | 浏览器缓存；或须改密页 CSRF 失败 | 清缓存重登；须改密时仍可 GET `/api/v1/csrf`（第十七轮起） |
+| 注销后仍带着旧 Session / HTTPS 下登不出 | 旧版 clear Cookie 未带 Secure/SameSite，与登录 Cookie 属性不一致 | **升级服务端**：`clearSessionCookie` 与 `setSessionCookie` 对齐；确认 `api.secure_cookies` 与实际 HTTPS 一致 |
 
 ---
 

@@ -57,6 +57,10 @@ func SaveService(username, password string) error {
 	if err := fileutil.WriteFileAtomic(credPath(), enc, 0o600); err != nil {
 		return fmt.Errorf("写入凭据失败（须管理员）: %w", err)
 	}
+	if err := fileutil.RestrictToAdminsOnly(credPath()); err != nil {
+		// 文件已写出；ACL 失败不阻断，但须 WARN 提醒本机其它主体可能可读密文
+		logger.Warn("服务凭据 ACL 收紧失败 path=%s err=%v（建议 icacls 仅 Administrators+SYSTEM）", credPath(), err)
+	}
 	logger.Info("已保存服务凭据（LocalMachine DPAPI） path=%s user=%s", credPath(), username)
 	return nil
 }

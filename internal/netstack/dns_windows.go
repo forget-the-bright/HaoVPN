@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"haovpn/internal/netutil"
 	"haovpn/internal/winnet"
 )
 
@@ -81,15 +82,7 @@ func RestoreDNS(adapterName string) error {
 }
 
 func dnsServersEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return netutil.StringSlicesEqualTrimmed(a, b)
 }
 
 func applyStaticDNS(adapterName string, servers []string) error {

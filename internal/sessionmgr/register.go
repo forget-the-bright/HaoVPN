@@ -2,6 +2,7 @@ package sessionmgr
 
 import (
 	"net"
+	"sort"
 	"time"
 
 	"haovpn/internal/auth"
@@ -201,12 +202,39 @@ func parseViaRoutes(specs []ViaRouteSpec) ([]viaRouteEntry, error) {
 }
 
 // rebuildViaIndexLocked 从所有在线会话重建托管路由出站索引（调用方须持写锁）。
+//
+// 先按 userID 排序再扁平化，再按 dest CIDR + viaUserID 稳定排序，避免 map 迭代导致
+// 重叠 CIDR 时 RouteOutbound 首次命中 via 不确定（间歇性错路）。
 func (m *Manager) rebuildViaIndexLocked() {
+	ids := make([]int64, 0, len(m.sessions))
+	for id := range m.sessions {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	var idx []viaRouteEntry
-	for _, ps := range m.sessions {
+	for _, id := range ids {
+		ps := m.sessions[id]
+		if ps == nil {
+			continue
+		}
 		idx = append(idx, ps.ViaRoutes...)
 	}
+	sort.SliceStable(idx, func(i, j int) bool {
+		si, sj := viaNetString(idx[i]), viaNetString(idx[j])
+		if si != sj {
+			return si < sj
+		}
+		return idx[i].viaUserID < idx[j].viaUserID
+	})
 	m.viaIndex = idx
+}
+
+// viaNetString 将 via 条目的网段转为可比较字符串（nil 视为空）。
+func viaNetString(e viaRouteEntry) string {
+	if e.net == nil {
+		return ""
+	}
+	return e.net.String()
 }
 
 // sameRemoteHost 比较两个 host:port 的主机部分是否相同（忽略端口；规范化 IPv4/IPv6/本机回环）。

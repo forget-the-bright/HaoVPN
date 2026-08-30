@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
@@ -17,12 +19,14 @@ var (
 )
 
 const (
-	swNormal     = 1
+	swNormal          = 1
 	errorFileNotFound = 2
 )
 
 // RelaunchElevated 以管理员重新启动当前进程（UAC）；成功启动后本进程应退出。
 // 返回 true 表示已拉起提权进程；false 表示用户取消或失败（err 说明原因）。
+//
+// 参数拼接：对每个 os.Args[1:] 做 Windows 命令行转义（含空格路径），禁止裸 Join 空格拼接。
 func RelaunchElevated() (launched bool, err error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -32,8 +36,7 @@ func RelaunchElevated() (launched bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	// 保留除本程序名外的参数（含 -c）
-	args := strings.Join(os.Args[1:], " ")
+	args := joinElevatedArgs(os.Args[1:])
 	verb, _ := syscall.UTF16PtrFromString("runas")
 	file, _ := syscall.UTF16PtrFromString(exe)
 	param, _ := syscall.UTF16PtrFromString(args)
@@ -58,4 +61,18 @@ func RelaunchElevated() (launched bool, err error) {
 		return false, fmt.Errorf("提权启动失败 code=%d", r)
 	}
 	return true, nil
+}
+
+// joinElevatedArgs 将参数列表合成为 ShellExecute lpParameters 字符串。
+//
+// 使用 windows.EscapeArg，保证含空格的 -c 配置路径不被拆碎。
+func joinElevatedArgs(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = windows.EscapeArg(a)
+	}
+	return strings.Join(parts, " ")
 }

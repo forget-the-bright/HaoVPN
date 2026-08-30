@@ -5,9 +5,10 @@ package autostart
 import (
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
+
+	"haovpn/internal/fileutil"
 )
 
 func logonStatus() (bool, string, error) {
@@ -28,16 +29,9 @@ func logonStatus() (bool, string, error) {
 }
 
 func logonEnable(guiExe, configPath string) error {
-	exe, err := filepath.Abs(guiExe)
+	exe, cfg, err := fileutil.AbsPair(guiExe, configPath)
 	if err != nil {
-		return fmt.Errorf("解析 GUI 路径: %w", err)
-	}
-	cfg := strings.TrimSpace(configPath)
-	if cfg != "" {
-		cfg, err = filepath.Abs(cfg)
-		if err != nil {
-			return fmt.Errorf("解析配置路径: %w", err)
-		}
+		return err
 	}
 	// /TR 整段命令；路径含空格须引号。Highest = 管理员，避免每次 UAC。
 	tr := fmt.Sprintf(`"%s"`, exe)

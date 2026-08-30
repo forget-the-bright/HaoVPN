@@ -153,11 +153,12 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			writeInternalError(w, err)
 			return
 		}
+		// items 与 lines 均脱敏：写路径虽已 redact，API 出口再防一层（历史库旧数据/未来漏网）。
 		var lines []string
-		for _, it := range items {
-			lines = append(lines, it.Line)
+		for i := range items {
+			items[i].Line = logger.RedactSensitive(items[i].Line)
+			lines = append(lines, items[i].Line)
 		}
-		lines = redactLogLines(lines)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"source": "history", "items": items, "lines": lines,
 			"total": total, "limit": limit, "offset": offset,

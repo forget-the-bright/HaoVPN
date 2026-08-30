@@ -43,6 +43,8 @@ func bootAPI(bc *bootContext, sd *safeutil.Shutdown, tunDev tun.Device, tunOK, n
 	apiSrv.SetLogStore(bc.logHist)
 	apiSrv.SetDataplaneHealth(tunOK, natOK)
 	apiSrv.SetProbeGuard(bc.probeGuard)
+	// peerDirty 仅内存：重启后「待应用」清空；库内策略已是权威，在线客户端可能仍持旧策略直至踢线/重连。
+	logger.Warn("peer 策略脏标记为进程内存态：服务重启后控制台「待应用」会清空；若曾改托管路由/互访未点应用，请检查在线客户端或手动「应用生效」")
 	apiServers := api.StartAllListeners(apiSrv, listenHosts, cfg.API.Port)
 	logger.Info("管理口已就绪: %s", api.FormatBoundAddrs(apiServers))
 	return apiServers

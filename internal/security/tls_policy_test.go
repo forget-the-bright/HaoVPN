@@ -1,6 +1,7 @@
 package security_test
 
 import (
+	"strings"
 	"testing"
 
 	"haovpn/internal/security"
@@ -27,18 +28,29 @@ func TestRedact(t *testing.T) {
 	}
 }
 
-// TestSecurityHeadersAllowInlineWebUI 验证 CSP 允许内联脚本/样式（否则登录页白屏无反应）。
-func TestSecurityHeadersAllowInlineWebUI(t *testing.T) {
+// TestSecurityHeadersScriptSelfStyleInline 验证 CSP：脚本仅 'self'，样式暂仍允许 unsafe-inline。
+func TestSecurityHeadersScriptSelfStyleInline(t *testing.T) {
 	h := security.SecurityHeaders()
 	csp := h["Content-Security-Policy"]
 	if csp == "" {
 		t.Fatal("缺少 CSP")
 	}
-	if !containsAll(csp, "script-src", "'unsafe-inline'") {
-		t.Fatalf("CSP 须允许 script-src 'unsafe-inline'，否则内联登录 JS 被浏览器拦截: %s", csp)
+	if !containsAll(csp, "script-src", "'self'") {
+		t.Fatalf("CSP 须含 script-src 'self': %s", csp)
+	}
+	// 仅检查 script-src 指令段，不得再含 unsafe-inline
+	scriptPart := csp
+	if idx := strings.Index(csp, "script-src"); idx >= 0 {
+		scriptPart = csp[idx:]
+		if end := strings.Index(scriptPart, ";"); end >= 0 {
+			scriptPart = scriptPart[:end]
+		}
+	}
+	if strings.Contains(scriptPart, "'unsafe-inline'") {
+		t.Fatalf("CSP script-src 不得含 unsafe-inline（脚本已外置）: %s", csp)
 	}
 	if !containsAll(csp, "style-src", "'unsafe-inline'") {
-		t.Fatalf("CSP 须允许 style-src 'unsafe-inline': %s", csp)
+		t.Fatalf("CSP 须允许 style-src 'unsafe-inline'（内联 style 尚未迁完）: %s", csp)
 	}
 }
 

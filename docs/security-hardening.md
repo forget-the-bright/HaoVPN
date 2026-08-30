@@ -30,14 +30,16 @@
 | 检查项 | 要求 |
 |--------|------|
 | admin 默认密码 | 已修改，非模板初始值（模板为 `changeme12`）；`dev-security-check` 会 WARN |
-| 密码强度 | ≥8 位，**须含字母与数字**（代码强制） |
+| 密码强度 | ≥8 且 **≤72**（bcrypt 有效上限），**须含字母与数字**（代码强制） |
 | 自改密 | Web `POST /api/v1/password` 须 `old_password` + `new_password`；成功后吊销该用户全部 Web Session |
 | 闲置账号 | 禁用或删除（禁用同时踢 VPN + 吊销 Web 会话）；**不可**删除/禁用最后一个启用的管理员（防 Web 锁死） |
 | 用户名格式 | 字母数字与 `._-`，1～64；`auth.ValidateUsername` 在 `EnsureAdmin` / `ProvisionWebAccount` 强制 |
 | 登录锁定 | `login_max_attempts` / `login_lockout_sec` 已配置；**Web 与隧道分表**，互不影响 |
 | `api.trusted_proxy_cidrs` | 生产默认**留空**；仅反代后且 RemoteAddr 命中信任 CIDR 时才解析 X-Forwarded-For（防锁定绕过） |
-| `api.secure_cookies` | HTTPS 终止或全站 TLS 时设为 `true` |
-| 注销 | **仅 POST** `/api/v1/logout`（须 CSRF）；GET → 405 |
+| `api.secure_cookies` | HTTPS 终止或全站 TLS 时设为 `true`；与 `setSessionCookie`/`clearSessionCookie` 的 Secure/SameSite **必须一致**，否则 logout 删不掉 Cookie |
+| 会话滑动 | 鉴权 Touch 成功时**重发**同一 session Cookie（滑动续期）；清除须走 `clearSessionCookie` |
+| 须改密 | `must_change_password` 时仍可 GET `/api/v1/csrf`（改密页需要）；其它写 API 仍拦 |
+| 注销 | **仅 POST** `/api/v1/logout`（须 CSRF）；GET → 405；响应须带与登录时相同属性的过期 Cookie |
 
 ---
 
@@ -193,7 +195,9 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 |--------|------|
 | SQLite 权限 | Linux `chmod 600`；仅服务账户可读 |
 | server.yaml 权限 | 限制为管理员可读 |
-| 私钥/密码 | 日志与 `/api/v1/logs` 经 **Redact** 脱敏；仍禁止主动打印明文 |
+| 私钥/密码 | 日志写路径经 `logger.RedactSensitive`；含 **Authorization**、`session=`；`/api/v1/logs` 历史 **items** 出口再脱敏一层；仍禁止主动打印明文 |
+| Windows 凭据/敏感文件 ACL | `fileutil.RestrictToAdminsOnly`（Administrators+SYSTEM）；`CheckWorldReadable` 含 Windows Everyone 检测（health WARN） |
+| peer 待应用 | dirty 集**仅内存**：服务重启后控制台「待应用」清空；启动打 WARN（`boot_api.go`）；库内策略已是权威，在线客户端可能仍持旧策略直至踢线/重连 |
 | 定期备份 | 按 [deploy.md](deploy.md) 备份策略执行 |
 
 ---
@@ -212,7 +216,9 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 
 | 检查项 | 说明 |
 |--------|------|
-| CSP `unsafe-inline` | **有意保留（残留风险）**：多数 `templates/*.html` 仍有内联 script/style。登录页已外置 `web/static/login.js`；其它页未迁完前**勿**去掉 CSP 中的 `'unsafe-inline'`，否则管理页白屏。 |
+| CSP `script-src` | **`'self'` only**（第十七轮）：管理页脚本已外置到 `web/static/*.js`（含 `login.js`、`index.js`、`user_list.js`、`peer_routes.js` 等）。定义见 `security/tls_policy.go`。 |
+| CSP `style-src` | 仍允许 `'unsafe-inline'`（模板内联样式未迁完）；**勿**误把 style 的 unsafe-inline 当成可恢复内联脚本。 |
+| 新页面 | 禁止在 HTML 内写 `<script>` 业务逻辑；新增 `static/<page>.js` 并用 `<script src="/static/...">` 引用。 |
 
 ---
 
@@ -247,7 +253,7 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 |------|------|
 | 威胁模型 | **机器级**保护：本机任意能读凭据文件的本地主体均可解密；非用户绑定 DPAPI |
 | 为何如此 | 服务账户无交互桌面，须 LocalMachine 才能在开机自启时读密 |
-| 运维建议 | 限制凭据目录 ACL；生产机勿开共享登录；勿把凭据文件拷到非受信主机 |
+| 运维建议 | 凭据文件写后 `RestrictToAdminsOnly`；生产机勿开共享登录；勿把凭据文件拷到非受信主机 |
 | GUI 托盘服务自启 | 启用前 `credentials.SaveService`；与 CLI `--service` 共用服务名 `HaoVPNClient` |
 | yaml 明文密码 | `remember_password` / `gui.auto_connect` 依赖 `client.yaml` 明文；限制文件 ACL |
 
@@ -273,4 +279,4 @@ api:
 
 ---
 
-*最后更新：2026-08-29 · 第十二轮（改密/封禁/双 lockout/明文钥/DPAPI 说明）*
+*最后更新：2026-08-30 · 第十七轮（Cookie 滑动、CSP script-src self、Windows ACL、脱敏、peerDirty）*

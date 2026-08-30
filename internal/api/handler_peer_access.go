@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"haovpn/internal/readmodel"
 )
@@ -64,7 +65,13 @@ func (s *Server) addPeerAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.AddPeerAccessPair(body.UserID, body.PeerUserID); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		// 业务校验（不存在/非 VPN）→ 400；其它 DB 异常 → 内部错误，避免泄漏 SQLite 细节
+		msg := err.Error()
+		if strings.Contains(msg, "须为 VPN") || strings.Contains(msg, "不存在") || strings.Contains(msg, "无效") {
+			writeAPIError(w, http.StatusBadRequest, msg)
+			return
+		}
+		writeInternalError(w, err)
 		return
 	}
 	s.audit.Log(s.actorFromRequest(r), "peer_access_add", "user", &body.UserID, s.clientIP(r), map[string]string{

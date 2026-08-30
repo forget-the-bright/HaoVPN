@@ -1,3 +1,8 @@
+# HaoVPN 0.1.1 发行说明草稿（历史存档）
+
+> **历史文档**：描述 **0.1.0 → 0.1.1**。**不是**当前 VERSION。  
+> 当前版本见根目录 [VERSION](../VERSION)（撰写更新时为 **0.1.2**）；后续变更以 [dev-log.md](dev-log.md) 与 [architecture.md](architecture.md) 为准。
+
 # HaoVPN 0.1.1 发行说明草稿（可直接粘贴 GitHub Release）
 
 > 相对 **0.1.0**（`release: 0.1.0`）→ **0.1.1**（当前 `VERSION`）。AI 不改 VERSION、不 commit/push。

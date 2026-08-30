@@ -10,8 +10,10 @@ import (
 // requireAuth 鉴权中间件，包装需登录的 API 处理器。
 //
 // 未登录返回 401 JSON；用户已删/禁用/非管理员时吊销会话并 401（失败关闭）。
-// MustChangePassword 时仅放行 /api/v1/password 与 /api/v1/logout；查询失败亦 401。
-// 鉴权成功后 TouchSession（滑动过期）。
+// MustChangePassword 时仅放行 /api/v1/password、/api/v1/logout 与 GET /api/v1/csrf
+// （须改密流程刷新 CSRF，避免登录后丢内存 token 无法再拉）；查询失败亦 401。
+// 鉴权成功后 TouchSession 并重发 session Cookie（刷新浏览器 MaxAge，与服务端滑动续期对齐；
+// 绝对上限仍由 auth.Session.AbsoluteExpiresAt 约束）。
 // POST/PUT/PATCH/DELETE 须通过 validateCSRF；GET 豁免 CSRF（敏感下载已改为 POST）。
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +34,9 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if mustChange {
-			allowed := r.URL.Path == "/api/v1/password" || r.URL.Path == "/api/v1/logout"
+			allowed := r.URL.Path == "/api/v1/password" ||
+				r.URL.Path == "/api/v1/logout" ||
+				(r.Method == http.MethodGet && r.URL.Path == "/api/v1/csrf")
 			if !allowed {
 				writeAPIError(w, http.StatusForbidden, "须先修改密码")
 				return
@@ -46,9 +50,54 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if c, err := r.Cookie("session"); err == nil {
 			s.auth.TouchSession(c.Value)
+			// 重发 Cookie 刷新浏览器 MaxAge，否则仅服务端滑动、浏览器仍按登录时 MaxAge 丢弃。
+			s.setSessionCookie(w, r, c.Value)
 		}
 		next(w, r)
 	}
+}
+
+// sessionCookieSecure 是否应对 session Cookie 置 Secure。
+// 配置 api.secure_cookies 或请求已走 TLS（反代终止 TLS 时靠配置）时为 true。
+func (s *Server) sessionCookieSecure(r *http.Request) bool {
+	return s.cfg.API.SecureCookies || r.TLS != nil
+}
+
+// setSessionCookie 写入/刷新 session Cookie（登录与 Touch 滑动续期共用）。
+//
+// 属性：Path=/、HttpOnly、SameSite=Lax、MaxAge=SessionTTLSec；Secure 见 sessionCookieSecure。
+// 清除时必须用 clearSessionCookie 保持相同属性，否则 HTTPS 下浏览器可能删不掉旧 Cookie。
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+	cookie := &http.Cookie{
+		Name:     "session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   s.cfg.API.SessionTTLSec,
+	}
+	if s.sessionCookieSecure(r) {
+		cookie.Secure = true
+	}
+	http.SetCookie(w, cookie)
+}
+
+// clearSessionCookie 清除 session Cookie，属性与 setSessionCookie 对齐（含 Secure/SameSite）。
+//
+// 现代浏览器删除 Cookie 时要求 Path/Secure/SameSite 与设置时一致，否则 logout 后会话仍存活。
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	cookie := &http.Cookie{
+		Name:     "session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	}
+	if s.sessionCookieSecure(r) {
+		cookie.Secure = true
+	}
+	http.SetCookie(w, cookie)
 }
 
 // requireAuthPage WebUI 页面鉴权中间件。
@@ -140,18 +189,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.auth.PruneExpiredSessions()
 	csrf := s.auth.GetCSRF(token)
-	cookie := &http.Cookie{
-		Name:     "session",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   s.cfg.API.SessionTTLSec,
-	}
-	if s.cfg.API.SecureCookies || r.TLS != nil {
-		cookie.Secure = true
-	}
-	http.SetCookie(w, cookie)
+	s.setSessionCookie(w, r, token)
 	s.audit.Log(&user.ID, "login", "user", &user.ID, ip, nil)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                   true,
@@ -175,7 +213,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auth.Logout(c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1})
+	s.clearSessionCookie(w, r)
 	writeOK(w)
 }
 
@@ -208,8 +246,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	n := s.auth.LogoutAllForUser(se.UserID)
 	logger.Info("用户改密成功并吊销 Web 会话 user_id=%d sessions=%d", se.UserID, n)
 	s.audit.Log(&se.UserID, "change_password", "user", &se.UserID, s.clientIP(r), nil)
-	http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "relogin": true})
+	s.clearSessionCookie(w, r)
+	writeOKWith(w, map[string]any{"relogin": true})
 }
 
 // handleCSRF 返回当前会话的 CSRF Token（GET /api/v1/csrf）。

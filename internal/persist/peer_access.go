@@ -1,6 +1,8 @@
 package persist
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"haovpn/internal/timeutil"
@@ -8,16 +10,44 @@ import (
 
 // peer_access.go：账号互访白名单（peer_access 表）的增删查。
 
-// AddPeerAccess 添加互访白名单；user 与 peer 不得相同。
+// AddPeerAccess 添加互访白名单；双方须为已有 VPN 账号且不得相同。
+//
+// 校验存在性与 HasVPN，避免孤儿策略行与误导 UI；错误文案稳定中文。
 func (s *Store) AddPeerAccess(userID, peerUserID int64) error {
 	if userID <= 0 || peerUserID <= 0 || userID == peerUserID {
 		return fmt.Errorf("无效的互访账号对")
+	}
+	if err := s.requireVPNUser(userID, "访问方"); err != nil {
+		return err
+	}
+	if err := s.requireVPNUser(peerUserID, "对端"); err != nil {
+		return err
 	}
 	_, err := s.db.Exec(
 		`INSERT OR IGNORE INTO peer_access(user_id, peer_user_id) VALUES(?,?)`,
 		userID, peerUserID,
 	)
 	return err
+}
+
+// requireVPNUser 校验 userID 对应账号存在且为 VPN 账号（有公钥/vpn_ip 等）。
+//
+// 参数：role — 错误文案中的角色名（如「访问方」「对端」）。
+func (s *Store) requireVPNUser(userID int64, role string) error {
+	u, err := s.GetUserByID(userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%s账号不存在", role)
+		}
+		return fmt.Errorf("查询%s失败", role)
+	}
+	if u == nil {
+		return fmt.Errorf("%s账号不存在", role)
+	}
+	if !u.HasVPN() {
+		return fmt.Errorf("%s须为 VPN 账号", role)
+	}
+	return nil
 }
 
 // RemovePeerAccess 删除一条互访白名单。

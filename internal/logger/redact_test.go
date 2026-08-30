@@ -34,3 +34,22 @@ func TestRedactSensitiveInLogFile(t *testing.T) {
 		t.Fatalf("期望脱敏标记: %s", content)
 	}
 }
+
+// TestRedactAuthorizationAndSessionToken 覆盖 Authorization 与 session= 会话值。
+func TestRedactAuthorizationAndSessionToken(t *testing.T) {
+	hexTok := strings.Repeat("ab", 32) // 64 hex
+	in := "req Authorization: Bearer " + hexTok + " session=" + hexTok
+	out := RedactSensitive(in)
+	if strings.Contains(out, hexTok) {
+		t.Fatalf("仍含明文 token: %s", out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Fatalf("期望脱敏标记: %s", out)
+	}
+	// host_id 长 hex 不得被误伤
+	hostLine := "lan_registry host_id=" + hexTok + " count=1"
+	got := RedactSensitive(hostLine)
+	if !strings.Contains(got, hexTok) {
+		t.Fatalf("host_id 不应被脱敏: %s", got)
+	}
+}

@@ -22,6 +22,31 @@ func createPeerTestUser(t *testing.T, store *persist.Store, name, ip string) int
 	return id
 }
 
+// TestAddPeerAccessRequiresVPNUsers 互访双方须存在且为 VPN 账号。
+func TestAddPeerAccessRequiresVPNUsers(t *testing.T) {
+	store, err := persist.Open(filepath.Join(t.TempDir(), "peer-access-vpn.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	a := createPeerTestUser(t, store, "acc-a", "10.88.0.40")
+	if err := store.AddPeerAccess(a, 99999); err == nil || !strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("不存在对端应失败: %v", err)
+	}
+	hash, _ := auth.HashPassword("Pass12345!")
+	adminID, err := store.CreateUser("only-admin", hash, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddPeerAccess(a, adminID); err == nil || !strings.Contains(err.Error(), "VPN") {
+		t.Fatalf("纯管理员对端应失败: %v", err)
+	}
+	b := createPeerTestUser(t, store, "acc-b", "10.88.0.41")
+	if err := store.AddPeerAccess(a, b); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestPeerAccessAndRoutesCascade 互访与托管路由在删号时须级联清理。
 func TestPeerAccessAndRoutesCascade(t *testing.T) {
 	store, err := persist.Open(filepath.Join(t.TempDir(), "peer.db"))

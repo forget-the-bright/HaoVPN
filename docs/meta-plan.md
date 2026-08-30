@@ -1,6 +1,10 @@
 # Go自研VPN｜单版本完整交付规划（v1.0‑all‑in‑one）
 
-> **规划存档**：本文描述 v1.0 全貌与 step 顺序；**当前进度与变更以 [dev-log.md](dev-log.md) 为准**。产品名：**HaoVPN**（模块 `haovpn`）。
+> **【规划存档 · 勿当现行手册】**  
+> - 本文保留 v1.0 **功能意图与 step 顺序**，便于对照「当初要交付什么」。  
+> - **当前进度、目录树、包名、配置键以** [dev-log.md](dev-log.md)、[architecture.md](architecture.md)、[deploy.md](deploy.md) **为准**。  
+> - 文中部分目录树 / `peers` 表术语 / docs 文件名是历史快照；发现冲突时**改代码侧文档，不要默默改规划正文冒充现行**。  
+> 产品名：**HaoVPN**（模块 `haovpn`）。
 
 > 目标：**一个版本交付「安全默认 + 极简部署 + 快速接入」的工控现场 VPN**——底层底座、多会话、账号审计、SQLite、YAML 全自动配置全部内置。
 > 设计优先级：**安全 > 简单 > 快**（不为快牺牲安全）。
@@ -198,14 +202,15 @@ HaoVPN/
 ├── README.md                  # 项目简介、快速用法、文档索引
 ├── 记忆.md                    # AI/新人接手：阅读顺序与当前进度
 ├── docs
-│   ├── README.md              # 文档索引
-│   ├── development-principles.md  # 开发原则（含 Git / AI 规则）
-│   ├── versioning.md          # 版本管理（VERSION 文件）
-│   ├── meta-plan.md           # 本文件：v1.0 完整规划
-│   ├── deploy.md              # 部署、验收测试
-│   ├── dev-log.md             # 项目开发日志、踩坑
-│   ├── security-hardening.md
-│   └── troubleshooting.md
+│   ├── README.md                  # 文档索引（现行导航）
+│   ├── development-principles.md  # 开发原则
+│   ├── comment-style.md           # 注释规范
+│   ├── versioning.md / licensing.md
+│   ├── architecture.md            # CODEMAP（现行包结构）
+│   ├── meta-plan.md               # 本文件：v1.0 规划存档
+│   ├── deploy.md / troubleshooting.md / security-hardening.md
+│   ├── dev-log.md                 # 唯一进度日志
+│   └── release-notes-*-DRAFT.md   # 发版说明草稿
 └── config                     # 参考示例；运行时配置由首次启动自动生成
     ├── server_example.yaml
     └── client_example.yaml
@@ -671,9 +676,14 @@ listen_hosts 含 0.0.0.0 → 按配置监听；风险由配置者承担，启动
 | `internal/brand` | 产品名与路径常量 |
 | `internal/paginate` | 分页 / bool / ParseLimitOffset 纯函数 |
 | `internal/maintenance` | 数据保留后台 |
-| `internal/fileutil` | 原子写 / exe 目录 |
+| `internal/fileutil` | 原子写 / exe 目录 / EnsureDir / AbsPair / RestrictToAdminsOnly |
 | `internal/timeutil` | SQLite UTC + RFC3339 |
-| `internal/readmodel` | Web/API 读模型 DTO |
-| `internal/platform` | UAC、无窗口子进程 |
+| `internal/readmodel` | Web/API 读模型 DTO（含 `peers.go`） |
+| `internal/platform` | UAC（EscapeArg）、无窗口子进程 |
+| `internal/autostart` | 登录自启 + 开机服务（Win/Linux/macOS）；`gen.go` / `logon_*.go` / `service_*.go` |
+| `internal/serverapp` | 启动分阶段 `boot_persist.go` … `boot_api.go` |
+| `persist/peer_*.go` | 托管路由 / 互访 / 规范化（自胖 handler 拆出） |
+| `vpnaccount/peer_apply.go` | `PeerPolicyApplier`（peer dirty/apply 出 api） |
+| `web/static/login.js` 及各页 `*.js` | 管理页脚本外置；CSP `script-src 'self'` |
 
 各 `internal/*` 包均有中文 `doc.go`；默认值与 transport 映射已收敛到 `config.ApplyDefaults` 与 `transport.FromClientConfig`。

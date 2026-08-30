@@ -146,7 +146,7 @@ func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
 		s.audit.Log(&se.UserID, "probe_ban_manual", "ip", nil, s.clientIP(r), map[string]string{
 			"ip": ip, "reason": reason,
 		})
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ip": ip})
+		writeOKWith(w, map[string]any{"ip": ip})
 	}
 }
 
@@ -174,7 +174,7 @@ func (s *Server) handleSecurityBlockByIP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.audit.Log(&se.UserID, "probe_unban", "ip", nil, s.clientIP(r), map[string]string{"ip": ip})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ip": ip})
+	writeOKWith(w, map[string]any{"ip": ip})
 }
 
 func (s *Server) handleSecurityPage(w http.ResponseWriter, r *http.Request) {

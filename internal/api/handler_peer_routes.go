@@ -33,17 +33,15 @@ func (s *Server) handlePeerRouteByID(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(idStr, "/members") {
 		idStr = strings.TrimSuffix(idStr, "/members")
 		idStr = strings.Trim(idStr, "/")
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil || id <= 0 {
-			writeAPIError(w, http.StatusBadRequest, "无效路由 id")
+		id, ok := parsePathID(w, idStr)
+		if !ok {
 			return
 		}
 		s.replacePeerRouteMembers(w, r, id)
 		return
 	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		writeAPIError(w, http.StatusBadRequest, "无效路由 id")
+	id, ok := parsePathID(w, idStr)
+	if !ok {
 		return
 	}
 	if !requireMethod(w, r, http.MethodDelete) {
@@ -66,16 +64,12 @@ func (s *Server) handlePeerRouteByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) markDirtyForMembers(members []int64) {
-	if persist.PeerRouteHasAllMembers(members) {
-		s.markPeerDirtyAll()
-		return
-	}
-	s.markPeerDirtyUsers(members...)
+	s.peerPolicy.MarkMembers(members)
 }
 
 // markDirtyForMembersUnion 对旧∪新访问方打脏（成员收窄时被移除方也须踢线）。
 func (s *Server) markDirtyForMembersUnion(oldMembers, newMembers []int64) {
-	s.markDirtyForMembers(persist.UnionMemberUserIDs(oldMembers, newMembers))
+	s.peerPolicy.MarkMembersUnion(oldMembers, newMembers)
 }
 
 func (s *Server) replacePeerRouteMembers(w http.ResponseWriter, r *http.Request, id int64) {

@@ -1,12 +1,55 @@
-# 项目开发日志
+# 开发日志
 
-> 记录开发历程、重要决策、踩坑与待办。**每完成一个 step 或遇到值得记录的问题，追加一条。**
->
-> 格式：`## YYYY-MM-DD · 标题` + 正文
+> 记录开发历程、重要决策、踩坑与待办。**每完成一块工作或遇到值得记的问题，追加一条。**
+> 格式：## YYYY-MM-DD · 标题 + 正文。
+> **本文件是进度唯一来源**；勿在 README / 记忆 / docs 索引里再堆「第 N 轮摘要」。
 
 ---
 
-*最后更新：2026-08-30 · 架构解耦第十六轮*
+*最后更新：2026-08-30 · 文档治理*
+
+---
+
+## 2026-08-30 · 文档治理（入口收口 / 去重）
+
+### 动机
+
+文档入口发散：记忆.md 进度表过长、docs/README 堆轮次摘要、规划存档与现行 CODEMAP 易混淆。
+
+### 改动
+
+- **记忆.md**：只保留阅读顺序 + 当前阶段；历史轮次指向本日志。
+- **docs/README.md**：纯索引；发版说明分当前/历史；维护约定写清单一来源。
+- **根 README**：快速开始与文档表对齐；去掉重复口号。
+- **meta-plan**：强化规划存档头；docs 子树改为现行文件名。
+- **architecture / internal README**：轮次细节回指本日志。
+- **security-hardening**：账号节密码强度去重。
+
+### 验证
+
+人工核对入口链：记忆 → docs/README → architecture / deploy / hardening / troubleshooting / release-notes-0.1.2。
+
+---
+
+## 2026-08-30 · 架构解耦第十七轮（Cookie / PeerPolicyApplier / CSP / 叶子）
+
+### 动机
+
+审计发现：logout Cookie 属性与 Secure 不一致导致 HTTPS 删不掉；peer dirty/apply 仍沉在 api；WebUI 内联脚本阻塞收紧 CSP；Listen/关连接/viaIndex/脱敏/Windows ACL 与提权路径空格等边角需一次收口。
+
+### 改动摘要
+
+- **安全/正确性**：`setSessionCookie`/`clearSessionCookie` Secure/SameSite 对齐；Touch 重发 Cookie；`must_change` 可 GET CSRF；`transport.Conn.Close` 锁拷贝 `onClose`；viaIndex 重建稳定排序；`peer_access` 须已存在 VPN 用户；`decodeJSONBody` 1MiB；密码 ≤72；logger 脱敏 Authorization/`session=`；历史日志 API items 再脱敏；Windows `EscapeArg`、凭据 `RestrictToAdminsOnly`、`CheckWorldReadable` Everyone；`boot_api` peerDirty 内存 WARN。
+- **结构**：`fileutil.EnsureDir`/`AbsPair`/`RestrictToAdminsOnly`；`safeutil.RetryN`；`netutil.StringSlicesEqualTrimmed`；**`vpnaccount.PeerPolicyApplier`**（dirty/apply 出 api）；管理页脚本外置 `web/static/*.js`，CSP `script-src 'self'`（style 仍 unsafe-inline）。
+- **文档**：architecture / internal README / hardening / troubleshooting / deploy / 记忆 / meta-plan / web README / docs README / 0.1.1 草稿标历史。
+
+### 验证
+
+```powershell
+go test ./internal/api/... ./internal/vpnaccount/... ./internal/safeutil/... ./internal/fileutil/... ./internal/auth/... ./internal/logger/... ./internal/security/... ./internal/platform/... -count=1
+go test ./... -count=1
+.\scripts\build-local.ps1
+```
 
 ---
 

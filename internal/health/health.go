@@ -157,6 +157,10 @@ func (c *Checker) RunStartupChecks() ([]Result, error) {
 
 func warnFilePerm(path string) {
 	if open, perm := fileutil.CheckWorldReadable(path); open {
+		if runtime.GOOS == "windows" {
+			logger.Warn("文件 ACL 过宽（Everyone 可读）%s，建议仅 Administrators+SYSTEM（生产环境）", path)
+			return
+		}
 		logger.Warn("文件权限过宽 %s: %o，建议 chmod 600（生产环境）", path, perm)
 	}
 }

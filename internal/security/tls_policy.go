@@ -75,15 +75,15 @@ func Redact(s string) string {
 // 返回：header 名 → 值的 map。
 // 副作用：无。
 //
-// CSP 残留风险（诚实说明，不假装已消除）：
-//   - 仍含 script-src/style-src 'unsafe-inline'，因多数 templates/*.html 仍有内联 <script>/<style>；
-//   - 登录页已外置到 static/login.js，其它管理页外置属后续增量；
-//   - 若去掉 unsafe-inline 而未迁完脚本，浏览器会拦截 → 白屏/按钮无反应。
-// 关联：docs/security-hardening.md；web/static/login.js。
+// CSP 说明（诚实、可演进）：
+//   - script-src 仅 'self'：管理页脚本已外置到 web/static/*.js，禁止内联脚本；
+//   - style-src 仍含 'unsafe-inline'：templates 内大量内联 <style>/style= 尚未迁出；
+//     去掉 style 的 unsafe-inline 前须先外置 CSS，否则布局会坏。
+// 关联：docs/security-hardening.md；web/static/*.js。
 func SecurityHeaders() map[string]string {
 	return map[string]string{
 		"X-Content-Type-Options":  "nosniff",
 		"X-Frame-Options":         "DENY",
-		"Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+		"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
 	}
 }

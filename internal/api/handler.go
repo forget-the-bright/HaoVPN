@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"sync"
 	"time"
 
 	"haovpn/internal/audit"
@@ -35,10 +34,8 @@ type Server struct {
 	natOK      bool
 	logStore   *logstore.Store
 
-	// peerDirty 托管路由/互访变更后待「应用生效」的账号；all=true 表示须踢全部 VPN 账号。
-	peerDirtyMu  sync.Mutex
-	peerDirtyAll bool
-	peerDirtyIDs map[int64]struct{}
+	// peerPolicy 托管路由/互访「待应用」脏标记与生效（领域逻辑在 vpnaccount）。
+	peerPolicy *vpnaccount.PeerPolicyApplier
 }
 
 // NewServer 创建 API 服务实例并完成路由注册。
@@ -53,18 +50,22 @@ func NewServer(
 	startedAt time.Time,
 	serverTunnelPublicKey string,
 ) *Server {
+	var kick func(int64)
+	if sessMgr != nil {
+		kick = sessMgr.KickUser
+	}
 	s := &Server{
-		cfg:          cfg,
-		store:        store,
-		auth:         authSvc,
-		audit:        auditLog,
-		sessions:     sessMgr,
-		vpnSvc:       vpnSvc,
-		keyEnc:       keyEnc,
-		startedAt:    startedAt,
-		serverPK:     serverTunnelPublicKey,
-		mux:          http.NewServeMux(),
-		peerDirtyIDs: map[int64]struct{}{},
+		cfg:        cfg,
+		store:      store,
+		auth:       authSvc,
+		audit:      auditLog,
+		sessions:   sessMgr,
+		vpnSvc:     vpnSvc,
+		keyEnc:     keyEnc,
+		startedAt:  startedAt,
+		serverPK:   serverTunnelPublicKey,
+		mux:        http.NewServeMux(),
+		peerPolicy: vpnaccount.NewPeerPolicyApplier(store, kick),
 	}
 	s.routes()
 	return s

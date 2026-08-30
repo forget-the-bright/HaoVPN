@@ -193,6 +193,7 @@ func (c *Conn) Send(payload []byte) error {
 //
 // 返回：TLS Close 的错误（仅首次调用有效）；重复调用安全。
 // 副作用：read/write/heartbeat 协程退出；State 变为 Closed。
+// onClose 在 mu 下拷贝再锁外调用，避免与 SetOnClose 数据竞争。
 func (c *Conn) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
@@ -202,8 +203,11 @@ func (c *Conn) Close() error {
 			err = c.tls.Close()
 		}
 		c.setState(StateClosed)
-		if c.onClose != nil {
-			c.onClose(nil)
+		c.mu.Lock()
+		fn := c.onClose
+		c.mu.Unlock()
+		if fn != nil {
+			fn(nil)
 		}
 	})
 	return err

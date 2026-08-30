@@ -47,4 +47,4 @@ go build -ldflags "-X main.version=<VERSION文件内容> -X main.commit=<git短h
 
 ---
 
-*最后更新：2026-08-29*
+*最后更新：2026-08-30 · 文档治理（与 docs/README 约定对齐）*

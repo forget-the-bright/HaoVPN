@@ -92,21 +92,24 @@ func FormatBoundAddrs(servers []*http.Server) string {
 // listenAPI 在 addr 上 Listen，失败时按 retries 间隔 300ms 重试。
 //
 // 参数：retries < 1 时按 1 次；非 loopback 场景用于等待 TUN IP 就绪。
+// 实现委托 safeutil.RetryN，保持日志埋点。
 func listenAPI(addr string, retries int) (net.Listener, error) {
 	if retries < 1 {
 		retries = 1
 	}
-	var last error
-	for i := 0; i < retries; i++ {
-		ln, err := net.Listen("tcp", addr)
-		if err == nil {
-			return ln, nil
+	var ln net.Listener
+	attempt := 0
+	err := safeutil.RetryN(retries, 300*time.Millisecond, func() error {
+		attempt++
+		var e error
+		ln, e = net.Listen("tcp", addr)
+		if e != nil && attempt < retries {
+			logger.Info("管理 API bind 重试 %s (%d/%d): %v", addr, attempt, retries, e)
 		}
-		last = err
-		if i+1 < retries {
-			logger.Info("管理 API bind 重试 %s (%d/%d): %v", addr, i+1, retries, err)
-			time.Sleep(300 * time.Millisecond)
-		}
+		return e
+	})
+	if err != nil {
+		return nil, err
 	}
-	return nil, last
+	return ln, nil
 }

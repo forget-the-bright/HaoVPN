@@ -481,6 +481,7 @@ cp /opt/HaoVPN/data/haovpn.db /backup/HaoVPN-$(date +%F).db
 3. 替换二进制。
 4. 启动服务，查看日志确认迁移成功。
 
+**0.1.2 注意**：本小版本含握手/注册表/via、peer 应用生效与 Cookie/CSP 等管理面改动，**请同时更新服务端与客户端**（含 GUI）。仅升一端可能导致策略不同步或旧客户端行为差异。详见 [dev-log.md](dev-log.md) 第十七轮与 [architecture.md](architecture.md)。
 ### 8.3 回滚
 
 1. 停止服务。

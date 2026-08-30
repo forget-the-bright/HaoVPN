@@ -38,7 +38,7 @@ func logonEnable(guiExe, configPath string) error {
 		return fmt.Errorf("取 HOME 失败: %w", err)
 	}
 	dir := LaunchAgentsDir(home)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := fileutil.EnsureDir(dir, 0o755); err != nil {
 		return fmt.Errorf("创建 LaunchAgents 目录失败: %w", err)
 	}
 	body := BuildLaunchAgentPlist(exe, cfg)

@@ -299,6 +299,54 @@ func TestSameRemoteHostNormalizesLoopback(t *testing.T) {
 	}
 }
 
+// TestViaIndexRebuildDeterministic 重叠 dest 时 viaIndex 重建顺序稳定（低 viaUserID 优先）。
+func TestViaIndexRebuildDeterministic(t *testing.T) {
+	m := New(nil)
+	kpA, _ := crypto.GenerateKeyPair()
+	kpB, _ := crypto.GenerateKeyPair()
+	kpC, _ := crypto.GenerateKeyPair()
+	sessA, _ := crypto.NewSession(kpA.PrivateKey, kpA.PublicKey)
+	sessB, _ := crypto.NewSession(kpB.PrivateKey, kpB.PublicKey)
+	sessC, _ := crypto.NewSession(kpC.PrivateKey, kpC.PublicKey)
+	_, lan, _ := net.ParseCIDR("192.168.50.0/24")
+	connLow := &captureConn{}
+	connHigh := &captureConn{}
+
+	m.mu.Lock()
+	m.sessions[10] = &AccountSession{
+		UserID: 10, VPNIP: "10.88.0.10", Crypto: sessA,
+		ViaRoutes: []viaRouteEntry{{net: lan, viaUserID: 20}},
+		Conn:      &captureConn{},
+	}
+	m.sessions[11] = &AccountSession{
+		UserID: 11, VPNIP: "10.88.0.11", Crypto: sessB,
+		ViaRoutes: []viaRouteEntry{{net: lan, viaUserID: 30}},
+		Conn:      &captureConn{},
+	}
+	m.sessions[20] = &AccountSession{UserID: 20, VPNIP: "10.88.0.20", Crypto: sessC, Conn: connLow}
+	m.sessions[30] = &AccountSession{
+		UserID: 30, VPNIP: "10.88.0.30",
+		Crypto: func() *crypto.Session { s, _ := crypto.NewSession(kpC.PrivateKey, kpC.PublicKey); return s }(),
+		Conn:   connHigh,
+	}
+	for i := 0; i < 50; i++ {
+		m.rebuildViaIndexLocked()
+	}
+	m.mu.Unlock()
+
+	pkt := make([]byte, 20)
+	copy(pkt[16:20], net.ParseIP("192.168.50.9").To4())
+	if !m.RouteOutbound(pkt) {
+		t.Fatal("重叠托管路由应命中 via")
+	}
+	if connLow.sends == 0 {
+		t.Fatal("稳定排序后应优先低 viaUserID=20")
+	}
+	if connHigh.sends != 0 {
+		t.Fatalf("不应命中高 viaUserID=30, sends=%d", connHigh.sends)
+	}
+}
+
 type freshActivityConn struct{ nopConn }
 
 func (c *freshActivityConn) LastPeerActivity() time.Time { return time.Now() }

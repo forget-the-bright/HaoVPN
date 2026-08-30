@@ -4,10 +4,10 @@ package autostart
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"haovpn/internal/brand"
+	"haovpn/internal/fileutil"
 	"haovpn/internal/logger"
 
 	"golang.org/x/sys/windows/svc"
@@ -50,9 +50,9 @@ func serviceStatus() (installed, running bool, detail string, err error) {
 
 // serviceInstall 创建或修好已有服务（不 Start）。
 func serviceInstall(exe string) error {
-	abs, err := filepath.Abs(exe)
+	abs, _, err := fileutil.AbsPair(exe, "")
 	if err != nil {
-		return fmt.Errorf("解析 exe: %w", err)
+		return err
 	}
 	m, err := connectSCM()
 	if err != nil {

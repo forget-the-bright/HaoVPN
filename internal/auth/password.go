@@ -7,10 +7,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// ValidatePasswordStrength 校验密码强度：≥8 位且须含字母与数字。
+// ValidatePasswordStrength 校验密码强度：≥8 位、≤72 位（bcrypt 有效上限），且须含字母与数字。
+//
+// 上限 72：bcrypt 只使用前 72 字节，更长密码既误导用户又浪费 CPU；拒绝超长可防 DoS。
 func ValidatePasswordStrength(password string) error {
 	if len(password) < 8 {
 		return errors.New("密码至少 8 位")
+	}
+	if len(password) > 72 {
+		return errors.New("密码至多 72 位")
 	}
 	var hasLetter, hasDigit bool
 	for _, c := range password {

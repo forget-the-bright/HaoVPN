@@ -94,28 +94,7 @@ func viaFingerprint(lans []string, vpnSubnet, tunIP string) string {
 	return strings.Join(sorted, ",") + "|" + subnet + "|" + ip
 }
 
-// stringSliceEqualOrdered 比较两个字符串切片是否逐元素相等（长度与顺序）。
-func stringSliceEqualOrdered(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// dnsServersEqual 比较 DNS 列表（去空白后顺序敏感，与 netstack dnsServersEqual 语义一致）。
+// dnsServersEqual 比较 DNS 列表（去空白后顺序敏感）；委托 netutil.StringSlicesEqualTrimmed。
 func dnsServersEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if strings.TrimSpace(a[i]) != strings.TrimSpace(b[i]) {
-			return false
-		}
-	}
-	return true
+	return netutil.StringSlicesEqualTrimmed(a, b)
 }

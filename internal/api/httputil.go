@@ -24,8 +24,14 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // decodeJSONBody 解析请求 JSON 体到 dst；失败时写 400 并返回 false。
 //
 // 用途：peers/security/users 等写接口统一入口，避免各 handler 重复 NewDecoder+错误文案。
+// 请求体上限 1MiB（与 decodeJSONOrForm 一致），防止管理面超大 JSON 内存 DoS。
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "无法读取请求体")
+		return false
+	}
+	if err := json.Unmarshal(body, dst); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "无效 JSON")
 		return false
 	}
