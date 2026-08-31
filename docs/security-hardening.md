@@ -130,7 +130,16 @@ WebUI 探针页预设：1 小时～5 年、永久、自定义（月按 30 天、
 - 审计：`probe_exempt_add` / `probe_exempt_remove`。
 - WebUI「探针」页「封禁豁免」卡片可动态维护；`server.yaml` 的 `ban_exempt_ips` 启动时幂等导入（`source=yaml_import`）。
 
-**客户端封禁提示**：服务端对封禁 IP 在 TLS 握手前写入 `HAOVPN:IP_BANNED`；客户端识别后展示「您的 IP 已被服务端封禁…」并停止无意义重试（`transport.ErrIPBanned`）。
+**客户端 TLS 前拒绝提示**：
+
+| 服务端写出 | 客户端哨兵 | 用户提示要点 |
+|------------|------------|--------------|
+| `HAOVPN:IP_BANNED` | `transport.ErrIPBanned` | 「IP 已被服务端封禁…」；停重连 |
+| `HAOVPN:SOURCE_DENIED` | `transport.ErrSourceDenied` | 不在 `tunnel_allowed_source_ips`；停重连 |
+| （晚到明文 / 非隧道口） | `ErrPlaintextBeforeTLS` | 双因：可能封禁或连错端口；停重连 |
+| 无 banner 仅 Close | `ErrClosedBeforeTLS` | 可重试；勿当成已封禁 |
+
+实现要点：服务端先 `WriteRejectBanner` 再关连接，记库异步（`safeutil.GoSafe`）；客户端 peek ≈ 250ms（成功路径服务端此时无字节，peek 过长会拖慢每次登录）。代码：`transport/probe_banner.go`、`clientapp/dial_errors.go`、`engine_connect.go`。
 
 #### 特征 signature（英文码 ↔ 中文）
 

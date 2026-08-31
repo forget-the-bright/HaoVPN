@@ -6,6 +6,29 @@
 
 ---
 
+## 2026-08-31 · 封禁 banner 链路加固（误判 / 延迟 / 状态机）
+
+### 问题
+
+- 客户端 TLS 前 peek 过长时，**每次成功连接**都会空等（服务端在 ClientHello 前不发字节）。
+- `EOF` / TLS「first record does not look like…」被直接当成 `ErrIPBanned`，连错端口也会提示「已封禁」。
+- `RecordBanHit` 同步写库曾阻塞 banner 写出；源白名单拒绝无 banner。
+- 已上线后遇封禁：`ReconnectClient` 停 loop，但 Engine 仍停在「重连中」。
+
+### 修复
+
+- **peek ≈ 250ms**；成功路径 `TestTLSRoundTrip` 断言 Dial &lt; 1.5s。
+- 哨兵分离：`ErrIPBanned` / `ErrSourceDenied` / `ErrPlaintextBeforeTLS` / `ErrClosedBeforeTLS`。
+- 服务端 `WriteRejectBanner`；`CheckAccept` 记库经 `safeutil.GoSafe`；源拒绝发 `HAOVPN:SOURCE_DENIED`。
+- `ReconnectClient` + `Engine.onDialError`：致命拨号错误停重连并置 `StateIdle` + `LastError`。
+- `FormatDialError` 中文双因提示；单测覆盖 banner / 晚到明文 / 空关闭。
+
+### 验证
+
+- `go test ./internal/transport/... ./internal/clientapp/... ./internal/probedefense/... ./internal/autherr/...`
+
+---
+
 ## 2026-08-31 · 架构解耦第十九轮（审计整改 + 公共抽取续）
 
 ### 安全与正确性
@@ -33,10 +56,6 @@
 
 - `go test ./...`（`singleinstance` 若本机锁占用可跳过）
 - `.\scripts\build-local.ps1`
-
----
-
-*最后更新：2026-08-31 · 架构解耦第十九轮*
 
 ---
 

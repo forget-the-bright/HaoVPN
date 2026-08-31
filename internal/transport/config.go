@@ -33,7 +33,8 @@ type Config struct {
 
 // ProbeObserver 服务端探针防御钩子（由 probedefense.Guard 适配）。
 //
-// CheckAccept 在 TCP 接入后、TLS 握手前调用；rejectBanner 非空时须先写入客户端再关闭。
+// CheckAccept 在 TCP 接入后、TLS 握手前调用；rejectBanner 非空时由 ListenTLS 路径
+// WriteRejectBanner 写出后再 Close。记库副作用须异步，避免阻塞 banner。
 type ProbeObserver interface {
 	AllowAccept(remoteAddr string) bool
 	CheckAccept(remoteAddr string) (allow bool, rejectBanner string)

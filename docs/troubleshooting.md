@@ -25,7 +25,11 @@
 | 探针页点「封禁」控制台 CSP 报错、Network 无请求 | 模板残留 `onclick="banIP()"`，`script-src 'self'` 拦截内联事件 | **升级服务端**（embed 模板+JS）：按钮由 `security_probe.js` 绑定；勿在 HTML 写 `onclick=` |
 | 连接超时 | frp 未通、防火墙拦 8443 | 检查 frp；测 8443 端口 |
 | 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「登录失败次数过多，请稍后再试」——客户端应**停止自动重连**（`autherr.IsFatalAuth`）；WebUI 探针页可见 `auth_failed` |
-| 提示「您的 IP 已被服务端封禁」 | 探针自动/手动封禁 | 管理台 `/security` 解封或加「封禁豁免」；客户端 `FormatDialError` + fatal 停重试 |
+| 提示「您的 IP 已被服务端封禁」 | 探针自动/手动封禁且客户端读到 `HAOVPN:IP_BANNED` | 管理台 `/security` 解封或加「封禁豁免」 |
+| 提示「TLS 前返回了明文」且提到封禁/端口 | 晚到的封禁 banner，或连错非 HaoVPN 端口 | 先查 `/security` 封禁；再核对 `server:port` 是否为隧道口 |
+| 提示「不在 … 白名单」 | `tunnel_allowed_source_ips` 未包含当前公网 IP | 改服务端白名单或清空该列表（表示不限制） |
+| 仍显示 `first record does not look like a TLS handshake` | **旧客户端**未识别 banner/明文哨兵 | **升级客户端**；服务端与客户端建议同版 |
+| 客户端 TLS handshake forcibly closed / 无中文提示 | 旧链路、仅 Close 无 banner、或 `ip_blocks` 命中 | 升级双边客户端+服务端；管理台 `/security` 解封或加豁免；新版应显示中文封禁/明文双因提示 |
 | 提示「该账号已在其他设备在线」 | `session_policy=reject_second` 且旧会话仍在；异公网 IP 第二端；或底层黑洞导致服务端半死会话未释放 | 同公网 IP：`reconnect_grace_sec` 顶替；半死静默约 8～20s 后亦可顶替（须升级服务端）；**曾连通过**的客户端持续重试；首次登录最多约 40 次。异设备先退旧端或改 `kick_previous`。查服务端日志 `grace 顶替` / `拒绝第二端 … same_host= stale_peer=` |
 | GUI 断线后不再自动重连 | 旧版登录 `failFast` 成功后未关，或 account_online 仅重试 5 次即停 | 升级客户端：鉴权成功后关 failFast；曾连接/重连中 account_online **持续**重试；首次登录最多约 40 次；并升级服务端半死会话顶替 |
 | 日志出现多余 `10.88.0.1/32` 路由 | 旧版始终加网关主机路由 | 新版：AllowedIPs 已含 VPN 子网时跳过网关 `/32` |
@@ -45,7 +49,6 @@
 | 服务刚重启，「待应用」没了但有人还像旧策略 | peer dirty **仅内存**，重启清空；启动 WARN 提示 | 库内已是新策略；对仍在线客户端再「应用生效」或踢线。属预期，不是丢库 |
 | 收窄托管路由访问方后，被踢出的客户端仍能走旧 via | 旧版只 dirty 新成员 | **升级服务端**：成员替换 dirty=旧∪新；对被移除账号也须应用生效踢线 |
 | via 上报 `local_lans` 含 VPN 网段后可伪造成员 VPN 源 | 旧版未禁与 `vpn.subnet` 重叠 | **升级服务端**：握手拒绝与 VPN 池重叠的广告；查 `lan_cidr_reject` |
-| 客户端 TLS handshake forcibly closed | 源 IP 在 `ip_blocks` 封禁表 | 管理台 `/security` 解封；或加入「封禁豁免」；**升级客户端**后应显示「您的 IP 已被服务端封禁…」 |
 | 手动封禁 IP 仍能连上 | 该 IP 在封禁豁免名单 | 预期：豁免 IP 不受封禁；从豁免列表移除后再封 |
 | 提示「账号密钥须加密存储」 | 库内明文私钥且 `allow_plaintext_private_keys=false` | 重新开户/轮换密钥使私钥加密入库；临时兼容才开 `allow_plaintext_private_keys`（勿用于生产） |
 | 反复断连 | 心跳超时、ZeroTier 等损耗链路抖动 | 客户端 `heartbeat_timeout_sec` 建议 60～90；默认已 90s；**先 `ping` 底层 ZT IP**（如 192.168.196.17），若底层也超时则属 ZeroTier/运营商问题，不是隧道逻辑 |
@@ -192,5 +195,5 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 
 ---
 
-*最后更新：2026-08-31 · 封禁豁免 + 客户端封禁提示*
+*最后更新：2026-08-31 · 封禁 banner 链路加固*
 

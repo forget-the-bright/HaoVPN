@@ -130,7 +130,7 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 | **timeutil** | SQLite UTC + RFC3339 + Seconds + 展示时区 | `sqlite.go`, `rfc3339.go`, `duration.go`, `timezone.go` | — |
 | **vpnaccount** | IP 模式、开户、策略合并、启禁、删号、末管理员、peer 应用生效 | `service.go`, `peer_policy.go`, `peer_apply.go`（`PeerPolicyApplier`）、`provision.go`, `patch.go`, `delete.go`, `enable.go` | ippool, persist, netutil, auth |
 | **tunnel** | 握手协议 | `handshake.go`, `handshake_reject.go`, `server_handler.go`, `source_ip.go` | transport, crypto, auth, sessionmgr, netutil, autherr, **tun** |
-| **transport** | TLS-TCP 帧、重连、Probe | `transport.go`, `config.go`, `conn_loops.go`, `server.go`, `probe_banner.go`, `mtu.go`, `frame.go`, `reconnect.go` | netutil, timeutil, config |
+| **transport** | TLS-TCP 帧、重连、Probe、TLS 前拒绝 banner | `transport.go`, `config.go`, `conn_loops.go`, `server.go`, `probe_banner.go`, `mtu.go`, `frame.go`, `reconnect.go` | netutil, timeutil, config |
 | **sessionmgr** | 会话与报文路由 | `manager.go`, `register.go`, `kick.go`, `route.go`, `route_inbound.go`, `route_lookup.go`, `route_policy.go`, `stats.go`；托管 via 索引、横向放行、grace 顶替续算 | crypto, netutil, persist, config, auth |
 | **probedefense** | 公网探针识别/落库/封禁 | `guard.go`, `exempt.go`, `manual_ban.go`, `classify_tls.go`, `classify_handshake.go`, `signatures.go`, `auto_ban.go`, `errors.go` | persist, netutil, config, autherr, logger |
 

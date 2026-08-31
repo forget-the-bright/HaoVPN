@@ -45,9 +45,8 @@ func (s *Server) handleConn(raw net.Conn) {
 	if s.cfg.Probe != nil {
 		allow, banner := s.cfg.Probe.CheckAccept(remote)
 		if !allow {
-			if banner != "" {
-				_, _ = raw.Write([]byte(banner))
-			}
+			// 先写拒绝码再关连接；记库已在 CheckAccept 内异步，避免阻塞写出。
+			WriteRejectBanner(raw, banner)
 			_ = raw.Close()
 			return
 		}

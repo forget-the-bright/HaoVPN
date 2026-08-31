@@ -19,7 +19,7 @@
 | AbsPair / EnsureDir / ACL / 世界可读 | `fileutil/fs.go`、`mkdir.go`、`perm_*.go`（`RestrictToAdminsOnly`、`CheckWorldReadable`） |
 | 广告 LAN 禁 VPN 池重叠 | `netutil.ValidateAdvertisedLANNotForbidden`；握手 `tunnel/server_handler.go` |
 | GUI 开机自启（计划任务/服务） | `autostart/`（Win SCM+计划任务；Linux XDG/systemd；macOS LaunchAgent/Daemon；`gen.go`；`paths_unix.go` AbsPair） |
-| 探针事件 / 封禁 / 豁免 API / WebUI | `api/handler_security_events.go`、`handler_security_blocks.go`、`handler_security_exempts.go`、`handler_security_common.go`；`probedefense/guard.go`；`transport` TLS 前 `HAOVPN:IP_BANNED`；页 `security_probe.html` + `security_probe.js` |
+| 探针事件 / 封禁 / 豁免 API / WebUI | `api/handler_security_*.go`；`probedefense/guard.go`；`transport/probe_banner.go`（`IP_BANNED`/`SOURCE_DENIED`）；`clientapp/dial_errors.go`；页 `security_probe.*` |
 | IP/CIDR 校验 | `netutil/validate_ip.go`（`ValidateIPOrCIDR`）；列表 `ValidateCIDRList` |
 | 管理口 TUN 绑定 / listen_tun | `config/server.go` `api.listen_tun`；`serverapp/boot_api.go`；审计 `audit/tun_listen.go` |
 | 握手/拨号错误分类 | `autherr/classify.go`；`clientapp/fatal_auth.go`；`probedefense/classify_handshake.go` |
@@ -56,7 +56,7 @@
 | **autherr** | `classify.go` | 握手/封禁/鉴权错误统一分类 |
 | **probedefense** | `manual_ban.go` / `exempt.go` / `classify_*.go` | 手动封禁、豁免、TLS/握手 signature |
 | **clientapp** | `route_view.go` / `dial_errors.go` / `fatal_auth.go` | GUI 路由 DTO、封禁提示、fatal 判定 |
-| **transport** | `server.go` / `probe_banner.go` | TLS Accept 探针、封禁 banner |
+| **transport** | `server.go` / `probe_banner.go` / `reconnect.go` | TLS Accept 探针、拒绝 banner、致命拨号停重连 |
 | **api** | `auth_handlers.go` / `httputil.go` / `handler_peers_*.go` | Cookie helpers；decodeJSONBody；HTTP 薄层委托 Applier |
 | **serverapp** | `boot_persist.go` … `boot_api.go` | 启动分阶段；peerDirty 重启 WARN；Listen 用 RetryN |
 | **transport** | `transport.go` 等 | Conn.Close 锁拷贝 onClose |

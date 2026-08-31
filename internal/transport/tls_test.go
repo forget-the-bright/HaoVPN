@@ -90,12 +90,17 @@ func TestTLSRoundTrip(t *testing.T) {
 	clientTLS.InsecureSkipVerify = true
 	var received []byte
 	done := make(chan struct{})
+	start := time.Now()
 	client, err := transport.Dial(ln.Addr().String(), clientTLS, cfg, func(data []byte) {
 		received = append(received, data...)
 		close(done)
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// 成功路径仅短 peek（约 250ms），不得再出现数秒空等。
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Fatalf("Dial too slow on success path: %s (banner peek regress?)", elapsed)
 	}
 	defer client.Close()
 

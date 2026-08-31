@@ -23,6 +23,7 @@ func TestClassifySentinels(t *testing.T) {
 		{auth.ErrAccountDisabled, autherr.CategoryFatalAuth},
 		{auth.ErrMustChangePassword, autherr.CategoryFatalAuth},
 		{autherr.ErrSourceDenied, autherr.CategorySourceDenied},
+		{transport.ErrSourceDenied, autherr.CategorySourceDenied},
 		{errors.New("用户名或密码错误"), autherr.CategoryAuthFailed},
 		{errors.New("已在其他设备在线"), autherr.CategoryAccountOnline},
 		{errors.New("不在 tunnel_allowed_source_ips"), autherr.CategorySourceDenied},
@@ -43,6 +44,12 @@ func TestIsFatalAuth(t *testing.T) {
 	}
 	if !autherr.IsFatalAuth(transport.ErrIPBanned) {
 		t.Fatal("IP banned is fatal via classify")
+	}
+	if !autherr.IsFatalAuth(transport.ErrPlaintextBeforeTLS) {
+		t.Fatal("plaintext before tls should be fatal")
+	}
+	if !autherr.IsSourceDenied(transport.ErrSourceDenied) {
+		t.Fatal("transport source denied")
 	}
 }
 

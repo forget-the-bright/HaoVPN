@@ -64,7 +64,7 @@ func Classify(err error) Category {
 	if IsAccountAlreadyOnline(err) {
 		return CategoryAccountOnline
 	}
-	if errors.Is(err, ErrSourceDenied) {
+	if IsSourceDenied(err) {
 		return CategorySourceDenied
 	}
 	if errors.Is(err, auth.ErrBadCredentials) || errors.Is(err, auth.ErrLoginLocked) {
@@ -101,6 +101,18 @@ func IsIPBanned(err error) bool {
 	return err != nil && errors.Is(err, transport.ErrIPBanned)
 }
 
+// IsSourceDenied 是否为源 IP 白名单拒绝（TLS 前 banner 或隧道握手层）。
+func IsSourceDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrSourceDenied) || errors.Is(err, transport.ErrSourceDenied) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "白名单") || strings.Contains(msg, "tunnel_allowed")
+}
+
 // IsAccountAlreadyOnline 是否为「同账号已在其他设备在线」类错误。
 func IsAccountAlreadyOnline(err error) bool {
 	if err == nil {
@@ -116,10 +128,13 @@ func IsAccountAlreadyOnline(err error) bool {
 	return strings.Contains(msg, "已在其他设备在线")
 }
 
-// IsFatalAuth 是否为应停止自动重连的鉴权类失败（不含 account_online、IP 封禁由调用方单独处理）。
+// IsFatalAuth 是否为应停止自动重连的鉴权类失败（不含 account_online）。
 func IsFatalAuth(err error) bool {
 	if err == nil || IsAccountAlreadyOnline(err) {
 		return false
+	}
+	if errors.Is(err, transport.ErrPlaintextBeforeTLS) {
+		return true
 	}
 	c := Classify(err)
 	switch c {

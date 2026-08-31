@@ -54,7 +54,7 @@
 - **审计页**：`/audit` — 动作 `码（中文）`、用户目标 `用户名 (#id)`；字典 `internal/audit/labels.go`；时间经 `HaoVPN.formatTime`。
 - **工具页**：备份数据库为 **POST** `/api/v1/backup`（须 CSRF）。
 - **托管路由页**：`/peers` — 全局互访开关、Managed Routes、互访白名单；改完后点「应用生效」（领域层 `vpnaccount.PeerPolicyApplier`，HTTP 仅薄封装）。
-- **探针页**：`/security` — `security_events` / `ip_blocks` / `exempts`；封禁 POST 含 `duration_sec`；豁免 CRUD；客户端封禁时服务端发 `HAOVPN:IP_BANNED`。
+- **探针页**：`/security` — `security_events` / `ip_blocks` / `exempts`；封禁 POST 含 `duration_sec`；豁免 CRUD；隧道口拒绝码 `HAOVPN:IP_BANNED` / `SOURCE_DENIED`（见 `transport/probe_banner.go`）。
 - **连接详情**：`/connections/...` — 事件时间经 `formatTime`。
 - **展示时区**：`GET /api/v1/system/info` 的 `display_timezone`；存库与 API JSON 仍为 UTC。配置项 `api.display_timezone`。
 - **静态资源**：`/static/*` 由 embed FS 直接 Serve。

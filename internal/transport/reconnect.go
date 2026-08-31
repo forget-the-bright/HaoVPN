@@ -81,6 +81,13 @@ func (r *ReconnectClient) loop() {
 			logger.Info("transport disconnected from %s", r.addr)
 		})
 		if err != nil {
+			if IsFatalDialError(err) {
+				logger.Warn("reconnect stopped (fatal dial): %v", err)
+				if r.onDialError != nil {
+					r.onDialError(err)
+				}
+				return
+			}
 			logger.Warn("reconnect failed: %v, retry in %s dial_timeout=%s backoff=%s", err, backoff, dialTO, backoff)
 			if r.onDialError != nil {
 				r.onDialError(err)

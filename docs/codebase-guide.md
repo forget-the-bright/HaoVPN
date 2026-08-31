@@ -119,7 +119,10 @@ flowchart LR
 | `probedefense/signatures.go` | 特征码常量（与 labels 同源） |
 | `probedefense/auto_ban.go` | 窗口计数自动封禁 |
 | `probedefense/exempt.go` | 封禁豁免合并 |
-| `transport/probe_banner.go` | TLS 前 `HAOVPN:IP_BANNED` |
+| `transport/probe_banner.go` | TLS 前 `HAOVPN:IP_BANNED` / `SOURCE_DENIED`；短 peek；`ErrPlaintextBeforeTLS` |
+| `transport/server.go` | Accept → CheckAccept → `WriteRejectBanner` → Close |
+| `clientapp/dial_errors.go` | `FormatDialError` 中文提示 |
+| `clientapp/engine_connect.go` | `onDialError`：致命拨号错误置 Idle |
 | `persist/security_store.go` | security_events / ip_blocks / exempt SQL |
 | `probedefense/manual_ban.go` | ManualBanStore 手动封禁（须过豁免） |
 | `autherr/classify.go` | 握手/拨号错误统一分类 |

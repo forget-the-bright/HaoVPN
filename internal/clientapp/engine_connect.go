@@ -180,16 +180,26 @@ func (e *Engine) tunReadLoop(ctx context.Context) {
 	}, mtu)
 }
 
-// onDialError 拨号/TLS 失败回调：未鉴权成功前通知 WaitConnected（GUI failFast 可停）；
-// 已上线后仅记日志，由 ReconnectClient 继续退避重拨。
+// onDialError 拨号/TLS 失败回调。
+//
+// 未鉴权成功前：通知 WaitConnected（GUI failFast）。
+// 已上线后：普通错误仅记日志由重连继续；致命拨号错误（封禁/源拒绝/明文拒绝）
+// 须置 Idle + LastError，因 ReconnectClient 已自行停 loop，否则 GUI 会卡在「重连中」。
 func (e *Engine) onDialError(err error) {
 	if err == nil {
 		return
 	}
 	msg := FormatDialError(err)
 	logger.Warn("%s", msg)
+	fatal := IsFatalDialError(err)
 	if e.hasAuthOKOnce() {
+		if fatal {
+			e.setLastError(msg)
+			e.setState(StateIdle)
+			e.stopReconnectOnly()
+			logger.Warn("已停止自动重连（致命拨号错误）: %s", msg)
+		}
 		return
 	}
-	e.reportFirstFailure(msg, false)
+	e.reportFirstFailure(msg, fatal)
 }

@@ -14,6 +14,7 @@ import (
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
+	"haovpn/internal/safeutil"
 	"haovpn/internal/transport"
 )
 
@@ -136,14 +137,21 @@ func (g *Guard) CheckAccept(remoteAddr string) (allow bool, rejectBanner string)
 	}
 	ip, port := netutil.SplitRemoteAddr(remoteAddr)
 	if g.isBlockedRaw(ip) && !g.IsBanExempt(ip) {
-		g.RecordBanHit(ip, port)
 		logger.Warn("探针防御拒绝(已封禁) ip=%s port=%s", ip, port)
+		// 异步记命中，避免 SQLite 写库阻塞 TLS 前 banner 写出。
+		ip, port := ip, port
+		safeutil.GoSafe("probe-ban-hit", func() {
+			g.RecordBanHit(ip, port)
+		})
 		return false, transport.BannerIPBanned
 	}
 	if len(g.cfg.AllowedSourceIPs) > 0 && !g.AllowSourceIP(ip) {
-		g.RecordReject(ip, port, PhaseTCPAccept, SigSourceDeny, "不在 tunnel_allowed_source_ips")
 		logger.Warn("探针防御拒绝(源白名单) ip=%s port=%s", ip, port)
-		return false, ""
+		ip, port := ip, port
+		safeutil.GoSafe("probe-source-deny", func() {
+			g.RecordReject(ip, port, PhaseTCPAccept, SigSourceDeny, "不在 tunnel_allowed_source_ips")
+		})
+		return false, transport.BannerSourceDenied
 	}
 	return true, ""
 }

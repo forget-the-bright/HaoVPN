@@ -84,3 +84,20 @@ func TestCheckAcceptBannedBanner(t *testing.T) {
 		t.Fatalf("want banned banner, got allow=%v banner=%q", allow, banner)
 	}
 }
+
+// TestCheckAcceptSourceDeniedBanner 源白名单拒绝返回 HAOVPN:SOURCE_DENIED。
+func TestCheckAcceptSourceDeniedBanner(t *testing.T) {
+	store, err := persist.Open(filepath.Join(t.TempDir(), "sourcedeny.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	cfg := probedefense.DefaultConfig()
+	cfg.AllowedSourceIPs = []string{"198.51.100.1"}
+	g := probedefense.New(store, cfg)
+	allow, banner := g.CheckAccept("203.0.113.50:9")
+	if allow || banner != transport.BannerSourceDenied {
+		t.Fatalf("want source denied banner, got allow=%v banner=%q", allow, banner)
+	}
+}

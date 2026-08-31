@@ -80,6 +80,11 @@ func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onCl
 	if err := tlsConn.Handshake(); err != nil {
 		raw.Close()
 		c.setState(StateDisconnected)
+		if classified := classifyTLSHandshakeErr(err); errors.Is(classified, ErrPlaintextBeforeTLS) {
+			// 不直接断言 ErrIPBanned：也可能是连错端口；由 FormatDialError 给出双因提示。
+			logger.Warn("tls 握手读到明文（可能封禁 banner 晚到或非隧道口） addr=%s: %v", addr, err)
+			return nil, classified
+		}
 		return nil, fmt.Errorf("tls handshake: %w", err)
 	}
 	c.raw = raw
