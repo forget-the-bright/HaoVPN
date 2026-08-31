@@ -38,10 +38,10 @@
 
 ## CSP
 
-- `script-src 'self'`：页面逻辑必须在 `static/*.js`，禁止模板内联 `<script>` **与** `onclick=` 等内联事件（后者同样被浏览器 CSP 拦截）。
+- `script-src 'self'`：页面逻辑必须在 `static/*.js`，禁止模板内联 `<script>` **与** `onclick=` 等内联事件。
+- `style-src 'self'`（第二十二轮）：禁止 HTML `style=` / 内联 `<style>` / JS 写 `el.style.*`；显隐用 `.hidden` / `.overlay-modal.is-open` + `HaoVPN.setVisible` / `setOverlayOpen`。
 - 动态表格按钮用 `data-action` + `addEventListener` 委托（如探针页 `unban-ip`、`ban-event-ip`、`remove-exempt`）。
 - 退出登录：`data-action="logout"`，由 `app.js` 绑定。
-- `style-src` 仍允许 `'unsafe-inline'`（见 `internal/security/tls_policy.go`）。
 - 各页 `<head>` 须含 `rel="icon"` 指向 `/static/favicon.ico`（回归见 `internal/api/webui_csp_test.go`）。
 
 ## 与后端的对应关系

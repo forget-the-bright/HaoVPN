@@ -13,8 +13,8 @@
 
     document.getElementById('logSource').onchange = function () {
       var hist = this.value === 'history';
-      document.getElementById('levelGroup').style.display = hist ? '' : 'none';
-      document.getElementById('kwGroup').style.display = hist ? '' : 'none';
+      HaoVPN.setVisible('levelGroup', hist);
+      HaoVPN.setVisible('kwGroup', hist);
       logOffset = 0;
       loadLogs();
     };

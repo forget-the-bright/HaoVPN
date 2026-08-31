@@ -34,7 +34,7 @@
       <main class="content">
         <div class="card">
           <h2 class="card-title">新建账号</h2>
-          <p class="text-muted" style="margin-bottom:12px">
+          <p class="text-muted mb-012">
             fixed：可选手动 VPN IP（留空自动分配）。dynamic_*：连接时分配，不可指定固定 IP。策略由握手下发。
           </p>
           <form id="create" class="form-row">
@@ -58,7 +58,7 @@
               <label>VPN IP（可选）</label>
               <input name="vpn_ip" id="create_vpn_ip" placeholder="留空则自动分配，如 10.88.0.50">
             </div>
-            <div class="form-group" id="lease_group" style="display:none">
+            <div class="form-group hidden" id="lease_group">
               <label>租约秒数</label>
               <input name="ip_lease_sec" type="number" value="86400" min="60">
             </div>
@@ -107,8 +107,8 @@
     </div>
   </div>
 
-  <div id="policyModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
-    <div class="card" style="width:min(480px,92vw);margin:auto">
+  <div id="policyModal" class="overlay-modal">
+    <div class="card modal-card modal-card-md">
       <h2 class="card-title">编辑 VPN 策略</h2>
       <p class="text-muted" id="policyHint"></p>
       <form id="policyForm">
@@ -133,7 +133,7 @@
           <label>租约秒数</label>
           <input id="policyLease" type="number" value="86400" min="60">
         </div>
-        <div class="form-row" style="margin-top:12px">
+        <div class="form-row mt-012">
           <button type="submit" class="btn btn-primary">保存并踢线重连</button>
           <button type="button" class="btn btn-ghost" id="btnClosePolicy">取消</button>
         </div>
@@ -141,8 +141,8 @@
     </div>
   </div>
 
-  <div id="passwordModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
-    <div class="card" style="width:min(420px,92vw);margin:auto">
+  <div id="passwordModal" class="overlay-modal">
+    <div class="card modal-card modal-card-sm">
       <h2 class="card-title">重置登录密码</h2>
       <p class="text-muted" id="passwordHint"></p>
       <form id="passwordForm">
@@ -155,7 +155,7 @@
           <label>确认新密码</label>
           <input id="passwordConfirm" type="password" required minlength="8" autocomplete="new-password">
         </div>
-        <div class="form-row" style="margin-top:12px">
+        <div class="form-row mt-012">
           <button type="submit" class="btn btn-primary">保存并踢线</button>
           <button type="button" class="btn btn-ghost" id="btnClosePassword">取消</button>
         </div>

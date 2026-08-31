@@ -8,82 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"haovpn/internal/brand"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
-	"haovpn/internal/platform"
 	"haovpn/internal/winnet"
 )
-
-// ifIndex 解析已统一到 internal/winnet（避免 netstack→tun 反向依赖）。
-
-// enableIPForwardPlatform 打开系统与相关网卡的 IPv4 转发。
-func enableIPForwardPlatform() error {
-	if ipForwardEnabled() {
-		logger.Info("windows: IP 转发已开启，跳过重复配置")
-		return nil
-	}
-	cmd := platform.Command("reg", "add",
-		`HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`,
-		"/v", "IPEnableRouter", "/t", "REG_DWORD", "/d", "1", "/f")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return platform.CommandOutputError("reg IPEnableRouter", out, err)
-	}
-	ps := `Get-NetIPInterface -AddressFamily IPv4 | Where-Object {$_.ConnectionState -eq 'Connected'} | ForEach-Object { Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex -Forwarding Enabled -ErrorAction SilentlyContinue }`
-	_ = platform.Command("powershell", "-NoProfile", "-Command", ps).Run()
-	logger.Info("windows: IPEnableRouter=1，已尝试启用网卡 Forwarding")
-	return nil
-}
-
-// setupNATPlatform 为 VPN 子网访问 LAN 配置 SNAT。
-// 优先 WinNAT（New-NetNat，需 Hyper-V）；家庭版等无 WinNAT 时回退 ICS。
-func setupNATPlatform(vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outboundIf string) error {
-	winErr := setupWinNAT(vpnSubnet)
-	if winErr == nil {
-		return nil
-	}
-	if isWinNATUnavailable(winErr) {
-		logger.Warn("WinNAT 不可用（Windows 家庭版或未启用 Hyper-V）: %v", winErr)
-		logger.Info("尝试 ICS 回退（Internet 连接共享）…")
-		return setupICSPlatform(tunName, lanCIDR, outboundIf, tunIP)
-	}
-	return winErr
-}
-
-// setupWinNAT 使用 New-NetNat（依赖 Hyper-V/WinNAT 子系统）。
-func setupWinNAT(vpnSubnet string) error {
-	name := brand.WinNATName
-	if winNATMatches(name, vpnSubnet) {
-		logger.Info("windows: NetNat %s 已存在 prefix=%s，跳过", name, vpnSubnet)
-		return nil
-	}
-	_ = platform.Command("powershell", "-NoProfile", "-Command",
-		fmt.Sprintf("Remove-NetNat -Name %s -Confirm:$false -ErrorAction SilentlyContinue", name)).Run()
-
-	ps := fmt.Sprintf(
-		`New-NetNat -Name %s -InternalIPInterfaceAddressPrefix %s -ErrorAction Stop`,
-		name, vpnSubnet,
-	)
-	out, err := winnet.RunPS(ps)
-	if err != nil {
-		return platform.CommandOutputError("New-NetNat", out, err)
-	}
-	logger.Info("windows: New-NetNat %s prefix=%s", name, vpnSubnet)
-	return nil
-}
-
-// isWinNATUnavailable 判断是否为 WinNAT 子系统缺失（Invalid class / 0x80041010）。
-func isWinNATUnavailable(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "0x80041010") ||
-		strings.Contains(msg, "Invalid class") ||
-		strings.Contains(msg, "无效") ||
-		strings.Contains(msg, "Provider load failure") ||
-		strings.Contains(msg, "0x80041013")
-}
 
 // findOutboundInterface 确定 ICS 公网侧网卡：配置 > 本机同网段 IP > 路由表 > 默认路由。
 func findOutboundInterface(lanCIDR, configured string) (string, error) {
@@ -284,88 +212,9 @@ if (-not $ok) { throw "ICS EnableSharing 失败（0x80040201 常见于 Win11 家
 	return nil
 }
 
-func teardownNATPlatform(vpnSubnet, lanCIDR, tunName string) error {
-	_ = vpnSubnet
-	_ = lanCIDR
-	_ = tunName
-	out, err := platform.Command("powershell", "-NoProfile", "-Command",
-		`Remove-NetNat -Name `+brand.WinNATName+` -Confirm:$false -ErrorAction SilentlyContinue`).CombinedOutput()
-	if err != nil {
-		logger.Debug("Remove-NetNat: %s %v", out, err)
-	}
-	// ICS 由 Teardown 末尾 disableICSPlatform 统一关闭一次，避免多 LAN 重复 COM
-	return nil
-}
-
 // disableICSPlatform 关闭本机全部 ICS 共享（Teardown 每栈仅调用一次）。
 func disableICSPlatform() {
 	start := time.Now()
 	winnet.DisableAllICS()
 	logger.Info("windows: disableICSPlatform elapsed=%s", time.Since(start))
-}
-
-// addClientRoutePlatform 添加分流路由：经 Wintun 接口 on-link（忽略 gateway 作下一跳）。
-func addClientRoutePlatform(cidr, tunName, gateway string) error {
-	_ = gateway
-	dest, mask, err := netutil.SplitCIDR(cidr)
-	if err != nil {
-		return err
-	}
-	ifIndex, err := winnet.InterfaceIndex(tunName)
-	if err != nil {
-		return err
-	}
-	args := WindowsOnLinkRouteArgs(dest, mask, ifIndex)
-	cmd := platform.Command("route", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		// 已存在则视为成功（重连/重复应用策略）
-		if strings.Contains(msg, "对象已存在") || strings.Contains(strings.ToLower(msg), "exists") {
-			return nil
-		}
-		return platform.CommandOutputError("route "+strings.Join(args, " "), out, err)
-	}
-	return nil
-}
-
-func delClientRoutePlatform(cidr, tunName, gateway string) error {
-	dest, mask, err := netutil.SplitCIDR(cidr)
-	if err != nil {
-		return err
-	}
-	_ = tunName
-	_ = gateway
-	cmd := platform.Command("route", "DELETE", dest, "MASK", mask)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// 路由本就不存在时 Windows 常返回非零；记 Warn 便于排查残留 on-link，不阻断清理流程
-		logger.Warn("route DELETE 失败 cidr=%s dest=%s: %v out=%s", cidr, dest, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// ipForwardEnabled 检查注册表 IPEnableRouter 是否已为 1。
-func ipForwardEnabled() bool {
-	out, err := platform.Command("reg", "query",
-		`HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`,
-		"/v", "IPEnableRouter").CombinedOutput()
-	if err != nil {
-		return false
-	}
-	s := strings.ToLower(string(out))
-	return strings.Contains(s, "0x1") ||
-		(strings.Contains(s, "ipeablerouter") && strings.Contains(s, " 0x1"))
-}
-
-// winNATMatches 检查是否已有相同 prefix 的 NetNat 规则（避免每次重启 Remove+New）。
-func winNATMatches(name, prefix string) bool {
-	ps := fmt.Sprintf(`
-$n = Get-NetNat -Name '%s' -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $n) { exit 1 }
-if ($n.InternalIPInterfaceAddressPrefix -eq '%s') { exit 0 }
-exit 2
-`, winnet.EscapeSingleQuoted(name), winnet.EscapeSingleQuoted(prefix))
-	err := platform.Command("powershell", "-NoProfile", "-Command", ps).Run()
-	return err == nil
 }

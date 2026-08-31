@@ -15,6 +15,30 @@ func TestInferGatewayFromVPNIP(t *testing.T) {
 	}
 }
 
+func TestInferVPNSubnetHint(t *testing.T) {
+	if got := netutil.InferVPNSubnetHint("10.88.0.50"); got != "10.88.0.0/24" {
+		t.Fatalf("got %s", got)
+	}
+	if got := netutil.InferVPNSubnetHint("  10.88.0.5  "); got != "10.88.0.0/24" {
+		t.Fatalf("trim got %s", got)
+	}
+	if got := netutil.InferVPNSubnetHint("bad"); got != "bad" {
+		t.Fatalf("invalid fallback got %q", got)
+	}
+	if got := netutil.InferVPNSubnetHint("  "); got != "" {
+		t.Fatalf("blank got %q", got)
+	}
+}
+
+func TestTrimLower(t *testing.T) {
+	if got := netutil.TrimLower("  FooBar  "); got != "foobar" {
+		t.Fatalf("got %q", got)
+	}
+	if got := netutil.TrimLower(""); got != "" {
+		t.Fatalf("empty got %q", got)
+	}
+}
+
 func TestResolveGatewayPriority(t *testing.T) {
 	if got := netutil.ResolveGateway("10.1.0.1", "10.2.0.1", "10.88.0.5"); got != "10.1.0.1" {
 		t.Fatalf("handshake wins: %s", got)

@@ -248,6 +248,28 @@
         clearTimeout(t);
         t = setTimeout(function () { fn.apply(self, args); }, ms || 300);
       };
+    },
+    /**
+     * 显示/隐藏元素：用 .hidden class，禁止 el.style.display（CSP style-src 无 unsafe-inline）。
+     * @param {Element|string} elOrId DOM 或 id
+     * @param {boolean} visible true 显示
+     */
+    setVisible: function (elOrId, visible) {
+      var el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId;
+      if (!el) return;
+      if (visible) el.classList.remove('hidden');
+      else el.classList.add('hidden');
+    },
+    /**
+     * 打开/关闭 .overlay-modal：用 .is-open，禁止写 style.display。
+     * @param {Element|string} elOrId
+     * @param {boolean} open
+     */
+    setOverlayOpen: function (elOrId, open) {
+      var el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId;
+      if (!el) return;
+      if (open) el.classList.add('is-open');
+      else el.classList.remove('is-open');
     }
   };
 

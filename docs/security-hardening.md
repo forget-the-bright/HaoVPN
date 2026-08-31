@@ -271,10 +271,10 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 
 | 检查项 | 说明 |
 |--------|------|
-| CSP `script-src` | **`'self'` only**（第十七轮）：管理页脚本已外置到 `web/static/*.js`（含 `login.js`、`index.js`、`user_list.js`、`peer_routes.js`、`security_probe.js` 等）。定义见 `security/tls_policy.go`。 |
-| 禁止 HTML `onclick=` / `on*=` | **内联事件处理器同样被 CSP 拦截**（控制台：`Executing inline event handler…`）。按钮须在外置 JS 用 `addEventListener` / `.onclick=`；退出登录用 `data-action="logout"`（`app.js`）。回归：`TestEmbeddedTemplatesNoInlineEventHandlers`、`TestEmbeddedStaticJSNoOnclickHTMLLiteral`、`TestWebUIButtonIDsBoundInPageScript`、`TestWebUIAuthPagesExternalScripts`。 |
-| CSP `style-src` | 仍允许 `'unsafe-inline'`（模板内联样式未迁完）；**勿**误把 style 的 unsafe-inline 当成可恢复内联脚本。 |
-| 新页面 | 禁止在 HTML 内写 `<script>` 业务逻辑与 `onclick=`；新增 `static/<page>.js` 并用 `<script src="/static/...">` 引用。 |
+| CSP `script-src` | **`'self'` only**：管理页脚本已外置到 `web/static/*.js`。定义见 `security/tls_policy.go`。 |
+| 禁止 HTML `onclick=` / `on*=` | **内联事件处理器同样被 CSP 拦截**。按钮须在外置 JS 用 `addEventListener` / `.onclick=`；退出登录用 `data-action="logout"`（`app.js`）。回归：`TestEmbeddedTemplatesNoInlineEventHandlers` 等。 |
+| CSP `style-src` | **`'self'` only**（第二十二轮）：内联 `style=` 与 JS `el.style.*` 已外置到 `style.css` + `.hidden`/`.is-open`；显隐用 `HaoVPN.setVisible` / `setOverlayOpen`。回归：`TestSecurityHeadersScriptAndStyleSelf`、`TestEmbeddedTemplatesNoInlineStyle`。 |
+| 新页面 | 禁止在 HTML 内写 `<script>` 业务逻辑、`onclick=`、`style=`；新增 `static/<page>.js` 与必要时扩展 `style.css`。 |
 
 ---
 
@@ -335,4 +335,4 @@ api:
 
 ---
 
-*最后更新：2026-08-31 · 架构解耦第二十一轮（薄封装清零 / GoSafe / 握手文件簇）*
+*最后更新：2026-08-31 · 架构解耦第二十二轮（CSP style-src 'self' / RunPS 收口）*

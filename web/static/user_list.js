@@ -5,15 +5,15 @@
 
     function syncCreateModeUI() {
       var mode = document.getElementById('ip_mode').value;
-      document.getElementById('vpn_ip_group').style.display = mode === 'fixed' ? '' : 'none';
-      document.getElementById('lease_group').style.display = mode === 'dynamic_lease' ? '' : 'none';
+      HaoVPN.setVisible('vpn_ip_group', mode === 'fixed');
+      HaoVPN.setVisible('lease_group', mode === 'dynamic_lease');
       if (mode !== 'fixed') document.getElementById('create_vpn_ip').value = '';
     }
     function syncPolicyModeUI() {
       var mode = document.getElementById('policyIPMode').value;
       var fixed = mode === 'fixed';
-      document.getElementById('policyVpnIpGroup').style.display = fixed ? '' : 'none';
-      document.getElementById('policyLeaseGroup').style.display = mode === 'dynamic_lease' ? '' : 'none';
+      HaoVPN.setVisible('policyVpnIpGroup', fixed);
+      HaoVPN.setVisible('policyLeaseGroup', mode === 'dynamic_lease');
       document.getElementById('policyVpnIp').disabled = !fixed;
     }
     document.getElementById('ip_mode').addEventListener('change', syncCreateModeUI);
@@ -120,10 +120,10 @@
       document.getElementById('policyVpnIp').value = u.vpn_ip || '';
       document.getElementById('policyLease').value = 86400;
       syncPolicyModeUI();
-      document.getElementById('policyModal').style.display = 'flex';
+      HaoVPN.setOverlayOpen('policyModal', true);
     }
     function closePolicy() {
-      document.getElementById('policyModal').style.display = 'none';
+      HaoVPN.setOverlayOpen('policyModal', false);
     }
 
     function openPassword(id) {
@@ -133,10 +133,10 @@
       document.getElementById('passwordHint').textContent = '为账号「' + u.username + '」设置新登录密码（隧道/Web 均使用此密码；保存后踢线）';
       document.getElementById('passwordNew').value = '';
       document.getElementById('passwordConfirm').value = '';
-      document.getElementById('passwordModal').style.display = 'flex';
+      HaoVPN.setOverlayOpen('passwordModal', true);
     }
     function closePassword() {
-      document.getElementById('passwordModal').style.display = 'none';
+      HaoVPN.setOverlayOpen('passwordModal', false);
     }
 
     document.getElementById('passwordForm').addEventListener('submit', async function (e) {

@@ -61,6 +61,7 @@
 |------|--------|
 | `engine_connect.go` / `engine_lifecycle.go` | 拨号、重连、握手 |
 | `runtime*.go` | TUN、路由、策略增量 apply |
+| `via_exit.go` | via/ICS：指纹跳过；空 local_lans 先 `HasICSResidue` 再清理（实现在 `winnet/ics_windows.go`） |
 | `route_view.go` | **`ManagedRouteView`** 展示 DTO（供 GUI 托盘） |
 | `fatal_auth.go` / `dial_errors.go` | 封禁 / 鉴权致命错误 UX（直接 `autherr`/`dialerr`，无薄 Is* re-export） |
 
@@ -68,8 +69,21 @@
 
 | 文件 | 做什么 |
 |------|--------|
-| `tray.go` / `tray_routes.go` | 托盘菜单与路由展示（依赖 `clientapp`，不依赖 `tunnel`） |
+| `tray.go` / `tray_routes.go` | 托盘菜单与路由展示（子网 hint → `netutil.InferVPNSubnetHint`） |
 | `login.go` / `admin.go` | 登录与服务提权 |
+
+### Windows 子进程调用链（via / ICS / NAT）
+
+```
+clientapp/via_exit.go
+    → winnet.HasICSResidue / CleanupICSResidue / DisableAllICS  （ics_windows.go）
+    → winnet.PreferVPNSourceWithICS / RemoveICSAddressesKeepVPN （address_windows.go）
+netstack Setup/Teardown
+    → forward_windows.go（IP 转发）
+    → nat_windows.go（WinNAT）→ 失败则 ics_nat_windows.go（服务端 ICS SNAT）
+    → route_ops_windows.go（客户端 on-link 路由）
+所有 PowerShell → winnet.RunPS / RunPSBestEffort（ps_windows.go，Bypass；失败 Warn）
+```
 
 ---
 
@@ -153,11 +167,12 @@ flowchart LR
 |----|--------|----------|
 | **autherr** | 握手/拨号错误分类 + code 映射 | `classify.go` |
 | **dialerr** | 拨号哨兵与 banner 常量（叶子；Error 中文） | `errors.go`, `classify.go` |
-| **netutil** | CIDR/IP/监听/源白名单 | `validate_ip.go`, `source_ip.go`（wrap dialerr） |
+| **netutil** | CIDR/IP/监听/源白名单/TrimLower/子网 hint | `validate_ip.go`, `source_ip.go`, `strings.go`, `gateway.go` |
 | **fileutil** | 原子写、目录、ACL、`RestrictToAdminsOnly` | `atomic.go`, `fs.go`, `perm_*.go` |
 | **timeutil** | SQLite UTC、RFC3339、配置秒 → Duration | `sqlite.go`, `duration.go` |
 | **paginate** | API limit/offset、bool 查询 | `parse.go`, `clamp.go` |
 | **safeutil** | `GoSafe`、`RetryN`、`ExpBackoff`、Ticker | `goroutine.go`, `retry.go` |
+| **winnet** | Windows 网卡 / 统一 PS / ICS / DNS 解析 | `ps_windows.go`, `ics_windows.go`, `dns_parse.go`, `address_windows.go` |
 | **logger** | 分级日志 + `RedactSensitive` | `redact.go` |
 | **readmodel** | API 读模型 DTO（与 persist 解耦） | `peers.go` 等 |
 | **config** | YAML 加载/默认值/校验 | `defaults.go`, `server.go`, `client.go` |
@@ -177,4 +192,4 @@ flowchart LR
 
 ---
 
-*第二十一轮（2026-08-31）：删薄 re-export；GoSafe 收口；dialerr/autherr 去重；doHandshake 文件簇。*
+*第二十二轮后 · TrimLower/InferVPNSubnetHint、RunPSBestEffort、winnet/netstack 文件簇、CSP style-src 'self'。*

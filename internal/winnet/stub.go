@@ -37,6 +37,23 @@ func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
 // DisableAllICS 非 Windows 无操作。
 func DisableAllICS() {}
 
+// RunPSBestEffort 非 Windows 无操作（无 PowerShell）。
+func RunPSBestEffort(script, opName string) {
+	_, _ = script, opName
+}
+
+// HasICSResidue 非 Windows 恒 false（无 ICS）。
+func HasICSResidue(configName string) bool {
+	_ = configName
+	return false
+}
+
+// CleanupICSResidue 非 Windows 无操作。
+func CleanupICSResidue(configName, vpnIP string) error {
+	_, _ = configName, vpnIP
+	return nil
+}
+
 // ErrNotSupported 表示当前平台不支持 winnet 的 Windows 专有操作。
 var ErrNotSupported = errorString("winnet: 仅 Windows 支持")
 

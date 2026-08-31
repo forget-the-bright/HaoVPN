@@ -6,6 +6,56 @@
 
 ---
 
+## 2026-08-31 · 架构解耦第二十二轮（抽取 · PS 收口 · CSP · 文档）
+
+### 问题
+
+- `api`/`clientgui` 各有 `ToLower+TrimSpace`；GUI 子网 hint 与 `InferGatewayFromVPNIP` 同假设却散落。
+- `netstack` raw powershell 缺 Bypass，与 `winnet.RunPS` 双轨；ICS/NAT `_ = Run()` 静默失败。
+- `ParseDNSShowOutput` 在 netstack；`NormalizeKillPrefixes` 薄封装。
+- `winnet/netsh_windows.go`、`route_windows.go`、`killswitch_windows.go` 过胖。
+- CSP `style-src 'unsafe-inline'` 文档债；FAQ 对 ICS API 文件位置漂移。
+
+### 修复
+
+- **叶子**：`netutil.TrimLower`、`InferVPNSubnetHint`；删私有副本与 `NormalizeKillPrefixes`。
+- **PS**：`RunPSBestEffort`（失败 Warn）；netstack/winnet 一律 Bypass；无 raw powershell。
+- **DNS**：`ParseDNSShowOutput` → `winnet/dns_parse.go`。
+- **拆分**：winnet → `ps_`/`address_`/`dns_netsh_`/`ics_windows.go`；netstack → `forward_`/`nat_`/`ics_nat_`/`route_ops_` + `killswitch_wfp_*.go`。
+- **CSP**：外置 style；`style-src 'self'`；`HaoVPN.setVisible`/`setOverlayOpen`；测试钉死无 `style=`。
+- **依赖规则 26～27**；architecture / internal/README / codebase-guide / hardening / troubleshooting / 记忆。
+
+### 验证
+
+- 分步：`go test` netutil / winnet / netstack / api / clientgui / security
+- `go test ./...`（`singleinstance` 本机客户端锁占用失败属环境，与既往一致）
+- `.\scripts\build-local.ps1` 通过
+
+---
+
+## 2026-08-31 · 空 local_lans 智能跳过 ICS 清理
+
+### 问题
+
+- 公司客户端未配 `local_lans` 时，每次登录仍无条件 `DisableAllICS`（PowerShell COM，常 ~10–20s）。
+- via 开→关：`Teardown` 已关 ICS，空路径再 `DisableAllICS` 二次付费。
+- `via_exit` 在 `Setup` 后再调 `PreferVPNSourceWithICS`（ICS 路径 Setup 内已做）。
+
+### 修复
+
+- `winnet.HasICSResidue`：便宜探测 TUN 上 `192.168.137.*`。
+- `winnet.CleanupICSResidue`：有残留时一次 PS（Disable + 清 137）。
+- `cleanupTUNAfterViaDisabled(hadVia)`：无残留跳过；hadVia 只清地址；否则 CleanupICSResidue。
+- 删除 Setup 后重复 PreferVPNSource；unchanged/no-residue 日志改 Debug。
+- **不做**：YAML 开关、收窄 Disable 为仅本适配器、改 Setup sleep/多次 Disable、服务端 NAT ICS。
+
+### 验证
+
+- `go test ./internal/winnet/... ./internal/clientapp/... ./internal/netstack/...`
+- `go test ./...`（singleinstance 本机占锁属环境）
+
+---
+
 ## 2026-08-31 · 架构解耦第二十一轮（薄封装清零 + GoSafe + 文档对齐）
 
 ### 问题

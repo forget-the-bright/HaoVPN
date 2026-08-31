@@ -10,7 +10,8 @@
 //   addr.go — HostFromAddr、NormalizeIPv4、MergeDedupTrimNonEmpty、DedupTrimNonEmpty…
 //   source_ip.go — CheckSourceIPAllowed（wrap dialerr.ErrSourceDenied；tunnel 握手与 probedefense 直接调用，无薄包装）
 //   hostport.go — SplitHostPortLoose、SplitRemoteAddr（探针/握手共用远端拆分）
-//   gateway.go — InferGatewayFromVPNIP、ResolveGateway、IsLoopbackHost
+//   gateway.go — InferGatewayFromVPNIP、InferVPNSubnetHint、ResolveGateway、IsLoopbackHost
+//   strings.go — TrimLower（单串 Trim+小写；列表见 DedupTrimNonEmpty）
 //   listen.go — 管理口监听地址合并与校验
 //   ipmatch.go — IPMatchesRules、ParseCIDROrHost、NormalizeCIDROrHost、NormalizeCIDRList、
 //                AppendCIDRUnique、ForbidDefaultRoute、CIDRListContainsIP

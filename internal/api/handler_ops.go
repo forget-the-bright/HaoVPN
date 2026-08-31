@@ -11,6 +11,7 @@ import (
 	"haovpn/internal/health"
 	"haovpn/internal/logger"
 	"haovpn/internal/logstore"
+	"haovpn/internal/netutil"
 	"haovpn/internal/paginate"
 	"haovpn/internal/persist"
 	"haovpn/internal/readmodel"
@@ -135,7 +136,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	source := stringsToLowerTrim(q.Get("source"))
+	source := netutil.TrimLower(q.Get("source"))
 	if source == "" {
 		source = "live"
 	}
@@ -198,6 +199,3 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, s.cfg.Database.Path)
 }
 
-func stringsToLowerTrim(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
-}

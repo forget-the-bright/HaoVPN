@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"haovpn/internal/clientapp"
+	"haovpn/internal/netutil"
 )
 
 // trayRouteLines 托盘「本机路由」子菜单文案（纯函数，便于单测）。
@@ -15,9 +16,9 @@ func trayRouteLines(vpnSubnet, vpnIP, gateway string, allowedIPs []string, manag
 	lines = append(lines, tun)
 
 	lines = append(lines, "—— 分流 ——")
-	subnetKey := normalizeCIDRKey(vpnSubnet)
+	subnetKey := netutil.TrimLower(vpnSubnet)
 	if subnetKey == "" {
-		subnetKey = normalizeCIDRKey(deriveVPNSubnetHint(vpnIP))
+		subnetKey = netutil.TrimLower(netutil.InferVPNSubnetHint(vpnIP))
 	}
 	splitN := 0
 	for _, cidr := range allowedIPs {
@@ -25,7 +26,7 @@ func trayRouteLines(vpnSubnet, vpnIP, gateway string, allowedIPs []string, manag
 		if c == "" {
 			continue
 		}
-		if subnetKey != "" && normalizeCIDRKey(c) == subnetKey {
+		if subnetKey != "" && netutil.TrimLower(c) == subnetKey {
 			continue
 		}
 		lines = append(lines, formatSplitRouteLine(c, gateway))
@@ -70,7 +71,7 @@ func formatManagedRouteLine(mr clientapp.ManagedRouteView) string {
 func formatTUNLine(vpnSubnet, vpnIP, gateway string) string {
 	subnet := strings.TrimSpace(vpnSubnet)
 	if subnet == "" {
-		subnet = deriveVPNSubnetHint(vpnIP)
+		subnet = netutil.InferVPNSubnetHint(vpnIP)
 	}
 	gw := strings.TrimSpace(gateway)
 	if subnet != "" && gw != "" {
@@ -94,16 +95,3 @@ func formatSplitRouteLine(cidr, gateway string) string {
 	return strings.TrimSpace(cidr)
 }
 
-// deriveVPNSubnetHint 无 vpn_subnet 时由 IPv4 主机地址粗推 x.y.z.0/24（仅展示回退）。
-func deriveVPNSubnetHint(vpnIP string) string {
-	parts := strings.Split(strings.TrimSpace(vpnIP), ".")
-	if len(parts) == 4 {
-		return parts[0] + "." + parts[1] + "." + parts[2] + ".0/24"
-	}
-	return strings.TrimSpace(vpnIP)
-}
-
-// normalizeCIDRKey 比较用：去空白、小写。
-func normalizeCIDRKey(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
-}

@@ -73,7 +73,7 @@ func TestEmbeddedTemplatesHaveFavicon(t *testing.T) {
 	}
 }
 
-// TestLoginPageLoadsExternalLoginScript 登录页引用 static/login.js；CSP script-src 不得含 unsafe-inline。
+// TestLoginPageLoadsExternalLoginScript 登录页引用 static/login.js；CSP 全段不得含 unsafe-inline。
 func TestLoginPageLoadsExternalLoginScript(t *testing.T) {
 	dir := t.TempDir()
 	store, err := persist.Open(filepath.Join(dir, "csp.db"))
@@ -98,19 +98,32 @@ func TestLoginPageLoadsExternalLoginScript(t *testing.T) {
 		t.Fatal("登录页应含表单并引用 /static/login.js")
 	}
 	csp := w.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "script-src") {
-		t.Fatalf("CSP 须含 script-src: %q", csp)
+	if !strings.Contains(csp, "script-src") || !strings.Contains(csp, "style-src") {
+		t.Fatalf("CSP 须含 script-src 与 style-src: %q", csp)
 	}
-	// 只检查 script-src 段：不得含 unsafe-inline（style-src 仍可保留）
-	scriptPart := csp
-	if idx := strings.Index(csp, "script-src"); idx >= 0 {
-		scriptPart = csp[idx:]
-		if end := strings.Index(scriptPart, ";"); end >= 0 {
-			scriptPart = scriptPart[:end]
+	if strings.Contains(csp, "'unsafe-inline'") {
+		t.Fatalf("CSP 不得含 unsafe-inline（脚本与样式均已外置）: %q", csp)
+	}
+}
+
+// TestEmbeddedTemplatesNoInlineStyle 嵌入模板不得含 style=（须走 style.css + class）。
+func TestEmbeddedTemplatesNoInlineStyle(t *testing.T) {
+	entries, err := fs.ReadDir(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	styleAttr := regexp.MustCompile(`(?i)\sstyle\s*=`)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".html") {
+			continue
 		}
-	}
-	if strings.Contains(scriptPart, "'unsafe-inline'") {
-		t.Fatalf("CSP script-src 不得含 unsafe-inline: %q", csp)
+		b, err := web.FS.ReadFile("templates/" + e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if styleAttr.Match(b) {
+			t.Errorf("templates/%s 含内联 style=（违反 CSP style-src 'self'）", e.Name())
+		}
 	}
 }
 

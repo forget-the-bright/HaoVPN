@@ -1,36 +1,5 @@
 package netstack
 
-import (
-	"net"
-	"strings"
-
-	"haovpn/internal/netutil"
-)
-
-// NormalizeKillPrefixes 去重并规范化 AllowedIPs 前缀列表，供 WFP 杀开关 remoteip 条件使用。
-//
-// 参数：prefixes — 握手或 yaml 的 CIDR 列表；空串与重复项被跳过。
-// 返回：保序去重后的新切片（不修改原切片）。
-func NormalizeKillPrefixes(prefixes []string) []string {
-	return netutil.DedupTrimNonEmpty(prefixes)
-}
-
-// ParseDNSShowOutput 从 netsh interface ipv4 show dnsservers 输出中提取 IPv4 DNS 服务器列表。
-//
-// 参数：out — netsh 标准输出字节。
-// 返回：按出现顺序的 IPv4 地址字符串；无法解析时可能为空切片。
-func ParseDNSShowOutput(out []byte) []string {
-	var servers []string
-	for _, line := range strings.Split(string(out), "\n") {
-		for _, p := range strings.Fields(strings.TrimSpace(line)) {
-			if strings.Count(p, ".") == 3 && net.ParseIP(p) != nil {
-				servers = append(servers, p)
-			}
-		}
-	}
-	return servers
-}
-
 // WFPFilterRef 枚举到的 WFP 过滤器摘要（纯数据，供单测与崩溃残留清理逻辑使用）。
 //
 // 字段：

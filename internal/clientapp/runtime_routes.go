@@ -72,7 +72,9 @@ func (rt *runtime) clearRoutes() {
 }
 
 func (rt *runtime) clearRoutesLocked() {
-	// 仅当本会话曾 Setup via（rt.via != nil）时 Teardown 才会 DisableAllICS；未开 via 则跳过慢速 COM。
+	// Teardown：仅本会话曾 Setup via（rt.via != nil）时才会 DisableAllICS。
+	// 空 local_lans 的慢清理不在这里：在 setupViaExitLocked → cleanupTUNAfterViaDisabled，
+	// 且须先 HasICSResidue；无残留跳过（公司机常见路径）。
 	rt.teardownViaExitLocked()
 	rt.viaFP = ""
 	rt.viaFPKnown = false

@@ -77,17 +77,17 @@ func Redact(s string) string {
 // 返回：header 名 → 值的 map。
 // 副作用：无。
 //
-// CSP 说明（诚实、可演进）：
-//   - script-src 仅 'self'：管理页脚本已外置到 web/static/*.js，禁止内联脚本；
-//   - style-src 仍含 'unsafe-inline'：templates 内大量内联 <style>/style= 尚未迁出；
-//     去掉 style 的 unsafe-inline 前须先外置 CSS，否则布局会坏。
-// 关联：docs/security-hardening.md；web/static/*.js。
+// CSP 说明（第 22 轮已收紧）：
+//   - script-src 仅 'self'：管理页脚本在 web/static/*.js；
+//   - style-src 仅 'self'：样式在 web/static/style.css；禁止 HTML style= 与 JS 写 el.style.*
+//     （显隐用 .hidden / .is-open + HaoVPN.setVisible / setOverlayOpen）。
+// 关联：docs/security-hardening.md；web/README.md。
 func SecurityHeaders() map[string]string {
 	return map[string]string{
 		"X-Content-Type-Options":  "nosniff",
 		"X-Frame-Options":         "DENY",
 		"Referrer-Policy":           "strict-origin-when-cross-origin",
-		"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+		"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'",
 	}
 }
 

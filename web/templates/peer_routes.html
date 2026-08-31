@@ -35,30 +35,30 @@
         <span class="text-muted">对齐 ZeroTier：目标网段 via 客户端 VPN IP（服务端转发）</span>
       </header>
       <main class="content">
-        <div id="pendingBanner" class="card" style="display:none;margin-bottom:1rem;border-color:#c9a227;background:rgba(201,162,39,.08)">
-          <p style="margin:0 0 .5rem"><strong>有未生效的变更</strong> — 增删已写入数据库，须点击「应用生效」踢线受影响客户端以刷新策略。</p>
+        <div id="pendingBanner" class="card pending-banner hidden">
+          <p class="pending-banner-text"><strong>有未生效的变更</strong> — 增删已写入数据库，须点击「应用生效」踢线受影响客户端以刷新策略。</p>
           <button type="button" class="btn btn-primary btn-sm btn-apply" id="btnApplyPeersBanner">
             <span class="btn-label">应用生效</span>
           </button>
         </div>
 
         <div class="card">
-          <div class="toolbar" style="justify-content:space-between;align-items:center">
+          <div class="toolbar toolbar-spread">
             <div>
-              <h2 class="card-title" style="margin:0">全局互访</h2>
-              <p class="text-muted" style="margin:.35rem 0 0">默认禁止 VPN 客户端互访对方虚拟 IP。开启后任意账号可互 ping（即时生效，无需应用）。</p>
+              <h2 class="card-title m-0">全局互访</h2>
+              <p class="text-muted mt-035">默认禁止 VPN 客户端互访对方虚拟 IP。开启后任意账号可互 ping（即时生效，无需应用）。</p>
             </div>
             <button type="button" class="btn btn-primary btn-sm btn-apply" id="btnApplyPeers" title="踢线待应用账号">
               <span class="btn-label">应用生效</span>
             </button>
           </div>
-          <label class="check-row" style="margin-top:.75rem">
+          <label class="check-row mt-075">
             <input type="checkbox" id="allowAllPeers"> 允许全部 VPN 互访
           </label>
           <button type="button" class="btn btn-ghost btn-sm" id="btnSavePeersPolicy">保存开关</button>
         </div>
 
-        <div class="card" style="margin-top:1rem">
+        <div class="card mt-1">
           <h2 class="card-title">在线本地网段注册表</h2>
           <p class="text-muted">客户端配置 <code>local_lans</code> 后登录上报；断线清空。仅广告，不自动建托管路由。可从下行「从注册表创建」。</p>
           <div class="toolbar">
@@ -74,7 +74,7 @@
           </div>
         </div>
 
-        <div class="card" style="margin-top:1rem">
+        <div class="card mt-1">
           <h2 class="card-title">托管路由</h2>
           <p class="text-muted">列表格式：<code>{dest} via {via_vpn_ip}</code>。via 表示服务端把流量转给该客户端；须 via 在线且注册表有匹配 dest 才有效。AllowedIPs（工控 NAT）请在账号页配置。</p>
           <div class="toolbar">
@@ -93,7 +93,7 @@
                 <option value="user">指定账号</option>
               </select>
             </div>
-            <div class="form-group" id="accessorGroup" style="display:none">
+            <div class="form-group hidden" id="accessorGroup">
               <label>访问方账号</label>
               <select id="accessorUser"></select>
             </div>
@@ -117,7 +117,7 @@
           </div>
         </div>
 
-        <div class="card" style="margin-top:1rem">
+        <div class="card mt-1">
           <h2 class="card-title">互访白名单（双向）</h2>
           <p class="text-muted">添加后默认 <strong>A ↔ B</strong> 双向可互 ping 对方当前 VPN IP。保存后须「应用生效」。</p>
           <div class="toolbar">

@@ -637,6 +637,63 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
 .text-muted { color: var(--text-muted); }
 .text-mono { font-family: var(--mono); font-size: 0.85em; }
 
+/* —— 第 22 轮：外置原内联 style，配合 CSP style-src 'self'（无 unsafe-inline）—— */
+
+.mt-1 { margin-top: 1rem; }
+.mt-075 { margin-top: 0.75rem; }
+.mt-012 { margin-top: 12px; }
+.mb-012 { margin-bottom: 12px; }
+.mb-1 { margin-bottom: 1rem; }
+.mt-035 { margin-top: 0.35rem; }
+.m-0 { margin: 0; }
+.pending-banner-text { margin: 0 0 0.5rem; }
+
+.toolbar-spread {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.login-change-box {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.login-change-title {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+
+/* 待应用变更提示条（托管路由页） */
+.pending-banner {
+  margin-bottom: 1rem;
+  border-color: #c9a227;
+  background: rgba(201, 162, 39, 0.08);
+}
+
+/* 简易遮罩弹层（用户策略/改密）；显示时用 .is-open，隐藏用默认 display:none */
+.overlay-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 50;
+  align-items: center;
+  justify-content: center;
+}
+.overlay-modal.is-open {
+  display: flex;
+}
+
+.modal-card {
+  margin: auto;
+}
+.modal-card-md { width: min(480px, 92vw); }
+.modal-card-sm { width: min(420px, 92vw); }
+
+.status-stale { color: #c9a227; }
+.status-ok { color: #3a7; }
+
 @media (max-width: 768px) {
   .app-shell { flex-direction: column; }
   .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }

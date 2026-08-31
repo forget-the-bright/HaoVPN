@@ -6,17 +6,10 @@ import (
 	"haovpn/internal/netutil"
 )
 
-func TestNormalizeKillPrefixes(t *testing.T) {
-	got := NormalizeKillPrefixes([]string{"192.168.1.0/24", "", "192.168.1.0/24", "10.0.0.0/8"})
+func TestKillPrefixesDedupViaNetutil(t *testing.T) {
+	// 杀开关前缀规范化已直接用 netutil.DedupTrimNonEmpty（无本包薄封装）。
+	got := netutil.DedupTrimNonEmpty([]string{"192.168.1.0/24", "", "192.168.1.0/24", "10.0.0.0/8"})
 	if len(got) != 2 {
-		t.Fatalf("got %v", got)
-	}
-}
-
-func TestParseDNSShowOutput(t *testing.T) {
-	sample := []byte("Configuration for interface \"haovpn0\"\n  Statically Configured DNS Servers:    8.8.8.8\n    1.1.1.1")
-	got := ParseDNSShowOutput(sample)
-	if len(got) < 2 {
 		t.Fatalf("got %v", got)
 	}
 }

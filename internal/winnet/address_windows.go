@@ -5,45 +5,9 @@ package winnet
 import (
 	"fmt"
 	"strings"
-	"time"
 
-	"haovpn/internal/logger"
 	"haovpn/internal/platform"
 )
-
-// RunPS 执行 PowerShell 脚本（NoProfile、Bypass 执行策略、无控制台窗口）。
-//
-// 参数：script — 完整 -Command 脚本体。
-// 返回：CombinedOutput；失败时 error 含 stderr 摘要。
-// 副作用：启动 powershell.exe 子进程。
-func RunPS(script string) ([]byte, error) {
-	out, err := platform.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script).CombinedOutput()
-	if err != nil {
-		return out, platform.CommandOutputError("powershell", out, err)
-	}
-	return out, nil
-}
-
-// EscapeSingleQuoted 转义嵌入 PowerShell 单引号字符串字面量的内容。
-//
-// 参数：s — 待嵌入 '...' 的原始文本。
-// 返回：将单引号替换为 '' 后的字符串。
-func EscapeSingleQuoted(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
-}
-
-// RunNetsh 执行 netsh 子命令并在失败时格式化错误信息。
-//
-// 参数：args — netsh 后续参数（如 interface ipv4 set address ...）。
-// 返回：netsh 非零退出或输出含错误时 error。
-// 副作用：启动 netsh.exe 子进程，可能修改网络配置（依子命令而定）。
-func RunNetsh(args ...string) error {
-	out, err := platform.Command("netsh", args...).CombinedOutput()
-	if err != nil {
-		return platform.CommandOutputError("netsh "+strings.Join(args, " "), out, err)
-	}
-	return nil
-}
 
 // SetInterfaceIPv4 为指定接口配置静态 IPv4 地址与子网掩码。
 //
@@ -61,38 +25,6 @@ func SetInterfaceIPv4(ifName, ip, mask string) error {
 // DisableInterfaceIPv6 关闭指定接口的 IPv6 管理状态，减少 TUN 侧多余探测流量。
 func DisableInterfaceIPv6(ifName string) error {
 	return RunNetsh("interface", "ipv6", "set", "interface", "interface="+ifName, "admin=disabled")
-}
-
-// SetInterfaceDNSStatic 将接口主 DNS（index=1）设为静态地址。
-//
-// 参数：ifName — netsh 别名；server — 单个 IPv4 DNS。
-func SetInterfaceDNSStatic(ifName, server string) error {
-	return RunNetsh("interface", "ipv4", "set", "dnsservers", ifName,
-		"source=static", "address="+server, "register=none", "validate=no")
-}
-
-// AddInterfaceDNS 向接口追加次级 DNS 服务器。
-//
-// 参数：index — netsh DNS 优先级（通常从 2 起）；server — IPv4 地址。
-func AddInterfaceDNS(ifName, server string, index int) error {
-	return RunNetsh("interface", "ipv4", "add", "dnsservers", ifName, server,
-		"index="+fmt.Sprintf("%d", index), "validate=no")
-}
-
-// RestoreInterfaceDNSDHCP 将接口 DNS 恢复为 DHCP 自动获取。
-func RestoreInterfaceDNSDHCP(ifName string) error {
-	return RunNetsh("interface", "ipv4", "set", "dnsservers", ifName, "source=dhcp")
-}
-
-// ShowInterfaceDNS 读取 netsh interface ipv4 show dnsservers 的原始输出。
-//
-// 返回：stdout 字节；netsh 失败时 error 与部分输出一并返回。
-func ShowInterfaceDNS(ifName string) ([]byte, error) {
-	out, err := platform.Command("netsh", "interface", "ipv4", "show", "dnsservers", ifName).CombinedOutput()
-	if err != nil {
-		return out, err
-	}
-	return out, nil
 }
 
 // AssignIPv4PowerShell 通过 New-NetIPAddress 为 Wintun 配置 IPv4（netsh 失败时的回退路径）。
@@ -121,6 +53,9 @@ New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress '%s' -PrefixLength %d -E
 //
 // 根因：ICS 在 TUN 上另挂 192.168.137.1 后，Windows 源地址选择可能不用 10.88.x.x，
 // 导致本机经隧道访问服务端 AllowedIPs（如 192.168.3.1）超时；对 ICS 地址设 SkipAsSource=$true。
+//
+// 参数：configName — TUN 配置名；vpnIP — 须保留为发包源的 VPN IPv4。
+// 关联：netstack setupICSPlatform、clientapp via_exit；与 RemoveICSAddressesKeepVPN 互补（彼删地址、此保地址改 SkipAsSource）。
 func PreferVPNSourceWithICS(configName, vpnIP string) error {
 	vpnIP = strings.TrimSpace(vpnIP)
 	if configName == "" || vpnIP == "" {
@@ -158,6 +93,9 @@ Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyC
 }
 
 // RemoveICSAddressesKeepVPN 关闭 ICS 后删除 192.168.137.x 等 ICS 地址，保留 VPN IP。
+//
+// 参数：configName — TUN 名；vpnIP — 须保留的地址。
+// 关联：via Teardown / cleanupTUNAfterViaDisabled(hadVia)；有残留且需关共享时优先 CleanupICSResidue（一次 PS）。
 func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
 	vpnIP = strings.TrimSpace(vpnIP)
 	if configName == "" || vpnIP == "" {
@@ -181,21 +119,4 @@ if (-not $has) {
 `, EscapeSingleQuoted(vpnIP), EscapeSingleQuoted(configName))
 	_, err := RunPS(ps)
 	return err
-}
-
-// DisableAllICS 关闭本机全部 ICS 共享（via 关闭或 Teardown 时清残留）。
-//
-// 通过 PowerShell COM 枚举连接并 DisableSharing，常见耗时数秒；调用方勿在 UI 线程同步执行。
-func DisableAllICS() {
-	start := time.Now()
-	ps := `
-$ErrorActionPreference = 'SilentlyContinue'
-regsvr32 /s hnetcfg.dll
-$net = New-Object -ComObject HNetCfg.HNetShare
-foreach ($c in @($net.EnumEveryConnection())) {
-  try { $net.INetSharingConfigurationForINetConnection($c).DisableSharing() } catch {}
-}
-`
-	_ = platform.Command("powershell", "-NoProfile", "-Command", ps).Run()
-	logger.Info("DisableAllICS elapsed=%s", time.Since(start))
 }

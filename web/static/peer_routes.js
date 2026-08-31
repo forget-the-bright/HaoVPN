@@ -5,13 +5,12 @@
     var memberEditRoute = null; // 正在编辑访问方的路由行
 
     document.getElementById('routeScope').addEventListener('change', function() {
-      document.getElementById('accessorGroup').style.display =
-        this.value === 'user' ? '' : 'none';
+      HaoVPN.setVisible('accessorGroup', this.value === 'user');
     });
 
     function setDirty(v) {
       dirty = !!v;
-      document.getElementById('pendingBanner').style.display = dirty ? '' : 'none';
+      HaoVPN.setVisible('pendingBanner', dirty);
     }
 
     function fillUserSelects() {
@@ -123,7 +122,7 @@
           document.getElementById('destCidr').value = r.dest_cidr;
           document.getElementById('viaUser').value = String(r.user_id);
           document.getElementById('routeScope').value = 'all';
-          document.getElementById('accessorGroup').style.display = 'none';
+          HaoVPN.setVisible('accessorGroup', false);
           window.scrollTo(0, document.getElementById('destCidr').offsetTop);
         };
         tb.appendChild(tr);
@@ -143,7 +142,7 @@
         var tr = document.createElement('tr');
         var scope = r.member_names || (r.scope === 'all' ? '全部账号' : '指定');
         var via = r.via_username + (r.via_vpn_ip ? ' / ' + r.via_vpn_ip : ' (离线)');
-        var st = r.stale ? '<span style="color:#c9a227">失效</span>' : '<span style="color:#3a7">有效</span>';
+        var st = r.stale ? '<span class="status-stale">失效</span>' : '<span class="status-ok">有效</span>';
         tr.innerHTML =
           '<td><code>' + esc(r.display) + '</code></td>' +
           '<td>' + esc(r.dest_cidr) + '</td>' +

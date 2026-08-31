@@ -110,7 +110,7 @@ func readDNS(adapterName string) (dhcp bool, servers []string, err error) {
 		(strings.Contains(text, "DHCP") && strings.Contains(text, "DNS")) {
 		return true, nil, nil
 	}
-	return false, ParseDNSShowOutput(out), nil
+	return false, winnet.ParseDNSShowOutput(out), nil
 }
 
 // DNSSavedCount 返回当前尚未 Restore 的 DNS 快照条目数。

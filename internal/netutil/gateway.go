@@ -13,6 +13,8 @@ const defaultGatewayFallback = "10.88.0.1"
 //
 // 参数：vpnIP — 如 "10.88.0.5"；无效或非 IPv4 时回退 defaultGatewayFallback。
 // 返回：如 "10.88.0.1"。
+//
+// 与 InferVPNSubnetHint 共用「默认 /24、主机落在 x.y.z.0/24」假设；改子网启发式须两边一起审。
 func InferGatewayFromVPNIP(vpnIP string) string {
 	ip := net.ParseIP(strings.TrimSpace(vpnIP))
 	if ip == nil {
@@ -23,6 +25,28 @@ func InferGatewayFromVPNIP(vpnIP string) string {
 		return defaultGatewayFallback
 	}
 	return fmt.Sprintf("%d.%d.%d.1", v4[0], v4[1], v4[2])
+}
+
+// InferVPNSubnetHint 从客户端 VPN IPv4 粗推同网段 x.y.z.0/24（展示/去重回退用）。
+//
+// 用途：握手未带 vpn_subnet 时，GUI 托盘「本机 TUN」行与分流去重键需要一个子网提示。
+// 不是路由权威来源——真实子网以握手 vpn_subnet / 服务端池为准。
+//
+// 参数：vpnIP — 如 "10.88.0.5"；有效 IPv4 返回 "10.88.0.0/24"；
+// 无效时返回 TrimSpace(vpnIP)（保留原展示回退，避免托盘空白）。
+//
+// 关联：InferGatewayFromVPNIP（同 /24 假设）；调用方 clientgui/tray_routes.go。
+func InferVPNSubnetHint(vpnIP string) string {
+	raw := strings.TrimSpace(vpnIP)
+	ip := net.ParseIP(raw)
+	if ip == nil {
+		return raw
+	}
+	v4 := ip.To4()
+	if v4 == nil {
+		return raw
+	}
+	return fmt.Sprintf("%d.%d.%d.0/24", v4[0], v4[1], v4[2])
 }
 
 // ResolveGateway 解析客户端路由下一跳网关地址。

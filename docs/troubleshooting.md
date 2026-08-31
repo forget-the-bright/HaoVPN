@@ -55,6 +55,8 @@
 | 断线后「好久才连上」 | 旧版每次重连全清路由+重跑 ICS（via 机尤慢）；或 Dial/退避过长 | **升级客户端**：临时断线保留 TUN/路由/ICS，握手后差分（日志 `policy_apply mode=noop` / `dataplane_keep`）；另查 `dial_timeout_sec`/`reconnect.max_sec`。磁盘日志看 `client.live.log` |
 | 重连仍每次 `via_exit_setup` / ICS | 旧客户端；或 `local_lans`/`vpn_subnet`/VPN IP 真变了；或走了 Stop/手动重连 | 确认已更新客户端；改配置后首次会重建属正常；GUI「手动重新连接」会全清 |
 | 退出登录 / 手动重连时界面卡住数秒 | 旧版在 UI 线程同步 `Stop`（ICS PowerShell COM 很慢） | **升级客户端**：清理改后台；界面显示「正在断开…」；日志 `gui_engine_stop` / `DisableAllICS elapsed=` |
+| 未配 `local_lans` 仍见 `DisableAllICS` 十余秒 | 旧版空 local_lans 仍无条件关全机 ICS | **升级客户端**：先 `HasICSResidue`；无 `192.168.137.*` 则跳过（日志 Debug `no ICS residue`）；有残留才 `CleanupICSResidue` |
+| 日志出现 `powershell 尽力操作失败 op=…` | ICS/NAT/转发清理类 PS 失败（尽力路径，不阻断主流程） | 查 `op=`（如 `DisableAllICS`、`Remove-NetNat-teardown`）；确认管理员权限与组策略是否拦 PowerShell；功能面通常仍可用 |
 | 点「退出」整窗假死很久 | 旧版退出同步等 ICS 清理 | **升级 GUI**：异步退出，先提示「正在退出（清理网络）…」，日志 `gui_quit` |
 | 要开机自动连且要托盘 | Windows：登录后自启 + 无窗口 + 自动连接 | 托盘「配置」三项；须自动登录桌面。Linux/macOS：托盘可写 XDG/LaunchAgent（见 deploy §5.3） |
 | Linux/macOS 点托盘「服务自启」失败 | systemd/LaunchDaemon 须 root | 以 root 运行 GUI 或手工装 unit；看错误文案 |
@@ -195,5 +197,5 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 
 ---
 
-*最后更新：2026-08-31 · 架构解耦第二十一轮*
+*最后更新：2026-08-31 · 架构解耦第二十二轮（RunPSBestEffort Warn 埋点）*
 
