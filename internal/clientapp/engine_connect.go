@@ -2,6 +2,7 @@ package clientapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -29,7 +30,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		msg := "缺少账号密码"
 		logger.Warn("隧道握手失败: %s", msg)
 		conn.Close()
-		e.reportFirstFailure(msg, true)
+		e.reportFirstFailure(errors.New(msg), true)
 		return
 	}
 	hsStart := time.Now()
@@ -38,8 +39,8 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	if err != nil {
 		logger.Warn("隧道握手失败: %v elapsed=%s", err, time.Since(hsStart))
 		conn.Close()
-		// 首次失败必须通知 WaitConnected（含握手超时）；GUI failFast 会停重连
-		e.reportFirstFailure(err.Error(), e.ShouldFailFastHandshake(err))
+		// 保留哨兵 identity，供 WaitConnected / fatal 判定 errors.Is
+		e.reportFirstFailure(err, e.ShouldFailFastHandshake(err))
 		return
 	}
 	logger.Info("隧道鉴权应答收到 elapsed=%s", time.Since(hsStart))
@@ -53,14 +54,14 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		msg := "握手未下发私钥且无内存回退私钥"
 		logger.Warn("%s", msg)
 		conn.Close()
-		e.reportFirstFailure(msg, true)
+		e.reportFirstFailure(errors.New(msg), true)
 		return
 	}
 	sess, err := tunnel.BuildClientCrypto(priv, hsRes.ServerPublicKey)
 	if err != nil {
 		logger.Warn("建立加密会话失败: %v", err)
 		conn.Close()
-		e.reportFirstFailure(fmt.Sprintf("建立加密会话失败: %v", err), true)
+		e.reportFirstFailure(fmt.Errorf("建立加密会话失败: %w", err), true)
 		return
 	}
 
@@ -201,5 +202,6 @@ func (e *Engine) onDialError(err error) {
 		}
 		return
 	}
-	e.reportFirstFailure(msg, fatal)
+	// UX 文案作 Error() 前缀，同时 %w 保留拨号哨兵供 errors.Is
+	e.reportFirstFailure(fmt.Errorf("%s: %w", msg, err), fatal)
 }

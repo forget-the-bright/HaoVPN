@@ -3,6 +3,8 @@ package probedefense
 import (
 	"encoding/binary"
 	"strings"
+
+	"haovpn/internal/dialerr"
 )
 
 // ClassifyTLSError 将 TLS/读错误映射为 signature。
@@ -14,7 +16,7 @@ func ClassifyTLSError(err error) string {
 	switch {
 	case strings.Contains(msg, "sslv2"):
 		return SigSSLv2
-	case strings.Contains(msg, "first record does not look like a tls"):
+	case dialerr.IsTLSBadRecordMsg(err):
 		return SigTLSBadRecord
 	case strings.Contains(msg, "no cipher suite"):
 		return SigTLSCipherMismatch

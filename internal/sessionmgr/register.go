@@ -11,6 +11,7 @@ import (
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
+	"haovpn/internal/safeutil"
 )
 
 // RegisterVPN 注册账号 VPN 会话（每账号最多 1 条连接）；peer 可为空。
@@ -133,8 +134,8 @@ func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketC
 	m.mu.Unlock()
 
 	if oldConn != nil {
-		// 异步关闭，避免在 readLoop/握手栈内同步 Close 引发重入或死锁。
-		go oldConn.Close()
+		// 异步关闭，避免在 readLoop/握手栈内同步 Close 引发重入或死锁；GoSafe 防 Close panic。
+		safeutil.GoSafe("sessionmgr-close-old", func() { _ = oldConn.Close() })
 	}
 
 	now := time.Now()

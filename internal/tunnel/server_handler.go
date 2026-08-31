@@ -1,8 +1,6 @@
 package tunnel
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 	"sync"
 
@@ -37,6 +35,10 @@ import (
 //   KeyEnc — 账号私钥解密；密码登录成功时解密并下发 client_private_key。
 //
 // 线程安全：每条 transport.Conn 独立 Attach；字段在 Attach 后只读，依赖下游并发安全。
+// 握手编排文件簇：
+//   server_handshake_auth.go — 阶段 1～3（源 IP / 鉴权 / 私钥）；
+//   server_handshake_session.go — 阶段 4～7（IP / 策略 / 注册 / OK / 转发）；
+//   handshake_reject.go — 拒绝 + ProbeRecorder。
 type ServerHandler struct {
 	Store                     *persist.Store
 	SessMgr                   *sessionmgr.Manager
@@ -54,9 +56,11 @@ type ServerHandler struct {
 	KeyEnc                    *security.KeyEnc
 }
 
-// ProbeRecorder 握手拒绝时的探针记录窄接口（避免 tunnel→probedefense 硬依赖循环）。
+// ProbeRecorder 握手拒绝时的探针记录窄接口（避免 tunnel→probedefense 硬依赖）。
+//
+// 实现方（如 probedefense.Guard）内部做 SplitRemoteAddr + ClassifyHandshakeReject + RecordReject。
 type ProbeRecorder interface {
-	RecordReject(ip, port, phase, signature, detail string)
+	OnHandshakeReject(remoteAddr string, err error)
 }
 
 // Attach 绑定到 transport 连接：首帧握手，之后转发 IP 包。
@@ -73,175 +77,18 @@ func (h *ServerHandler) Attach(conn *transport.Conn) {
 	})
 }
 
-// doHandshake 校验身份、分配 IP、下发策略与（密码登录时）客户端私钥。
+// doHandshake 编排握手全流程：鉴权阶段成功后再进会话阶段。
 //
 // 参数：conn — 当前 TLS 连接；data — 首帧握手 JSON 载荷。
-// 副作用：可能写 sessionmgr、发 handshake_ok、切换 onData 为数据转发；失败时 rejectHandshake。
+// 副作用：可能写 sessionmgr、发 handshake_ok、切换 onData；失败时 rejectHandshake。
 // 并发：每条连接 once 调用；与 Attach 同 goroutine（transport readLoop 回调）。
+// 为何拆阶段：降低单函数耦合，阅读时按 auth → session 文件定位。
 func (h *ServerHandler) doHandshake(conn *transport.Conn, data []byte) {
-	// --- 阶段 1：来源 IP 白名单与请求解析 ---
-	if err := CheckTunnelSourceIP(conn.RemoteAddr(), h.AllowedSourceIPs); err != nil {
-		h.rejectHandshake(conn, err)
+	authOK, ok := h.handshakeAuth(conn, data)
+	if !ok {
 		return
 	}
-	req, err := ParseHandshakeRequest(data)
-	if err != nil {
-		h.rejectHandshake(conn, err)
-		return
-	}
-
-	remoteIP := netutil.HostFromAddr(conn.RemoteAddr())
-
-	// --- 阶段 2：账号密码鉴权（拒绝废弃公钥模式） ---
-	if strings.TrimSpace(req.Username) == "" {
-		if strings.TrimSpace(req.PublicKey) != "" {
-			logger.Warn("握手拒绝已废弃的公钥模式 remote=%s", remoteIP)
-			h.rejectHandshake(conn, auth.ErrUsePasswordLogin)
-			return
-		}
-		h.rejectHandshake(conn, auth.ErrInvalidHandshake)
-		return
-	}
-	if h.Auth == nil {
-		h.rejectHandshake(conn, errors.New("服务端未启用账号密码鉴权"))
-		return
-	}
-	if req.Password == "" {
-		h.rejectHandshake(conn, auth.ErrPasswordRequired)
-		return
-	}
-	user, err := h.Auth.VerifyTunnelLogin(req.Username, req.Password, remoteIP)
-	if err != nil {
-		h.rejectHandshake(conn, err)
-		return
-	}
-
-	// --- 阶段 3：解密客户端私钥（默认拒绝库内明文，防 DB 泄露即得线密钥） ---
-	var clientPriv string
-	if h.KeyEnc != nil && user.PrivateKeyEnc != "" && security.IsEncryptedPrivateKey(user.PrivateKeyEnc) {
-		plain, err := h.KeyEnc.OpenPrivateKey(user.PrivateKeyEnc)
-		if err != nil {
-			h.rejectHandshake(conn, errors.New("解密账号密钥失败"))
-			return
-		}
-		clientPriv = plain
-	} else if user.PrivateKeyEnc != "" && !security.IsEncryptedPrivateKey(user.PrivateKeyEnc) {
-		if !h.AllowPlaintextPrivateKeys {
-			logger.Warn("拒绝明文私钥账号 user=%s（设 security.allow_plaintext_private_keys=true 仅作兼容）", user.Username)
-			h.rejectHandshake(conn, errors.New("账号密钥须加密存储"))
-			return
-		}
-		logger.Warn("兼容模式使用明文私钥 user=%s（生产应关闭 allow_plaintext_private_keys）", user.Username)
-		clientPriv = user.PrivateKeyEnc
-	} else {
-		h.rejectHandshake(conn, errors.New("账号密钥不可用"))
-		return
-	}
-
-	// --- 阶段 4：会话准入校验与 VPN IP 分配 ---
-	if err := h.SessMgr.ValidateVPNAccess(user); err != nil {
-		h.rejectHandshake(conn, err)
-		return
-	}
-
-	vpnIP, err := h.VPN.EnsureVPNIP(user)
-	if err != nil {
-		h.rejectHandshake(conn, fmt.Errorf("VPN IP 分配失败: %w", err))
-		return
-	}
-	user.VPNIP = vpnIP
-	// 先写本地网段注册表，再解析策略（托管路由有效性依赖 registry）
-	h.applyLANRegistry(user.ID, vpnIP, req)
-
-	clientPol, err := h.VPN.ResolveClientPolicy(user)
-	if err != nil {
-		h.rejectHandshake(conn, fmt.Errorf("解析客户端策略失败: %w", err))
-		return
-	}
-	allowed := clientPol.AllowedIPs
-	peerReg := sessionmgr.PeerReg{
-		PeerAccessIDs: clientPol.PeerAccessIDs,
-		ViaUserIDs:    clientPol.ViaUserIDs,
-	}
-	for _, mr := range clientPol.ManagedRoutes {
-		if mr.Stale {
-			continue // 会话 ViaRoutes 仅含有效托管路由；hub 不向失效 via 转发
-		}
-		peerReg.ViaRoutes = append(peerReg.ViaRoutes, sessionmgr.ViaRouteSpec{
-			DestCIDR: mr.DestCIDR, ViaUserID: mr.ViaUserID,
-		})
-	}
-
-	// --- 阶段 5：建立加密会话并注册在线状态 ---
-	cryptoSess, err := crypto.NewSession(h.ServerKP.PrivateKey, user.PublicKey)
-	if err != nil {
-		h.rejectHandshake(conn, errors.New("加密会话建立失败"))
-		return
-	}
-
-	userID := user.ID
-	if err := h.SessMgr.RegisterVPN(user, allowed, conn, cryptoSess, conn.RemoteAddr(), peerReg); err != nil {
-		// 保留底层哨兵（如 ErrAccountAlreadyOnline）供 classifyHandshakeReject / errors.Is
-		h.rejectHandshake(conn, fmt.Errorf("注册会话失败: %w", err))
-		return
-	}
-	// Register 之后再绑 OnClose；若注册瞬间连接已死则立刻摘掉，避免僵尸会话。
-	conn.SetOnClose(func(error) {
-		h.SessMgr.RemoveIfConn(userID, conn)
-	})
-	if conn.State() != transport.StateConnected {
-		h.SessMgr.RemoveIfConn(userID, conn)
-		logger.Warn("注册后连接已断开，放弃会话 user_id=%d", userID)
-		return
-	}
-
-	// --- 阶段 6：下发握手成功应答与策略 ---
-	mtu := h.MTU
-	if mtu <= 0 {
-		mtu = netutil.ResolveMTU(h.MTU)
-	}
-	policy := HandshakePolicy{
-		VPNIP:      vpnIP,
-		GatewayIP:  h.GatewayIP,
-		AllowedIPs: allowed,
-		DNSServers: h.resolveDNSServers(),
-		MTU:        mtu,
-		IPMode:     user.IPMode,
-		PolicyVer:  user.PolicyVer,
-		VPNSubnet:  strings.TrimSpace(h.VPNSubnet),
-	}
-	for _, mr := range clientPol.ManagedRoutes {
-		policy.ManagedRoutes = append(policy.ManagedRoutes, ManagedRoute{
-			Dest: mr.DestCIDR, ViaIP: mr.ViaIP, ViaUserID: mr.ViaUserID,
-			ViaUsername: mr.ViaUsername, Stale: mr.Stale,
-		})
-	}
-	okBytes, encErr := EncodeHandshakeOKWithKey(h.ServerKP.PublicKey, clientPriv, policy)
-	if encErr != nil {
-		h.SessMgr.RemoveIfConn(userID, conn)
-		logger.Warn("编码握手成功帧失败，已回滚会话 user_id=%d: %v", userID, encErr)
-		h.rejectHandshake(conn, errors.New("握手应答编码失败"))
-		return
-	}
-	if sendErr := conn.SendRaw(transport.FrameTypeHandshake, okBytes); sendErr != nil {
-		h.SessMgr.RemoveIfConn(userID, conn)
-		logger.Warn("发送握手成功帧失败，已回滚会话 user_id=%d: %v", userID, sendErr)
-		conn.Close()
-		return
-	}
-
-	// --- 阶段 7：切换为 IP 包双向转发 ---
-	conn.SetOnData(func(payload []byte) {
-		_ = h.SessMgr.HandleInbound(userID, payload, func(pkt []byte) error {
-			if h.TunDev == nil {
-				logger.Warn("TUN 未就绪，丢弃入站包 user_id=%d len=%d", userID, len(pkt))
-				return nil
-			}
-			_, err := h.TunDev.Write(pkt)
-			return err
-		})
-	})
-	logger.Info("隧道握手完成 user=%s id=%d vpn_ip=%s policy_ver=%d", user.Username, user.ID, vpnIP, user.PolicyVer)
+	h.handshakeSession(conn, authOK)
 }
 
 // applyLANRegistry 按握手 local_lans 写入或清空临时注册表。

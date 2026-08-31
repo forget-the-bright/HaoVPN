@@ -32,14 +32,15 @@
 领域层        vpnaccount / sessionmgr / auth / probedefense
 协议层        api / tunnel / transport / tun / netstack
 持久化        persist / logstore / audit
-叶子工具      netutil / fileutil / timeutil / paginate / safeutil / logger / security / config / readmodel / platform / …
+叶子工具      netutil / fileutil / timeutil / paginate / safeutil / dialerr / autherr / logger / security / config / readmodel / platform / …
 ```
 
 **依赖底线**（详见 architecture § 依赖规则）：
 
-- 叶子包（`netutil`、`fileutil`、`safeutil`…）**不得** import `api` / `serverapp` / `sessionmgr`
-- `serverapp` **不得** import `api`（启动审计走 `audit/public_bind.go`）
+- 叶子包（`netutil`、`fileutil`、`safeutil`、`dialerr`…）**不得** import `api` / `serverapp` / `sessionmgr`
+- `serverapp` **可以** import `api` 以启动 HTTP（`boot_api.go`）；公网绑定等**审计文案**走 `audit/public_bind.go`，勿把审计逻辑塞回 api
 - `clientgui` **不得** import `tunnel`（展示 DTO 走 `clientapp.ManagedRouteView`）
+- `tunnel` **不得** import `probedefense`；`autherr` **不得** import `transport`
 
 ---
 
@@ -61,7 +62,7 @@
 | `engine_connect.go` / `engine_lifecycle.go` | 拨号、重连、握手 |
 | `runtime*.go` | TUN、路由、策略增量 apply |
 | `route_view.go` | **`ManagedRouteView`** 展示 DTO（供 GUI 托盘） |
-| `fatal_auth.go` / `dial_errors.go` | 封禁 / 鉴权致命错误 UX |
+| `fatal_auth.go` / `dial_errors.go` | 封禁 / 鉴权致命错误 UX（直接 `autherr`/`dialerr`，无薄 Is* re-export） |
 
 ### clientgui — 桌面托盘（Fyne）
 
@@ -119,13 +120,15 @@ flowchart LR
 | `probedefense/signatures.go` | 特征码常量（与 labels 同源） |
 | `probedefense/auto_ban.go` | 窗口计数自动封禁 |
 | `probedefense/exempt.go` | 封禁豁免合并 |
-| `transport/probe_banner.go` | TLS 前 `HAOVPN:IP_BANNED` / `SOURCE_DENIED`；短 peek；`ErrPlaintextBeforeTLS` |
+| `transport/probe_banner.go` | TLS 前 banner I/O（哨兵/常量在 `dialerr`） |
+| `dialerr/` | `ErrIPBanned` / `ErrSourceDenied` / `ErrPlaintextBeforeTLS` / banner 常量 |
 | `transport/server.go` | Accept → CheckAccept → `WriteRejectBanner` → Close |
 | `clientapp/dial_errors.go` | `FormatDialError` 中文提示 |
 | `clientapp/engine_connect.go` | `onDialError`：致命拨号错误置 Idle |
 | `persist/security_store.go` | security_events / ip_blocks / exempt SQL |
 | `probedefense/manual_ban.go` | ManualBanStore 手动封禁（须过豁免） |
-| `autherr/classify.go` | 握手/拨号错误统一分类 |
+| `autherr/classify.go` | 握手/拨号错误统一分类 + 线上 code |
+| `tunnel/handshake_reject.go` | `OnHandshakeReject`（不 import probedefense） |
 | `audit/public_bind.go` / `tun_listen.go` | 公网绑定 / TUN 管理口审计 |
 
 **配置语义**（`enabled` / `record_events` / `auto_ban`）：见 [security-hardening.md §4.2](security-hardening.md#42-探针防御与安全事件)。
@@ -136,8 +139,8 @@ flowchart LR
 
 | 包 | 职责 | 关键文件 |
 |----|------|----------|
-| **transport** | TLS-TCP 帧、重连、Probe 钩子 | `server.go`, `conn_loops.go`, `probe_banner.go` |
-| **tunnel** | 握手、IP 转发 | `server_handler.go`, `handshake_reject.go`, `source_ip.go` |
+| **transport** | TLS-TCP 帧、重连、Probe 钩子 | `server.go`, `transport.go`, `conn_loops.go`, `probe_banner.go`, `reconnect.go`（生产路径 GoSafe） |
+| **tunnel** | 握手、IP 转发 | `server_handler.go`, `server_handshake_auth.go`, `server_handshake_session.go`, `handshake_reject.go` |
 | **sessionmgr** | 在线会话、报文路由、横向隔离 | `register.go`, `route*.go` |
 | **tun** / **netstack** | TUN 设备、路由/DNS/NAT/杀开关 | 平台分文件 |
 | **vpnaccount** | 开户、策略、peer 应用生效 | `peer_apply.go`, `peer_policy.go` |
@@ -146,17 +149,18 @@ flowchart LR
 
 ## 7. 叶子工具包（高复用）
 
-| 包 | 何时用 |
-|----|--------|
-| **autherr** | 握手/拨号错误分类 | `classify.go` |
-| **netutil** | CIDR/IP/监听/源白名单 | `validate_ip.go`, `source_ip.go`, `CheckSourceIPAllowed` |
-| **fileutil** | 原子写、目录、ACL、`RestrictToAdminsOnly` |
-| **timeutil** | SQLite UTC、RFC3339、配置秒 → Duration |
-| **paginate** | API limit/offset、bool 查询 |
-| **safeutil** | `GoSafe`、`RetryN`、Ticker |
-| **logger** | 分级日志 + `RedactSensitive` |
-| **readmodel** | API 读模型 DTO（与 persist 解耦） |
-| **config** | YAML 加载/默认值/校验 |
+| 包 | 何时用 | 关键文件 |
+|----|--------|----------|
+| **autherr** | 握手/拨号错误分类 + code 映射 | `classify.go` |
+| **dialerr** | 拨号哨兵与 banner 常量（叶子；Error 中文） | `errors.go`, `classify.go` |
+| **netutil** | CIDR/IP/监听/源白名单 | `validate_ip.go`, `source_ip.go`（wrap dialerr） |
+| **fileutil** | 原子写、目录、ACL、`RestrictToAdminsOnly` | `atomic.go`, `fs.go`, `perm_*.go` |
+| **timeutil** | SQLite UTC、RFC3339、配置秒 → Duration | `sqlite.go`, `duration.go` |
+| **paginate** | API limit/offset、bool 查询 | `parse.go`, `clamp.go` |
+| **safeutil** | `GoSafe`、`RetryN`、`ExpBackoff`、Ticker | `goroutine.go`, `retry.go` |
+| **logger** | 分级日志 + `RedactSensitive` | `redact.go` |
+| **readmodel** | API 读模型 DTO（与 persist 解耦） | `peers.go` 等 |
+| **config** | YAML 加载/默认值/校验 | `defaults.go`, `server.go`, `client.go` |
 
 ---
 
@@ -173,4 +177,4 @@ flowchart LR
 
 ---
 
-*第十九轮（2026-08-31）：autherr、api.listen_tun、TLS Accept 探针、ManualBanStore、validateWebSession、HSTS。*
+*第二十一轮（2026-08-31）：删薄 re-export；GoSafe 收口；dialerr/autherr 去重；doHandshake 文件簇。*

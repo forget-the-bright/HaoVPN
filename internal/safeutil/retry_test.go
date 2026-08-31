@@ -28,3 +28,16 @@ func TestRetryNExhausts(t *testing.T) {
 		t.Fatal("应失败")
 	}
 }
+
+func TestExpBackoff(t *testing.T) {
+	if got := safeutil.ExpBackoff(time.Second, 8*time.Second); got != 2*time.Second {
+		t.Fatalf("got %v", got)
+	}
+	if got := safeutil.ExpBackoff(8*time.Second, 8*time.Second); got != 8*time.Second {
+		t.Fatalf("cap: got %v", got)
+	}
+	if got := safeutil.ExpBackoff(0, 5*time.Second); got != 5*time.Second {
+		t.Fatalf("zero current: got %v", got)
+	}
+}
+

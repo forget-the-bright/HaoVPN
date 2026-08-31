@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"haovpn/internal/auth"
+	"haovpn/internal/dialerr"
 	"haovpn/internal/probedefense"
 )
 
@@ -20,7 +21,7 @@ func TestClassifyHandshakeReject(t *testing.T) {
 	if got := probedefense.ClassifyHandshakeReject(wrapped); got != probedefense.SigAccountOnline {
 		t.Fatalf("wrapped online: %s", got)
 	}
-	if got := probedefense.ClassifyHandshakeReject(probedefense.ErrSourceDenied); got != probedefense.SigSourceDeny {
+	if got := probedefense.ClassifyHandshakeReject(dialerr.ErrSourceDenied); got != probedefense.SigSourceDeny {
 		t.Fatalf("source: %s", got)
 	}
 	if got := probedefense.ClassifyHandshakeReject(errors.New("用户名或密码错误")); got != probedefense.SigAuthFailed {

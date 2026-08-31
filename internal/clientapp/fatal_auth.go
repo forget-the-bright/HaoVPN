@@ -27,14 +27,11 @@ func IsFatalHandshakeError(err error) bool {
 	return autherr.IsFatalAuth(err)
 }
 
-// IsAccountAlreadyOnline 判断是否为「同账号已在其他设备在线」类错误。
-func IsAccountAlreadyOnline(err error) bool {
-	return autherr.IsAccountAlreadyOnline(err)
-}
-
 // ShouldFailFastHandshake 结合 Engine 有限重试，决定是否因本次握手失败停止重连。
+//
+// 「账号已在线」判定直接走 autherr.IsAccountAlreadyOnline（禁止本包薄 re-export）。
 func (e *Engine) ShouldFailFastHandshake(err error) bool {
-	if IsAccountAlreadyOnline(err) {
+	if autherr.IsAccountAlreadyOnline(err) {
 		// 曾鉴权成功，或已在重连态：持续重试，等待 grace/半死顶替或旧会话释放。
 		if e.hasAuthOKOnce() || e.isReconnecting() {
 			logger.Info("账号已在线（曾连接/重连中），继续自动重连等待会话顶替…")

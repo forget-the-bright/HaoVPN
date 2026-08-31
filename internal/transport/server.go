@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/safeutil"
 )
 
 // Server TLS 入站监听器：TCP Accept → 探针检查 → TLS 握手 → 交给 onConn。
@@ -24,7 +25,8 @@ func ListenTLS(addr string, tlsCfg *tls.Config, cfg Config, onConn func(*Conn)) 
 		return nil, err
 	}
 	s := &Server{cfg: cfg, listener: ln, tlsCfg: tlsCfg, onConn: onConn}
-	go s.acceptLoop()
+	// GoSafe：Accept 循环 panic 不得拖垮进程；单连接处理同理。
+	safeutil.GoSafe("transport-accept", s.acceptLoop)
 	logger.Info("transport listening on %s", addr)
 	return s, nil
 }
@@ -36,7 +38,7 @@ func (s *Server) acceptLoop() {
 			logger.Info("transport listener closed: %v", err)
 			return
 		}
-		go s.handleConn(raw)
+		safeutil.GoSafe("transport-handle", func() { s.handleConn(raw) })
 	}
 }
 

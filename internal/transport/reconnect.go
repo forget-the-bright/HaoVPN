@@ -3,9 +3,12 @@ package transport
 import (
 	"crypto/tls"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"haovpn/internal/dialerr"
 	"haovpn/internal/logger"
+	"haovpn/internal/safeutil"
 )
 
 // ReconnectClient 客户端自动重连管理器：指数退避 Dial，连接成功后回调 onConnect。
@@ -21,8 +24,9 @@ import (
 //   conn — 当前活跃 *Conn；重连间隙或 Stop 后为 nil。
 //   stop — Stop 时 close，通知 loop 退出。
 //   once — 保证 stop channel 只关闭一次。
+//   started — 防双 Start（CAS）；重复 Start 打 Warn 并忽略。
 //
-// 线程安全：Start/Stop/Conn 可从任意 goroutine 调用；loop 在独立 goroutine 运行。
+// 线程安全：Start/Stop/Conn 可从任意 goroutine 调用；loop 经 safeutil.GoSafe 运行。
 type ReconnectClient struct {
 	cfg         Config
 	addr        string
@@ -34,6 +38,7 @@ type ReconnectClient struct {
 	conn        *Conn
 	stop        chan struct{}
 	once        sync.Once
+	started     atomic.Bool
 }
 
 // NewReconnectClient 创建带自动重连的客户端传输管理器。
@@ -41,7 +46,7 @@ type ReconnectClient struct {
 // 参数：addr — 服务端地址；tlsCfg — 非 nil；cfg — 退避/拨号参数；onData/onConnect 可为 nil。
 // 返回：*ReconnectClient 须调用 Start 启动 loop；未 Start 前 Conn 恒为 nil。
 // 副作用：无；不发起网络连接。
-// 并发：返回后单实例仅应 Start 一次。
+// 并发：返回后单实例仅应 Start 一次（重复 Start 被忽略）。
 func NewReconnectClient(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onConnect func(*Conn)) *ReconnectClient {
 	return &ReconnectClient{
 		cfg:       cfg,
@@ -58,12 +63,16 @@ func (r *ReconnectClient) SetOnDialError(fn func(error)) {
 	r.onDialError = fn
 }
 
-// Start 在后台 goroutine 启动重连循环。
+// Start 在后台 goroutine 启动重连循环（GoSafe；防双 Start）。
 //
 // 副作用：启动 loop goroutine，持续 Dial 直至 Stop。
-// 并发：重复调用会启动多个 loop（调用方应避免）；与 Stop 互斥使用。
+// 并发：重复调用打 Warn 并忽略，不会启动第二个 loop。
 func (r *ReconnectClient) Start() {
-	go r.loop()
+	if !r.started.CompareAndSwap(false, true) {
+		logger.Warn("ReconnectClient.Start 重复调用已忽略 addr=%s", r.addr)
+		return
+	}
+	safeutil.GoSafe("transport-reconnect", r.loop)
 }
 
 func (r *ReconnectClient) loop() {
@@ -78,25 +87,22 @@ func (r *ReconnectClient) loop() {
 		}
 		// --- 阶段 1：拨号与 TLS 握手 ---
 		conn, err := Dial(r.addr, r.tlsCfg, r.cfg, r.onData, func(err error) {
-			logger.Info("transport disconnected from %s", r.addr)
+			logger.Info("传输已断开 addr=%s", r.addr)
 		})
 		if err != nil {
-			if IsFatalDialError(err) {
-				logger.Warn("reconnect stopped (fatal dial): %v", err)
+			if dialerr.IsFatalDialError(err) {
+				logger.Warn("重连已停止（致命拨号错误）addr=%s: %v", r.addr, err)
 				if r.onDialError != nil {
 					r.onDialError(err)
 				}
 				return
 			}
-			logger.Warn("reconnect failed: %v, retry in %s dial_timeout=%s backoff=%s", err, backoff, dialTO, backoff)
+			logger.Warn("重连失败，将退避重试 addr=%s err=%v dial_timeout=%s backoff=%s", r.addr, err, dialTO, backoff)
 			if r.onDialError != nil {
 				r.onDialError(err)
 			}
 			time.Sleep(backoff)
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
+			backoff = safeutil.ExpBackoff(backoff, maxBackoff)
 			continue
 		}
 		backoff = r.cfg.EffectiveReconnectInitial()
@@ -107,19 +113,21 @@ func (r *ReconnectClient) loop() {
 		if r.onConnect != nil {
 			r.onConnect(conn)
 		}
-		// --- 阶段 3：等待连接断开 ---
-		for conn.State() != StateClosed && conn.State() != StateDisconnected {
-			time.Sleep(100 * time.Millisecond)
-			select {
-			case <-r.stop:
-				conn.Close()
-				return
-			default:
-			}
+		// --- 阶段 3：等待连接断开（Conn.Done，禁止 100ms 空转）---
+		select {
+		case <-r.stop:
+			conn.Close()
+			return
+		case <-conn.Done():
 		}
+		r.mu.Lock()
+		if r.conn == conn {
+			r.conn = nil
+		}
+		r.mu.Unlock()
 		// --- 阶段 4：断线后短暂停顿再重拨 ---
 		pause := AfterDisconnectPause()
-		logger.Info("will reconnect to %s in %s (after disconnect) dial_timeout=%s", r.addr, pause, dialTO)
+		logger.Info("将重连 addr=%s pause=%s dial_timeout=%s", r.addr, pause, dialTO)
 		time.Sleep(pause)
 		backoff = r.cfg.EffectiveReconnectInitial()
 	}

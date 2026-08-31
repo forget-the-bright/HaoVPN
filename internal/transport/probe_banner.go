@@ -6,16 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"time"
 
+	"haovpn/internal/dialerr"
 	"haovpn/internal/logger"
-)
-
-// TLS 前明文拒绝码（须以 \r\n 结尾；客户端 Peek 见首字节 'H' 后整行解析）。
-const (
-	BannerIPBanned     = "HAOVPN:IP_BANNED\r\n"
-	BannerSourceDenied = "HAOVPN:SOURCE_DENIED\r\n"
 )
 
 // bannerReadTimeout 客户端等待 TLS 前拒绝码的总时长。
@@ -26,18 +20,6 @@ const bannerReadTimeout = 250 * time.Millisecond
 
 // bannerPeekSlice 单次 Peek 等待上限。
 const bannerPeekSlice = 50 * time.Millisecond
-
-// 拨号阶段哨兵错误（供 ReconnectClient / autherr / FormatDialError 识别）。
-var (
-	// ErrIPBanned 对端因 ip_blocks 在 TLS 前拒绝（明确读到 HAOVPN:IP_BANNED）。
-	ErrIPBanned = errors.New("ip banned by server")
-	// ErrSourceDenied 对端因 tunnel_allowed_source_ips 在 TLS 前拒绝。
-	ErrSourceDenied = errors.New("source ip denied by server")
-	// ErrPlaintextBeforeTLS TLS 层读到非握手明文（晚到的封禁 banner、或连错非 HaoVPN 端口）。
-	ErrPlaintextBeforeTLS = errors.New("server sent plaintext before tls")
-	// ErrClosedBeforeTLS 对端在 TLS 前关闭且未发可识别 banner（网络闪断或旧版仅 Close）。
-	ErrClosedBeforeTLS = errors.New("connection closed before tls")
-)
 
 // bufferedConn 将 bufio 已预读字节透传给后续 TLS 握手，避免丢失首包。
 type bufferedConn struct {
@@ -52,6 +34,7 @@ func (c *bufferedConn) Read(p []byte) (int, error) {
 // readProbeRejectBanner TCP 连接后短暂探测 TLS 前明文拒绝码。
 //
 // 无 banner 时返回带缓冲的 conn 供 TLS 使用；不得长时间阻塞（见 bannerReadTimeout）。
+// 哨兵与 banner 常量定义在 dialerr（叶子），本函数只做 I/O。
 func readProbeRejectBanner(conn net.Conn) (net.Conn, error) {
 	br := bufio.NewReader(conn)
 	deadline := time.Now().Add(bannerReadTimeout)
@@ -74,7 +57,7 @@ func readProbeRejectBanner(conn net.Conn) (net.Conn, error) {
 				_ = conn.Close()
 				// 无字节的 EOF：可能是闪断或未写 banner 的拒绝，不能当成「已封禁」。
 				logger.Info("tls 前连接关闭（无拒绝码） remote=%v", conn.RemoteAddr())
-				return nil, ErrClosedBeforeTLS
+				return nil, dialerr.ErrClosedBeforeTLS
 			}
 			return &bufferedConn{Conn: conn, r: br}, nil
 		}
@@ -88,14 +71,14 @@ func readProbeRejectBanner(conn net.Conn) (net.Conn, error) {
 			_ = conn.Close()
 			return nil, fmt.Errorf("read server preamble: %w", err)
 		}
-		banErr := classifyRejectBannerLine(line)
+		banErr := dialerr.ClassifyRejectBannerLine(line)
 		_ = conn.Close()
 		return nil, banErr
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	if br.Buffered() > 0 {
 		peek, _ := br.Peek(br.Buffered())
-		if err := classifyRejectBannerBytes(peek); err != nil {
+		if err := dialerr.ClassifyRejectBannerBytes(peek); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
@@ -103,56 +86,9 @@ func readProbeRejectBanner(conn net.Conn) (net.Conn, error) {
 	return &bufferedConn{Conn: conn, r: br}, nil
 }
 
-// classifyRejectBannerLine 解析一行 TLS 前拒绝码。
-func classifyRejectBannerLine(line string) error {
-	s := strings.TrimSpace(line)
-	switch {
-	case strings.HasPrefix(s, "HAOVPN:IP_BANNED"):
-		return ErrIPBanned
-	case strings.HasPrefix(s, "HAOVPN:SOURCE_DENIED"):
-		return ErrSourceDenied
-	default:
-		return fmt.Errorf("unexpected server preamble: %s", s)
-	}
-}
-
-func classifyRejectBannerBytes(b []byte) error {
-	s := strings.TrimSpace(string(b))
-	if strings.HasPrefix(s, "HAOVPN:IP_BANNED") {
-		return ErrIPBanned
-	}
-	if strings.HasPrefix(s, "HAOVPN:SOURCE_DENIED") {
-		return ErrSourceDenied
-	}
-	return nil
-}
-
-// classifyTLSHandshakeErr 将「首包非 TLS」映射为 ErrPlaintextBeforeTLS（不直接断言封禁）。
-//
-// 说明：晚到的 HAOVPN banner、或连到 HTTP/其它端口，都会触发同一 crypto/tls 文案；
-// 调用方应用 FormatDialError 给出「封禁或连错端口」双因提示，仅在明确读到 banner 时用 ErrIPBanned。
-func classifyTLSHandshakeErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "first record does not look like a tls") {
-		return fmt.Errorf("%w: %v", ErrPlaintextBeforeTLS, err)
-	}
-	return err
-}
-
-// IsFatalDialError 拨号/TLS 阶段应停止自动重连的错误（封禁、源拒绝、明文拒绝）。
-func IsFatalDialError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, ErrIPBanned) ||
-		errors.Is(err, ErrSourceDenied) ||
-		errors.Is(err, ErrPlaintextBeforeTLS)
-}
-
 // WriteRejectBanner 服务端在关闭前写出拒绝码；校验写全并打日志。
+//
+// 参数 banner — 通常为 dialerr.BannerIPBanned / BannerSourceDenied。
 func WriteRejectBanner(conn net.Conn, banner string) {
 	if conn == nil || banner == "" {
 		return

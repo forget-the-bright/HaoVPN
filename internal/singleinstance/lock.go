@@ -5,6 +5,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"haovpn/internal/safeutil"
 )
 
 // Lock 持有单实例协调监听；进程退出或 Release 后释放。
@@ -32,7 +34,8 @@ func AcquireClient() (*Lock, error) {
 	}
 	lock := &Lock{listener: ln, stop: make(chan struct{})}
 	lock.wg.Add(1)
-	go lock.acceptLoop()
+	// GoSafe：协调口 Accept 循环 panic 不得拖垮客户端进程。
+	safeutil.GoSafe("singleinstance-accept", lock.acceptLoop)
 	return lock, nil
 }
 

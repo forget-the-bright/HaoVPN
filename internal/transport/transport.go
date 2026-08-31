@@ -9,8 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"haovpn/internal/dialerr"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
+	"haovpn/internal/safeutil"
 )
 
 // Conn 封装 TLS 连接上的分帧、心跳、发送队列与状态机。
@@ -71,7 +73,7 @@ func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onCl
 	raw, err = readProbeRejectBanner(raw)
 	if err != nil {
 		c.setState(StateDisconnected)
-		if errors.Is(err, ErrIPBanned) {
+		if errors.Is(err, dialerr.ErrIPBanned) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
@@ -80,7 +82,7 @@ func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onCl
 	if err := tlsConn.Handshake(); err != nil {
 		raw.Close()
 		c.setState(StateDisconnected)
-		if classified := classifyTLSHandshakeErr(err); errors.Is(classified, ErrPlaintextBeforeTLS) {
+		if classified := dialerr.ClassifyTLSHandshakeErr(err); errors.Is(classified, dialerr.ErrPlaintextBeforeTLS) {
 			// 不直接断言 ErrIPBanned：也可能是连错端口；由 FormatDialError 给出双因提示。
 			logger.Warn("tls 握手读到明文（可能封禁 banner 晚到或非隧道口） addr=%s: %v", addr, err)
 			return nil, classified
@@ -91,9 +93,10 @@ func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onCl
 	c.tls = tlsConn
 	c.setState(StateConnected)
 	c.touchHB()
-	go c.readLoop()
-	go c.writeLoop()
-	go c.heartbeatLoop()
+	// GoSafe：读写/心跳 panic 不得拖垮整个客户端进程。
+	safeutil.GoSafe("transport-read", c.readLoop)
+	safeutil.GoSafe("transport-write", c.writeLoop)
+	safeutil.GoSafe("transport-heartbeat", c.heartbeatLoop)
 	logger.Info("transport connected to %s", addr)
 	return c, nil
 }
@@ -117,9 +120,10 @@ func AcceptConn(tlsConn *tls.Conn, cfg Config, onData func([]byte), onClose func
 	}
 	c.setState(StateConnected)
 	c.touchHB()
-	go c.readLoop()
-	go c.writeLoop()
-	go c.heartbeatLoop()
+	// GoSafe：读写/心跳 panic 不得拖垮整个服务端进程。
+	safeutil.GoSafe("transport-read", c.readLoop)
+	safeutil.GoSafe("transport-write", c.writeLoop)
+	safeutil.GoSafe("transport-heartbeat", c.heartbeatLoop)
 	return c
 }
 
@@ -200,6 +204,13 @@ func (c *Conn) Send(payload []byte) error {
 		return errors.New("not connected")
 	}
 	return c.SendRaw(FrameTypeData, payload)
+}
+
+// Done 在 Close 时关闭；用于等待连接结束（替代轮询 State）。
+//
+// 返回：只读 channel；Close 后可读到零值。未 Close 前阻塞。
+func (c *Conn) Done() <-chan struct{} {
+	return c.closed
 }
 
 // Close 发起优雅关闭：置 Disconnecting、关闭 closed channel、关 TLS、触发 onClose。

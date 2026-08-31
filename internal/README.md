@@ -15,19 +15,25 @@
 | Session Cookie 写入/清除 / 滑动续期 | `api/auth_handlers.go`：`setSessionCookie` / `clearSessionCookie`（Secure/SameSite 对齐）；Touch 重发 |
 | API JSON 成功 / pending_apply / items / JSON 体上限 / 方法守卫 | `api/httputil.go` → `writeOK*`/`writePendingApply`/`writeItems*`/`decodeJSONBody`（1MiB）/`requireMethod` |
 | WebUI CSP / 页面脚本 | CSP `security/tls_policy.go`（`script-src 'self'`；style 仍 unsafe-inline）；`web/static/*.js` |
-| 短时重试（Listen 等） | `safeutil/retry.go`（`RetryN`） |
+| 短时重试（Listen 等） | `safeutil/retry.go`（`RetryN`、`ExpBackoff`）；长生命周期 goroutine `safeutil.GoSafe` |
 | AbsPair / EnsureDir / ACL / 世界可读 | `fileutil/fs.go`、`mkdir.go`、`perm_*.go`（`RestrictToAdminsOnly`、`CheckWorldReadable`） |
 | 广告 LAN 禁 VPN 池重叠 | `netutil.ValidateAdvertisedLANNotForbidden`；握手 `tunnel/server_handler.go` |
 | GUI 开机自启（计划任务/服务） | `autostart/`（Win SCM+计划任务；Linux XDG/systemd；macOS LaunchAgent/Daemon；`gen.go`；`paths_unix.go` AbsPair） |
-| 探针事件 / 封禁 / 豁免 API / WebUI | `api/handler_security_*.go`；`probedefense/guard.go`；`transport/probe_banner.go`（`IP_BANNED`/`SOURCE_DENIED`）；`clientapp/dial_errors.go`；页 `security_probe.*` |
+| 探针事件 / 封禁 / 豁免 API / WebUI | `api/handler_security_*.go`；`probedefense/guard.go`；banner I/O `transport/probe_banner.go`；哨兵 `dialerr/`；UX `clientapp/dial_errors.go`（直接 autherr）；页 `security_probe.*` |
+| 握手/拨号错误分类 | `autherr/classify.go`（`HandshakeCode`/`FromHandshakeCode`/`Is*`）；`clientapp/fatal_auth.go`（直接调 autherr，无薄 Is*）；`probedefense/classify_handshake.go` |
+| 拨号哨兵 / TLS 前 banner 常量 | `dialerr/`（唯一源）；禁止在 transport/autherr/probedefense/tunnel 再定义或薄 re-export 同义哨兵 |
+| 源 IP 白名单共用 | `netutil/source_ip.go`（wrap `dialerr.ErrSourceDenied`）；`tunnel` 握手与 `probedefense.Guard` 直接调用 |
+| 短时重试 / 指数退避 / GoSafe | `safeutil/retry.go`（`RetryN`、`ExpBackoff`）；`safeutil/goroutine.go`（`GoSafe`）；transport/sessionmgr/logstore/singleinstance 生产路径已收口 |
+| TLS 帧 / 重连 | `transport/transport.go`、`server.go`、`reconnect.go`（GoSafe、`Conn.Done`、`ExpBackoff`）、`probe_banner.go` |
+| 握手服务端编排 | `tunnel/server_handler.go` + `server_handshake_auth.go`（1～3）+ `server_handshake_session.go`（4～7）+ `handshake_reject.go` |
 | IP/CIDR 校验 | `netutil/validate_ip.go`（`ValidateIPOrCIDR`）；列表 `ValidateCIDRList` |
 | 管理口 TUN 绑定 / listen_tun | `config/server.go` `api.listen_tun`；`serverapp/boot_api.go`；审计 `audit/tun_listen.go` |
-| 握手/拨号错误分类 | `autherr/classify.go`；`clientapp/fatal_auth.go`；`probedefense/classify_handshake.go` |
+| 握手失败线上 code | `tunnel/handshake.go`；客户端 `client_handshake.go` |
+| 探针握手拒绝（无 tunnel→probedefense） | `tunnel.ProbeRecorder.OnHandshakeReject` → `probedefense.Guard` |
 | 手动封禁（含豁免） | `probedefense/manual_ban.go`（`ManualBanStore`）；API `handler_security_blocks.go` |
 | API 领域错误 → HTTP | `api/httputil.go`（`writeDomainError`、`writeAccountNotFound`）；`persist/peer_access_errors.go` |
 | 鉴权中间件去重 | `api/auth_handlers.go`（`validateWebSession`） |
 | TLS Accept 探针 | `transport/server.go` 握手失败 → `Probe.OnTransportReadError` |
-| 源 IP 白名单共用 | `netutil/source_ip.go`（`CheckSourceIPAllowed`）；`tunnel/source_ip.go` |
 | Session Context | `api/session_context.go`；`requireAuth` 注入后 handler 用 `actorFromRequest` |
 | GUI 托盘路由展示 | `clientapp/route_view.go`（`ManagedRouteView`）；`clientgui/tray_routes.go` |
 | 握手策略合并 | `vpnaccount/peer_policy.go` → `ResolveClientPolicy`；会话 `sessionmgr` ViaRoutes/PeerAccess |
@@ -42,33 +48,29 @@
 | TUN / 路由 / DNS / via | `clientapp/runtime.go`、`runtime_policy.go`、`runtime_routes.go`、`runtime_tun.go`、`via_exit.go`；`netstack/` |
 | SQLite / 托管 / 注册表 | `persist/store.go`、`peer_*.go`、`lan_registry.go`、`users.go`、`query_*.go` |
 | 会话路由 / 横向隔离 | `sessionmgr/route.go`、`route_inbound.go`、`route_lookup.go`、`route_policy.go` |
-| TLS 帧 / 重连 | `transport/transport.go`、`config.go`、`conn_loops.go`、`server.go`、`mtu.go` |
 | 服务端启动阶段 | `serverapp/engine_boot.go` + `boot_*.go` |
 | Windows UAC 提权（含空格路径） | `platform/elevate_windows.go`（`EscapeArg`） |
 | 日志脱敏 | `logger/redact.go` |
 
 ---
 
-## 按包：主要文件（第十九轮）
+## 按包：主要文件（第二十一轮）
 
 | 包 | 文件 | 做什么 |
 |----|------|--------|
-| **autherr** | `classify.go` | 握手/封禁/鉴权错误统一分类 |
-| **probedefense** | `manual_ban.go` / `exempt.go` / `classify_*.go` | 手动封禁、豁免、TLS/握手 signature |
-| **clientapp** | `route_view.go` / `dial_errors.go` / `fatal_auth.go` | GUI 路由 DTO、封禁提示、fatal 判定 |
-| **transport** | `server.go` / `probe_banner.go` / `reconnect.go` | TLS Accept 探针、拒绝 banner、致命拨号停重连 |
-| **api** | `auth_handlers.go` / `httputil.go` / `handler_peers_*.go` | Cookie helpers；decodeJSONBody；HTTP 薄层委托 Applier |
-| **serverapp** | `boot_persist.go` … `boot_api.go` | 启动分阶段；peerDirty 重启 WARN；Listen 用 RetryN |
-| **transport** | `transport.go` 等 | Conn.Close 锁拷贝 onClose |
-| **sessionmgr** | `route_*.go` | viaIndex 重建稳定排序 |
-| **persist** | `peer_access.go` 等 | 互访须已存在 VPN 用户 |
-| **fileutil** | `fs.go` / `mkdir.go` / `perm_*.go` | EnsureDir、AbsPair、RestrictToAdminsOnly、CheckWorldReadable |
-| **safeutil** | `retry.go` | `RetryN` |
-| **netutil** | `slices.go` | `StringSlicesEqualTrimmed` |
+| **dialerr** | `errors.go` / `classify.go` | 拨号哨兵（中文 Error）、banner 常量、共用前缀匹配、FatalDial、TLS bad-record |
+| **autherr** | `classify.go` | 分类 + code；子串表与 Is* 共用；依赖 dialerr，不依赖 transport |
+| **probedefense** | `guard.go`（`OnHandshakeReject`）/ `classify_*.go` | 探针；实现 tunnel.ProbeRecorder；无 ErrSourceDenied re-export |
+| **clientapp** | `dial_errors.go` / `fatal_auth.go` / `engine_*.go` | UX、fatal（直接 autherr）；无薄 Is* |
+| **transport** | `transport.go` / `server.go` / `probe_banner.go` / `reconnect.go` | Conn/Listen GoSafe；banner I/O；重连 Done/ExpBackoff |
+| **tunnel** | `server_handler.go` / `server_handshake_auth.go` / `server_handshake_session.go` / `handshake*.go` | 握手编排文件簇；源 IP 直接 netutil |
+| **netutil** | `source_ip.go` | wrap `dialerr.ErrSourceDenied` |
+| **safeutil** | `goroutine.go` / `retry.go` | `GoSafe`、`RetryN`、`ExpBackoff` |
+| **api** | `auth_handlers.go` / `httputil.go` / `handler_peers_*.go` | Cookie helpers；decodeJSONBody；HTTP 薄层 |
+| **serverapp** | `boot_persist.go` … `boot_api.go` | 启动分阶段；可 import api 启动 HTTP |
+| **fileutil** | `fs.go` / `mkdir.go` / `perm_*.go` | EnsureDir、AbsPair、ACL |
 | **security** | `tls_policy.go` | CSP `script-src 'self'` |
 | **logger** | `redact.go` | Authorization / session= 脱敏 |
-| **credentials** | `windows.go` | 写后 RestrictToAdminsOnly |
-| **platform** | `elevate_windows.go` | UAC EscapeArg |
 | **readmodel** | `peers.go` | Peer 视图 DTO |
 | **autostart** | `logon_*.go` / `service_*.go` / `gen.go` | 跨平台自启 |
 
@@ -84,9 +86,63 @@ clientapp / clientgui / serverapp
     ├── netstack ──► platform
     ├── maintenance
     └── persist + sessionmgr
-netutil / winnet / fileutil / timeutil / paginate / readmodel / security / config / safeutil
+netutil / winnet / fileutil / timeutil / paginate / readmodel / security / config / safeutil / dialerr / autherr
 ```
 
 完整包一览见 [architecture.md § CODEMAP](../docs/architecture.md#internal-包-codemap)。
 
 > 架构轮次变更摘要只写 [docs/dev-log.md](../docs/dev-log.md)，本文件不重复堆「第 N 轮」。
+
+---
+
+## 胖包文件簇（任务导向）
+
+### api/
+
+| 文件簇 | 做什么 |
+|--------|--------|
+| `handler_routes.go` / `handler.go` | 路由注册与 Handler 构造 |
+| `auth_handlers.go` / `session_context.go` | 登录、Cookie、CSRF、Session 注入 |
+| `users_*.go` | 用户 CRUD / VPN PATCH |
+| `handler_peer_*.go` / `handler_lan_*.go` / `handler_peers_*.go` | 托管路由、互访、LAN、dirty/apply |
+| `handler_security_*.go` | 探针事件/封禁/豁免 |
+| `handler_ops.go` / `monitor_handler.go` | health、审计、备份、日志、监控 |
+| `httputil.go` / `formparse.go` | JSON 信封、领域错误、表单解析 |
+
+### persist/
+
+| 文件簇 | 做什么 |
+|--------|--------|
+| `store.go` / `schema.sql` / `migrate_*.go` | 打开库、schema、迁移 |
+| `users.go` / `settings.go` | 用户与设置 |
+| `peer_*.go` / `lan_registry.go` | 托管路由、互访、LAN 注册表 |
+| `security_store.go` | security_events / ip_blocks / exempt |
+| `query_*.go` / `session_store.go` | 列表查询、会话持久化 |
+
+### clientapp/
+
+| 文件簇 | 做什么 |
+|--------|--------|
+| `engine_*.go` | 状态机、连接、生命周期 |
+| `dial_errors.go` / `fatal_auth.go` | 拨号 UX、致命鉴权（autherr+dialerr） |
+| `runtime_*.go` / `via_exit.go` / `policy_diff.go` | TUN/路由/策略数据面 |
+| `credentials.go` / `bootstrap.go` | 凭据与启动 |
+
+### probedefense/
+
+| 文件簇 | 做什么 |
+|--------|--------|
+| `guard.go` | Accept、RecordReject、`OnHandshakeReject` |
+| `classify_*.go` / `signatures.go` / `labels.go` | 特征分类与中文标签 |
+| `auto_ban.go` / `manual_ban.go` / `exempt.go` | 自动/手动封禁与豁免 |
+| `config_from.go` / `ignorable.go` / `errors.go` | 配置映射、可忽略读错误 |
+
+### transport/
+
+| 文件簇 | 做什么 |
+|--------|--------|
+| `transport.go` / `conn_loops.go` / `frame.go` | Conn、读写循环、帧 |
+| `server.go` | ListenTLS、Accept、Probe |
+| `probe_banner.go` | TLS 前 banner I/O（哨兵在 dialerr） |
+| `reconnect.go` | 自动重连（GoSafe、ExpBackoff、Conn.Done） |
+| `config.go` / `mtu.go` | 配置映射、MTU 探测 |

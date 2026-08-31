@@ -25,9 +25,9 @@
 | 探针页点「封禁」控制台 CSP 报错、Network 无请求 | 模板残留 `onclick="banIP()"`，`script-src 'self'` 拦截内联事件 | **升级服务端**（embed 模板+JS）：按钮由 `security_probe.js` 绑定；勿在 HTML 写 `onclick=` |
 | 连接超时 | frp 未通、防火墙拦 8443 | 检查 frp；测 8443 端口 |
 | 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「登录失败次数过多，请稍后再试」——客户端应**停止自动重连**（`autherr.IsFatalAuth`）；WebUI 探针页可见 `auth_failed` |
-| 提示「您的 IP 已被服务端封禁」 | 探针自动/手动封禁且客户端读到 `HAOVPN:IP_BANNED` | 管理台 `/security` 解封或加「封禁豁免」 |
-| 提示「TLS 前返回了明文」且提到封禁/端口 | 晚到的封禁 banner，或连错非 HaoVPN 端口 | 先查 `/security` 封禁；再核对 `server:port` 是否为隧道口 |
-| 提示「不在 … 白名单」 | `tunnel_allowed_source_ips` 未包含当前公网 IP | 改服务端白名单或清空该列表（表示不限制） |
+| 提示「您的 IP 已被服务端封禁」 | 探针封禁且读到 `HAOVPN:IP_BANNED`（`dialerr.ErrIPBanned`） | 管理台 `/security` 解封或加「封禁豁免」 |
+| 提示「TLS 前返回了明文」且提到封禁/端口 | 晚到 banner 或连错端口（`dialerr.ErrPlaintextBeforeTLS`） | 先查 `/security` 封禁；再核对 `server:port` 是否为隧道口 |
+| 提示「不在 … 白名单」 | `HAOVPN:SOURCE_DENIED` / 握手 `code=source_denied` / `tunnel_allowed_source_ips` | 改服务端白名单或清空该列表（表示不限制） |
 | 仍显示 `first record does not look like a TLS handshake` | **旧客户端**未识别 banner/明文哨兵 | **升级客户端**；服务端与客户端建议同版 |
 | 客户端 TLS handshake forcibly closed / 无中文提示 | 旧链路、仅 Close 无 banner、或 `ip_blocks` 命中 | 升级双边客户端+服务端；管理台 `/security` 解封或加豁免；新版应显示中文封禁/明文双因提示 |
 | 提示「该账号已在其他设备在线」 | `session_policy=reject_second` 且旧会话仍在；异公网 IP 第二端；或底层黑洞导致服务端半死会话未释放 | 同公网 IP：`reconnect_grace_sec` 顶替；半死静默约 8～20s 后亦可顶替（须升级服务端）；**曾连通过**的客户端持续重试；首次登录最多约 40 次。异设备先退旧端或改 `kick_previous`。查服务端日志 `grace 顶替` / `拒绝第二端 … same_host= stale_peer=` |
@@ -195,5 +195,5 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 
 ---
 
-*最后更新：2026-08-31 · 封禁 banner 链路加固*
+*最后更新：2026-08-31 · 架构解耦第二十一轮*
 

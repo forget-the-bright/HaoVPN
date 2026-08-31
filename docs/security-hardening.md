@@ -134,12 +134,14 @@ WebUI 探针页预设：1 小时～5 年、永久、自定义（月按 30 天、
 
 | 服务端写出 | 客户端哨兵 | 用户提示要点 |
 |------------|------------|--------------|
-| `HAOVPN:IP_BANNED` | `transport.ErrIPBanned` | 「IP 已被服务端封禁…」；停重连 |
-| `HAOVPN:SOURCE_DENIED` | `transport.ErrSourceDenied` | 不在 `tunnel_allowed_source_ips`；停重连 |
-| （晚到明文 / 非隧道口） | `ErrPlaintextBeforeTLS` | 双因：可能封禁或连错端口；停重连 |
-| 无 banner 仅 Close | `ErrClosedBeforeTLS` | 可重试；勿当成已封禁 |
+| `HAOVPN:IP_BANNED` | `dialerr.ErrIPBanned` | 「IP 已被服务端封禁…」；停重连 |
+| `HAOVPN:SOURCE_DENIED` | `dialerr.ErrSourceDenied` | 不在 `tunnel_allowed_source_ips`；停重连 |
+| （晚到明文 / 非隧道口） | `dialerr.ErrPlaintextBeforeTLS` | 双因：可能封禁或连错端口；停重连 |
+| 无 banner 仅 Close | `dialerr.ErrClosedBeforeTLS` | 可重试；勿当成已封禁 |
 
-实现要点：服务端先 `WriteRejectBanner` 再关连接，记库异步（`safeutil.GoSafe`）；客户端 peek ≈ 250ms（成功路径服务端此时无字节，peek 过长会拖慢每次登录）。代码：`transport/probe_banner.go`、`clientapp/dial_errors.go`、`engine_connect.go`。
+实现要点：服务端先 `WriteRejectBanner` 再关连接，记库异步（`safeutil.GoSafe`）；客户端 peek ≈ 250ms。哨兵定义在 `dialerr/`；I/O 在 `transport/probe_banner.go`；UX 在 `clientapp/dial_errors.go`。
+
+握手失败另有 JSON `handshake_err.code`（`autherr.Code*`）：新客户端用 `FromHandshakeCode` 还原哨兵（`errors.Is`）；旧服务端无 code 时回退文案分类。
 
 #### 特征 signature（英文码 ↔ 中文）
 
@@ -333,4 +335,4 @@ api:
 
 ---
 
-*最后更新：2026-08-30 · 第十七轮（Cookie 滑动、CSP script-src self、Windows ACL、脱敏、peerDirty）*
+*最后更新：2026-08-31 · 架构解耦第二十一轮（薄封装清零 / GoSafe / 握手文件簇）*

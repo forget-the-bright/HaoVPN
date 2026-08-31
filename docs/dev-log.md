@@ -6,6 +6,67 @@
 
 ---
 
+## 2026-08-31 · 架构解耦第二十一轮（薄封装清零 + GoSafe + 文档对齐）
+
+### 问题
+
+- 违反依赖规则 9 的薄 re-export：`clientapp.IsIPBannedDialError` / `IsAccountAlreadyOnline`、`probedefense`/`tunnel` 的 `ErrSourceDenied`、`tunnel.CheckTunnelSourceIP`。
+- 生产路径仍有裸 `go`（transport Conn/Listen、sessionmgr 关旧连接、logstore writer、singleinstance accept）。
+- dialerr banner Line/Bytes 双份前缀；哨兵 Error() 中英文混用；autherr Classify 与 Is* 子串双份维护。
+- `doHandshake` ~165 行混阶段，阅读成本高；过时注释仍写 `classifyHandshakeReject`。
+
+### 修复
+
+- **删薄封装**：调用方直接 `autherr`/`dialerr`/`netutil`；源 IP 测试迁入 `netutil`。
+- **GoSafe 收口**：上述生产路径全部 `safeutil.GoSafe`。
+- **叶子去重**：`matchRejectBannerPrefix`；哨兵中文 Error()；autherr 共用子串表；`ExpBackoff` 测试对齐。
+- **握手文件簇**：`server_handshake_auth.go`（1～3）+ `server_handshake_session.go`（4～7）；`doHandshake` 仅编排。
+- **依赖规则 24～25**：GoSafe 强制；源 IP 禁止薄包装。
+
+### 文档
+
+- architecture CODEMAP/FAQ/第二十一轮要点；internal/README；codebase-guide；security-hardening / troubleshooting / 记忆。
+
+### 验证
+
+- 分步：`go test` 覆盖 dialerr/autherr/netutil/safeutil/transport/tunnel/probedefense/clientapp/sessionmgr/logstore
+- `go test ./...`（`singleinstance` 本机客户端锁占用失败属环境）
+- `.\scripts\build-local.ps1`
+
+---
+
+## 2026-08-31 · 架构解耦第二十轮（公共抽取 + 缺陷清零）
+
+### 问题
+
+- 双 `ErrSourceDenied`（autherr 中文 vs transport 英文）；`autherr → transport` 反向依赖。
+- 握手失败只传 `error` 字符串，客户端 `fmt.Errorf("%s")` 丢掉哨兵，靠中文子串兜底。
+- `netutil.CheckSourceIPAllowed` 注释声称可 `errors.Is`，实际不 wrap；`tunnel` 重复实现。
+- `tunnel` 硬 import `probedefense`（违反 ProbeRecorder 窄接口）。
+- `ReconnectClient` 裸 `go`、100ms 轮询、双 Start 无防护；TLS bad-record 子串两处重复。
+
+### 修复
+
+- **叶子包 `internal/dialerr`**：banner 常量、拨号哨兵、`IsFatalDialError`、`ClassifyTLSHandshakeErr`、`IsTLSBadRecordMsg`。
+- **`autherr`**：只依赖 `auth`+`dialerr`；`HandshakeCode`/`FromHandshakeCode`；`ErrSourceDenied` 与 dialerr 同一枚。
+- **握手 `code`**：`EncodeHandshakeErrCode`；客户端优先还原哨兵；`reportFirstFailure(error)` 保留 wrap。
+- **源白名单**：`CheckSourceIPAllowed` wrap `dialerr.ErrSourceDenied`；`CheckTunnelSourceIP` 一行委托。
+- **`ProbeRecorder.OnHandshakeReject`**：切断 `tunnel→probedefense`。
+- **`safeutil.ExpBackoff`**；`ReconnectClient`：`GoSafe`、CAS 防双 Start、`Conn.Done()` 等待。
+- **clientapp**：拨号 UX 只依赖 autherr+dialerr；`doc.go` 文件簇边界。
+
+### 文档
+
+- architecture CODEMAP/FAQ/依赖规则 21–23；internal/README 胖包文件簇；codebase-guide 修正 serverapp/api 表述；security-hardening / troubleshooting / 记忆。
+
+### 验证
+
+- `go test ./internal/dialerr/... ./internal/autherr/... ./internal/netutil/... ./internal/safeutil/... ./internal/transport/... ./internal/tunnel/... ./internal/probedefense/... ./internal/clientapp/...`
+- `go test ./...`（`singleinstance` 本机客户端锁占用失败，属环境，非回归）
+- `.\scripts\build-local.ps1` 通过
+
+---
+
 ## 2026-08-31 · 封禁 banner 链路加固（误判 / 延迟 / 状态机）
 
 ### 问题
@@ -90,7 +151,7 @@
 
 ---
 
-*最后更新：2026-08-31 · 架构解耦第十九轮*
+*最后更新：2026-08-31 · 架构解耦第二十轮*
 
 ---
 

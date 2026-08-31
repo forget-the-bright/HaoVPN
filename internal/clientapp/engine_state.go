@@ -2,7 +2,6 @@ package clientapp
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -266,10 +265,15 @@ func (e *Engine) stopReconnectOnly() {
 }
 
 // reportFirstFailure 记录失败并通知 WaitConnected（若尚未通知）。
+//
+// 参数 err — 须保留可 errors.Is 的哨兵（禁止仅用 fmt.Errorf("%s", msg) 剥 wrap）。
 // 停重连条件：真正致命错误，或仍处登录 failFast 且尚未鉴权成功。
-func (e *Engine) reportFirstFailure(msg string, fatal bool) {
-	e.setLastError(msg)
-	e.signalFirstResult(fmt.Errorf("%s", msg))
+func (e *Engine) reportFirstFailure(err error, fatal bool) {
+	if err == nil {
+		return
+	}
+	e.setLastError(err.Error())
+	e.signalFirstResult(err)
 	e.mu.Lock()
 	stop := fatal || (e.failFast && !e.authOKOnce)
 	e.mu.Unlock()

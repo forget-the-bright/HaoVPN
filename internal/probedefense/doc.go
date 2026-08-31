@@ -18,6 +18,7 @@
 // 不变量：
 //   - record_events 控制 security_events 写库；enabled 控制 RecordReject 是否参与 auto-ban；
 //   - IsBlocked/手动封禁/Accept 封禁检查不依赖 enabled；
-//   - 源白名单与 tunnel.CheckTunnelSourceIP 共用 netutil.CheckSourceIPAllowed；
-//   - classify_handshake 委托 autherr.Classify 映射 signature。
+//   - 源白名单与 tunnel 握手共用 netutil.CheckSourceIPAllowed（wrap dialerr.ErrSourceDenied）；
+//   - classify_handshake 委托 autherr.Classify 映射 signature；
+//   - OnHandshakeReject 实现 tunnel.ProbeRecorder，避免 tunnel→probedefense。
 package probedefense

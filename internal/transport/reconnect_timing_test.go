@@ -3,6 +3,8 @@ package transport
 import (
 	"testing"
 	"time"
+
+	"haovpn/internal/safeutil"
 )
 
 // TestEffectiveDialTimeoutDefault 未配置时须为 3s（避免旧默认 10s）。
@@ -37,16 +39,13 @@ func TestAfterDisconnectPause(t *testing.T) {
 	}
 }
 
-// TestBackoffCapLogic 模拟失败退避不超过 max。
+// TestBackoffCapLogic 用 safeutil.ExpBackoff 模拟失败退避不超过 max（与 ReconnectClient.loop 一致）。
 func TestBackoffCapLogic(t *testing.T) {
 	cfg := DefaultConfig()
 	backoff := cfg.EffectiveReconnectInitial()
 	max := cfg.EffectiveReconnectMax()
 	for i := 0; i < 10; i++ {
-		backoff *= 2
-		if backoff > max {
-			backoff = max
-		}
+		backoff = safeutil.ExpBackoff(backoff, max)
 	}
 	if backoff != max {
 		t.Fatalf("backoff=%v max=%v", backoff, max)

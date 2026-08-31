@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"haovpn/internal/autherr"
-	"haovpn/internal/transport"
+	"haovpn/internal/dialerr"
 )
 
 // 客户端展示用文案（与 docs/security-hardening.md 封禁提示对齐）。
@@ -17,6 +17,8 @@ const (
 )
 
 // FormatDialError 将拨号/TLS 错误转为用户可读中文（探针封禁、源拒绝等）。
+//
+// 仅依赖 autherr + dialerr，不经 transport 二次分叉。
 func FormatDialError(err error) string {
 	if err == nil {
 		return ""
@@ -26,26 +28,23 @@ func FormatDialError(err error) string {
 		return userMsgIPBanned
 	case autherr.IsSourceDenied(err):
 		return userMsgSourceDenied
-	case errors.Is(err, transport.ErrPlaintextBeforeTLS):
+	case errors.Is(err, dialerr.ErrPlaintextBeforeTLS):
 		return userMsgPlaintextBeforeTLS
-	case errors.Is(err, transport.ErrClosedBeforeTLS):
+	case errors.Is(err, dialerr.ErrClosedBeforeTLS):
 		return userMsgClosedBeforeTLS
 	default:
 		return fmt.Sprintf("无法连接服务器: %v", err)
 	}
 }
 
-// IsIPBannedDialError 是否为服务端封禁导致的连接失败。
-func IsIPBannedDialError(err error) bool {
-	return autherr.IsIPBanned(err)
-}
-
 // IsFatalDialError 拨号阶段应停止重连并提示用户的错误。
+//
+// 组合 dialerr 致命拨号哨兵与 autherr 源拒绝/致命握手；封禁判定请直接用 autherr.IsIPBanned。
 func IsFatalDialError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if transport.IsFatalDialError(err) {
+	if dialerr.IsFatalDialError(err) {
 		return true
 	}
 	return autherr.IsSourceDenied(err) || IsFatalHandshakeError(err)

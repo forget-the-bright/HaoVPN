@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"haovpn/internal/auth"
+	"haovpn/internal/autherr"
 	"haovpn/internal/clientapp"
 	"haovpn/internal/config"
 )
@@ -16,8 +17,8 @@ func TestIsFatalHandshakeError(t *testing.T) {
 	if clientapp.IsFatalHandshakeError(auth.ErrAccountAlreadyOnline) {
 		t.Fatal("account online should not be immediately fatal（有限重试）")
 	}
-	if !clientapp.IsAccountAlreadyOnline(auth.ErrAccountAlreadyOnline) {
-		t.Fatal("IsAccountAlreadyOnline")
+	if !autherr.IsAccountAlreadyOnline(auth.ErrAccountAlreadyOnline) {
+		t.Fatal("autherr.IsAccountAlreadyOnline")
 	}
 	if !clientapp.IsFatalHandshakeError(auth.ErrLoginLocked) {
 		t.Fatal("login locked should be fatal")

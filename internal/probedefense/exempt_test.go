@@ -1,12 +1,14 @@
 package probedefense_test
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
+	"haovpn/internal/dialerr"
+	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
 	"haovpn/internal/probedefense"
-	"haovpn/internal/transport"
 )
 
 // TestImportBanExemptFromYAMLSkipsInvalid 非法 CIDR 跳过导入。
@@ -80,7 +82,7 @@ func TestCheckAcceptBannedBanner(t *testing.T) {
 		t.Fatal(err)
 	}
 	allow, banner := g.CheckAccept(ip + ":1")
-	if allow || banner != transport.BannerIPBanned {
+	if allow || banner != dialerr.BannerIPBanned {
 		t.Fatalf("want banned banner, got allow=%v banner=%q", allow, banner)
 	}
 }
@@ -97,7 +99,27 @@ func TestCheckAcceptSourceDeniedBanner(t *testing.T) {
 	cfg.AllowedSourceIPs = []string{"198.51.100.1"}
 	g := probedefense.New(store, cfg)
 	allow, banner := g.CheckAccept("203.0.113.50:9")
-	if allow || banner != transport.BannerSourceDenied {
+	if allow || banner != dialerr.BannerSourceDenied {
 		t.Fatalf("want source denied banner, got allow=%v banner=%q", allow, banner)
 	}
 }
+
+// TestAllowSourceIPUsesSharedSentinel 白名单拒绝路径与 netutil 共用 dialerr.ErrSourceDenied。
+func TestAllowSourceIPUsesSharedSentinel(t *testing.T) {
+	store, err := persist.Open(filepath.Join(t.TempDir(), "srcsentinel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	cfg := probedefense.DefaultConfig()
+	cfg.AllowedSourceIPs = []string{"198.51.100.1"}
+	g := probedefense.New(store, cfg)
+	if g.AllowSourceIP("203.0.113.50") {
+		t.Fatal("should deny")
+	}
+	err = netutil.CheckSourceIPAllowed("203.0.113.50", cfg.AllowedSourceIPs)
+	if err == nil || !errors.Is(err, dialerr.ErrSourceDenied) {
+		t.Fatalf("shared sentinel: %v", err)
+	}
+}
+

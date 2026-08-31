@@ -71,12 +71,14 @@ type HandshakePolicy struct {
 //   client_private_key — 密码登录时下发的客户端私钥（可选）；仅 TLS 内传输，供客户端本地持久化。
 //   policy — 成功时的运行时策略；失败时为 nil。
 //   error — 失败时的可读错误信息；成功时为空。
+//   code — 失败时的稳定错误码（autherr.Code*）；旧客户端可忽略，新客户端优先用其还原哨兵。
 type HandshakeResponse struct {
 	Type             string           `json:"type"`
 	ServerPublicKey  string           `json:"server_public_key"`
 	ClientPrivateKey string           `json:"client_private_key,omitempty"` // 密码登录时下发，仅 TLS 内传输
 	Policy           *HandshakePolicy `json:"policy,omitempty"`
 	Error            string           `json:"error,omitempty"`
+	Code             string           `json:"code,omitempty"`
 }
 
 // EncodeHandshakeRequest 序列化客户端握手请求（旧：仅公钥，已废弃）。
@@ -153,14 +155,19 @@ func EncodeHandshakeOKWithKey(serverPubKey, clientPrivateKey string, policy Hand
 	return json.Marshal(resp)
 }
 
-// EncodeHandshakeErr 序列化握手失败响应。
+// EncodeHandshakeErr 序列化握手失败响应（仅文案，无 code；兼容旧调用）。
 //
-// 参数：msg — 可读错误信息，写入 error 字段。
-// 返回：{"type":"handshake_err","error":...} JSON；err 为 Marshal 失败。
-// 副作用：无。
-// 并发：rejectHandshake 调用。
+// 新路径请用 EncodeHandshakeErrCode，以便客户端 errors.Is。
 func EncodeHandshakeErr(msg string) ([]byte, error) {
-	resp := HandshakeResponse{Type: "handshake_err", Error: msg}
+	return EncodeHandshakeErrCode("", msg)
+}
+
+// EncodeHandshakeErrCode 序列化带稳定 code 的握手失败响应。
+//
+// 参数：code — autherr.Code*（可空）；msg — 可读中文/英文展示文案。
+// 返回：{"type":"handshake_err","error":...,"code":...} JSON。
+func EncodeHandshakeErrCode(code, msg string) ([]byte, error) {
+	resp := HandshakeResponse{Type: "handshake_err", Error: msg, Code: code}
 	return json.Marshal(resp)
 }
 

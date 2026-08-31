@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"haovpn/internal/autherr"
 	"haovpn/internal/crypto"
 	"haovpn/internal/transport"
 )
@@ -90,7 +91,8 @@ func (c *ClientHandshake) runRaw(conn *transport.Conn, req []byte, timeout time.
 			return
 		}
 		if resp.Type == "handshake_err" {
-			c.err = fmt.Errorf("%s", resp.Error)
+			// 优先用稳定 code 还原哨兵，保留 errors.Is；无 code 时退回文案（兼容旧服务端）。
+			c.err = handshakeErrFromResponse(resp)
 			finish()
 			return
 		}
@@ -124,6 +126,23 @@ func (c *ClientHandshake) runRaw(conn *transport.Conn, req []byte, timeout time.
 		return HandshakeResult{}, fmt.Errorf("握手未完成")
 	}
 	return c.res, nil
+}
+
+// handshakeErrFromResponse 从 handshake_err 应答还原可 errors.Is 的错误。
+//
+// 优先 autherr.FromHandshakeCode；无 code 时用 Error 文案构造（旧服务端兼容）。
+// 有 code 且文案不同时：wrap 哨兵并附带服务端原文，便于日志。
+func handshakeErrFromResponse(resp HandshakeResponse) error {
+	if sent := autherr.FromHandshakeCode(resp.Code); sent != nil {
+		if resp.Error == "" || resp.Error == sent.Error() {
+			return sent
+		}
+		return fmt.Errorf("%s: %w", resp.Error, sent)
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("%s", resp.Error)
+	}
+	return fmt.Errorf("握手失败")
 }
 
 // Run 发送公钥握手并等待应答（默认 10s 超时）。

@@ -11,6 +11,7 @@ import (
 
 	"haovpn/internal/logger"
 	"haovpn/internal/paginate"
+	"haovpn/internal/safeutil"
 	"haovpn/internal/timeutil"
 )
 
@@ -103,7 +104,8 @@ func Open(path string) (*Store, error) {
 		done: make(chan struct{}),
 	}
 	s.wg.Add(1)
-	go s.writerLoop()
+	// GoSafe：异步写库 panic 不得拖垮进程；writerLoop 内 defer wg.Done。
+	safeutil.GoSafe("logstore-writer", s.writerLoop)
 	logger.Info("logstore opened: %s", path)
 	return s, nil
 }

@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"haovpn/internal/dialerr"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
 	"haovpn/internal/safeutil"
-	"haovpn/internal/transport"
 )
 
 // 阶段与动作常量（写入 security_events）。
@@ -143,7 +143,7 @@ func (g *Guard) CheckAccept(remoteAddr string) (allow bool, rejectBanner string)
 		safeutil.GoSafe("probe-ban-hit", func() {
 			g.RecordBanHit(ip, port)
 		})
-		return false, transport.BannerIPBanned
+		return false, dialerr.BannerIPBanned
 	}
 	if len(g.cfg.AllowedSourceIPs) > 0 && !g.AllowSourceIP(ip) {
 		logger.Warn("探针防御拒绝(源白名单) ip=%s port=%s", ip, port)
@@ -151,7 +151,7 @@ func (g *Guard) CheckAccept(remoteAddr string) (allow bool, rejectBanner string)
 		safeutil.GoSafe("probe-source-deny", func() {
 			g.RecordReject(ip, port, PhaseTCPAccept, SigSourceDeny, "不在 tunnel_allowed_source_ips")
 		})
-		return false, transport.BannerSourceDenied
+		return false, dialerr.BannerSourceDenied
 	}
 	return true, ""
 }
@@ -197,6 +197,18 @@ func (g *Guard) RecordBanHit(ip, port string) {
 		logger.Warn("封禁命中计数失败 ip=%s: %v", ip, err)
 	}
 	g.record(ip, port, PhaseBanHit, SigBanned, ActionBannedHit, "")
+}
+
+// OnHandshakeReject 实现 tunnel.ProbeRecorder：握手失败记探针事件。
+//
+// 在 probedefense 内完成分类，使 tunnel 无需 import 本包。
+func (g *Guard) OnHandshakeReject(remoteAddr string, err error) {
+	if g == nil || err == nil {
+		return
+	}
+	ip, port := netutil.SplitRemoteAddr(remoteAddr)
+	sig := ClassifyHandshakeReject(err)
+	g.RecordReject(ip, port, PhaseHandshake, sig, err.Error())
 }
 
 // RecordReject 记录一次探针自动路径拒绝并可能触发自动封禁。

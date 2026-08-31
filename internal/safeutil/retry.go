@@ -29,3 +29,23 @@ func RetryN(attempts int, delay time.Duration, fn func() error) error {
 	}
 	return fmt.Errorf("重试 %d 次仍失败: %w", attempts, last)
 }
+
+// ExpBackoff 将当前退避翻倍并封顶到 max；用于重连等指数退避。
+//
+// 参数：current — 当前等待时长（≤0 时按 max 与 1s 中较小者起步，避免 0）；
+// max — 上限；≤0 时不封顶（仅 *2）。
+// 返回：下一轮应 Sleep 的时长。
+func ExpBackoff(current, max time.Duration) time.Duration {
+	if current <= 0 {
+		if max > 0 {
+			return max
+		}
+		return time.Second
+	}
+	next := current * 2
+	if max > 0 && next > max {
+		return max
+	}
+	return next
+}
+
