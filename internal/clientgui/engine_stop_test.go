@@ -45,3 +45,10 @@ func TestSetGetEngineLocked(t *testing.T) {
 	}
 }
 
+// TestSetEngineOpBusyUINilSafe 无按钮指针时不 panic。
+func TestSetEngineOpBusyUINilSafe(t *testing.T) {
+	u := &uiApp{}
+	u.setEngineOpBusyUI(true)
+	u.setEngineOpBusyUI(false)
+}
+

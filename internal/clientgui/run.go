@@ -1,12 +1,11 @@
 package clientgui
 
 import (
-	"time"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 
 	"haovpn/internal/brand"
+	"haovpn/internal/clientapp"
 	"haovpn/internal/logger"
 	"haovpn/internal/safeutil"
 )
@@ -18,6 +17,8 @@ var AppTheme fyne.Theme
 //
 // elevHint 非空时在登录窗提示须管理员。start_minimized / auto_connect 见 client.yaml gui 段。
 func Run(configPath string, elevHint string) {
+	// 须在 NewWithID 之前：纯 go build 不加载 FyneApp.toml Migrations。
+	applyFyneDoMigration()
 	a := app.NewWithID(brand.GUIAppID)
 	if AppTheme != nil {
 		a.Settings().SetTheme(AppTheme)
@@ -25,6 +26,17 @@ func Run(configPath string, elevHint string) {
 	ui := newUI(a, configPath)
 	ui.ensureConfigLoaded()
 	ui.installTray()
+
+	// 后台预热 Wintun（与拨号/鉴权重叠）；勿 Wait 后再 auto_connect，否则 UI 空等数秒。
+	if ui.cfg != nil {
+		tunName := ui.cfg.Tun.Name
+		safeutil.GoSafe("gui-tun-warmup", func() {
+			// 经 clientapp 门面预热，禁止 GUI 直接 import tun（分层）。
+			if err := clientapp.WarmupTun(tunName); err != nil {
+				logger.Warn("tun_warmup fail name=%s: %v（登录时仍会 Open/Create）", tunName, err)
+			}
+		})
+	}
 
 	minimized := ui.cfg != nil && ui.cfg.GUI.StartMinimized
 	if minimized {
@@ -40,7 +52,7 @@ func Run(configPath string, elevHint string) {
 
 	if ui.cfg != nil && ui.cfg.CanAutoConnect() {
 		safeutil.GoSafe("gui-auto-connect", func() {
-			time.Sleep(300 * time.Millisecond)
+			logger.Info("gui_auto_connect begin warmup_overlap=true")
 			fyne.Do(func() { ui.maybeAutoConnect() })
 		})
 	}

@@ -56,6 +56,25 @@
 | 重连仍每次 `via_exit_setup` / ICS | 旧客户端；或 `local_lans`/`vpn_subnet`/VPN IP 真变了；或走了 Stop/手动重连 | 确认已更新客户端；改配置后首次会重建属正常；GUI「手动重新连接」会全清 |
 | 退出登录 / 手动重连时界面卡住数秒 | 旧版在 UI 线程同步 `Stop`（ICS PowerShell COM 很慢） | **升级客户端**：清理改后台；界面显示「正在断开…」；日志 `gui_engine_stop` / `DisableAllICS elapsed=` |
 | 未配 `local_lans` 仍见 `DisableAllICS` 十余秒 | 旧版空 local_lans 仍无条件关全机 ICS | **升级客户端**：先 `HasICSResidue`；无 `192.168.137.*` 则跳过（日志 Debug `no ICS residue`）；有残留才 `CleanupICSResidue` |
+| 手动重连死循环：`lookup … i/o timeout` 或 `invalid character '\x00'` | Stop 未等旧重连 loop；握手把 Data 当 JSON；先删路由再 RestoreDNS | **升级客户端**：`ReconnectClient.Stop` 等 loop；Handshake/Data 回调分离；Stop 时先 RestoreDNS；手动重连勿 FailFast + DNS settle |
+| 手动重连一次失败就卡住，再点才好 | Stop 后 DNS 窗口 + 误用 `SetFailFast(true)` 首败停 loop | **升级客户端**：手动重连走 `HardRestart`（不 FailFast；登录页仍 FailFast）；日志 `reconnect_dns_settle` / `hard_restart` |
+| 已连接但工控网不通；日志 `route_install fail=` | 部分分流路由安装失败 | 查 `partial_routes=true` / GUI LastError；管理员权限与网卡；零成功会拒绝进入已连接 |
+| 手动重连后仍 lookup timeout | DNS 未先 Restore 或 settle 不够 | 确认 Stop 先 RestoreDNS；`WaitDNSReady` 约 3s；仍失败看传输层退避 |
+| 公司机首次登录 ~2 分钟（`created` + `HasICSResidue` 慢） | 冷 CreateAdapter；旧版探测起 PowerShell；预热误 `Adapter.Close` 卸适配器 | 看 `tun_warmup held=true` → 登录 `reuse from_warmup`；`HasICSResidue method=native`；`assign_ip_*` 子阶段。单条 route 数秒属子进程 |
+| 已 `reuse from_warmup` / `已复用` 但 `assign_ip` 仍数十秒 | 旧版 `InterfaceHasIPv4` 用 `net.Interfaces()`/`Addrs` → 每次全表 GAA（公司机单次数秒） | **升级客户端**：`GetUnicastIpAddressTable`（`method=iphlp`）；`assign_ip_probe`/`HasICSResidue … method=iphlp` 应亚秒；`assign_ip_wait` 尊重截止（勿十余秒） |
+| 仍见 `assign_ip method=netsh` / `route_add method=route_exe` 数秒 | IP Helper 写失败回退，或 `windows.use_ip_helper: false`；旧版路由未填 LUID | 查 Warn `method=iphlp fail`；默认真值优先 iphlp；期望 `route_add method=iphlp`、`dns_set method=iphlp` |
+| Fyne 警告「not migrated to fyne.Do」 | 纯 `go build` **不读** `FyneApp.toml`；未带 `-tags migrated_fynedo` / 未 SetMetadata | **重建 GUI**（`build-local`/`build-release` 已加 tag）+ 代码 `fyne_meta.go`；仅改 toml 无效 |
+| 开应用后 UI 空等数秒才自动连 | 旧版 `waitTunWarmup` 串行挡住 `gui_auto_connect` | **升级**：日志应先见 `gui_auto_connect begin warmup_overlap=true`，**不应**先 `tun_warmup wait done` 再 begin |
+| `tun_open stage=create` 出现在 `tun_warmup` 同时 | 预热冷 Create 正常（同路径日志） | 若随后鉴权 `reuse from_warmup` 则 handoff 正常；勿当二次建卡失败 |
+| 家庭版 via 仍十余～数十秒 | WinNAT 不可用 → ICS COM；旧版每次先试 New-NetNat | **升级**：首次判不可用后同进程跳过重复 NetNat；ICS 本身压不掉；Pro+Hyper-V 才走 WinNAT |
+| 日志 `wintun:` 前缀包着 Fyne 警告文案 | logger sink / 控制台归类，非 Wintun DLL 故障 | 以文案内容为准；修 Fyne 迁移后该警告应消失 |
+| 托盘悬停无气泡（OpenVPN 有「已连接至/连接自/分配 IP」） | Fyne 无 SetSystemTrayTooltip；未调底层 systray | **升级**：悬停见 HaoVPN 多行 tip；实现 `tray_tooltip.go` + `systray.SetTooltip` |
+| tip 末行只剩「分配」、或「连接自: 20」 | 旧按 127 拼装；fyne systray 未 SETVERSION → Windows **只显示 ~64** UTF-16，日期被砍成残片 | **升级**：tip 预算 **63**；行序 IP→连接自→主机；短日期；整行原子 |
+| 配网/via 数分钟内 tip 像「正在连接」且无 IP | 鉴权后 GUI 已进主窗，但旧版等 applyPolicy 完才写 vpnIP；tip 绑 Engine.State | **升级**：鉴权后早写 vpnIP；Connecting+IP →「正在配置网络…」+ IP；Connected 仍等数据面 |
+| 退出/登出约 10s 且大半在 DisableAllICS | 家庭版 via 关 ICS：旧逻辑全机枚举逐个 DisableSharing | **升级**：记录本会话网卡对 → `DisableICSPair`；残留再 `DisableAllICS`；日志 `DisableICSPair elapsed=` |
+| 退出/重连后按钮仍可点（像没生效） | `beginEngineOp` 已吞连点但未 Disable | **升级**：忙态灰掉重新连接/退出登录/退出/登录连接 |
+| yaml 仍有 `ps_resident` / 日志曾见 `ps_resident started` | 旧实验功能：常驻 PS 与 CIM/ICS/SkipAsSource 不兼容，零加速 | **已删除**：配置键可留在旧 yaml（Unmarshal 忽略）；勿再开；PowerShell 一律一进程 |
+| 家庭版仍先试 WinNAT 再 ICS | 无 Hyper-V 仍跑 Get-NetNat/New-NetNat | **升级**：注册表 EditionID/ProductName 预判 Home/Core → `WinNAT skip reason=sku_home` |
 | 日志出现 `powershell 尽力操作失败 op=…` | ICS/NAT/转发清理类 PS 失败（尽力路径，不阻断主流程） | 查 `op=`（如 `DisableAllICS`、`Remove-NetNat-teardown`）；确认管理员权限与组策略是否拦 PowerShell；功能面通常仍可用 |
 | 点「退出」整窗假死很久 | 旧版退出同步等 ICS 清理 | **升级 GUI**：异步退出，先提示「正在退出（清理网络）…」，日志 `gui_quit` |
 | 要开机自动连且要托盘 | Windows：登录后自启 + 无窗口 + 自动连接 | 托盘「配置」三项；须自动登录桌面。Linux/macOS：托盘可写 XDG/LaunchAgent（见 deploy §5.3） |
@@ -103,7 +122,9 @@
 | 未登录无托盘 | 旧版托盘仅登录后出现 | 升级本版：启动即托盘，「显示登录窗口」可恢复 |
 | 旧 TUN 网卡残留 | 网络连接中禁用旧 `myvpn0` 适配器 |
 | 需重新登录 | 托盘或主窗「退出登录」；未勾选「记住密码」时密码框清空 |
-| 记住密码 | 登录窗勾选后 patch 写回 `client.yaml`（保留其它段注释）；`auth.remember_password` + `auth.password` |
+| 记住密码 | 登录窗勾选后 patch 写回 `client.yaml`（保留其它段注释）；`auth.remember_password` + `auth.password`（明文；User DPAPI 仍听安排） |
+| 服务凭据 | 托盘/主窗「保存供服务使用」→ LocalMachine DPAPI（`clientapp.SaveServiceCredentials`）；与记住密码独立 |
+| tun.name 非法 | 配置校验失败：仅 `[A-Za-z0-9_-]{1,64}`；勿用空格或 `\|.*.` 等 |
 | client.yaml 注释消失 / 含 peer | 旧版全量 Marshal 覆盖 | 升级本版 SaveClient；legacy `peer:` 会在 GUI 写回时删除（策略由握手下发，勿手配） |
 | 杀开关 | 仅 `client.yaml` → `security.kill_switch`；GUI 登录窗无此项 |
 | TLS 证书 / SAN / CA | 见 [deploy.md § TLS 证书](deploy.md) |
@@ -165,8 +186,13 @@ tail -f ./logs/server.log
 |------|------|------|
 | `Failed to find matching adapter name` / 0x490 | Wintun DLL 在 **OpenAdapter 未命中** 时的预期日志；新版已降为 Debug | 若仍为 ERROR 级 raw log，升级最新 build；见 `server.live.log` 中 `[DEBUG] wintun:` |
 | `Removed orphaned adapter "haovpn0 1"` | Windows 因重名给旧网卡加后缀；启动时会清理并 Create | 连续重启后应减少；可跑 `.\scripts\test-wintun-restart.ps1`（管理员） |
-| `windows wintun haovpn0 已复用` | 正常：第二次启动复用适配器 | 无需处理 |
-| WinNAT / ICS 失败 + `forward_only` | Win11 家庭版常见；服务仍可隧道/ping 网关 | 见 [deploy.md § NAT](deploy.md)；工控跨网段需 Pro/Hyper-V 或手工 ICS |
+| `windows wintun haovpn0 已复用` / `tun_open stage=reuse from_warmup` | 正常：预热移交或 OpenAdapter 复用 | 无需处理 |
+| `windows wintun … created`（登录时）且曾有 `tun_warmup` | 旧缺陷：预热 `Adapter.Close` 卸掉 Create 的适配器 → Element not found 再 Create | **升级客户端**：预热 held 句柄、禁止 Close；应见 `held=true` 与 `from_warmup` |
+| `session_abandoned … disconnected_during_policy` | 配网过长触发心跳超时 | **升级客户端**：applyPolicy 期间暂停心跳超时判定；同时看 `assign_ip_*` 子阶段压时 |
+| `HasICSResidue … method=ps_fallback` | native/iphlp 未找到网卡才回退 PS（公司机可十余秒） | 确认 TUN 名与登记；正常应为 `method=native stage=cache` 且 `by_index method=iphlp` |
+| `InterfaceHasIPv4 method=iphlp` / `assign_ip method=iphlp` | IP Helper 读/写热路径 | 正常；若仍 `net_fallback`/`netsh` 且很慢，查权限与 `use_ip_helper` |
+| WinNAT / ICS 失败 + `forward_only` | Win11 家庭版常见；服务仍可隧道/ping 网关 | 见 [deploy.md § NAT](deploy.md)；工控跨网段需 Pro/Hyper-V 或手工 ICS；日志可见「本进程已确认不可用，跳过 New-NetNat」 |
+| `route_add method=iphlp` / `dns_set method=iphlp` | IP Helper 写路径成功 | 正常；若仍 route_exe/netsh 看对应 fail Warn |
 
 ---
 
@@ -197,5 +223,5 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 
 ---
 
-*最后更新：2026-08-31 · 架构解耦第二十二轮（RunPSBestEffort Warn 埋点）*
+*最后更新：2026-08-31 · 架构解耦第 24 轮 / VERSION 0.1.3*
 

@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 
 	"haovpn/web"
@@ -58,14 +59,28 @@ func (s *Server) handleToolsPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "tools.html", nil)
 }
 
-// handleStatic 提供嵌入的静态资源（CSS）。
+// handleStatic 提供嵌入的静态资源（CSS/JS/图标）。
+//
+// 防御：对 URL 后缀 path.Clean，拒绝「..」穿越与绝对路径，再打开 embed.FS。
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	if len(path) <= len("/static/") {
+	raw := r.URL.Path
+	if len(raw) <= len("/static/") {
 		http.NotFound(w, r)
 		return
 	}
-	name := "static/" + path[len("/static/"):]
+	rel := path.Clean("/" + raw[len("/static/"):])
+	// Clean 后仍须落在「相对单段路径」：禁止回到根外或带 ..
+	if rel == "/" || strings.Contains(rel, "..") || strings.HasPrefix(rel, "/../") {
+		http.NotFound(w, r)
+		return
+	}
+	// 去掉 Clean 产生的前导 /
+	rel = strings.TrimPrefix(rel, "/")
+	if rel == "" || strings.Contains(rel, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	name := "static/" + rel
 	f, err := web.FS.Open(name)
 	if err != nil {
 		http.NotFound(w, r)

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netstack"
 	"haovpn/internal/safeutil"
 	"haovpn/internal/security"
 	"haovpn/internal/transport"
@@ -117,14 +119,17 @@ func (e *Engine) Stop() {
 	e.vpnSubnet = ""
 	e.managedRoutes = nil
 	e.allowedIPs = nil
+	e.connectedAt = time.Time{}
 	e.mu.Unlock()
 
 	if rc != nil {
+		// 须等 loop 退出：否则手动重连 NewEngine.Start 会与旧 Dial/onConnect 竞态。
 		rc.Stop()
 	}
 	if cancel != nil {
 		cancel()
 	}
+	// 传输已停后再清数据面（DNS/路由/TUN），禁止并行僵尸 Dial。
 	e.rt.close()
 	if err := e.ks.Remove(); err != nil {
 		logger.Error("拆除杀开关失败: %v", err)
@@ -132,4 +137,6 @@ func (e *Engine) Stop() {
 	} else {
 		e.setKillSwitchStatus(true, "")
 	}
+	// Windows 网卡子系统退出挂点（经 netstack 门面；当前为空操作）。
+	netstack.ShutdownWindows()
 }

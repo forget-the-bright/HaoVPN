@@ -24,10 +24,7 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 		AllowedIPs: body.AllowedIPs, IPMode: body.IPMode, IPLeaseSec: body.IPLeaseSec, VPNIP: body.VPNIP,
 	})
 	if err != nil {
-		if writeAccountNotFound(w, err) {
-			return
-		}
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		writeDomainError(w, err)
 		return
 	}
 	s.audit.Log(&se.UserID, "policy_change_kick", "user", &id, s.clientIP(r), map[string]string{
@@ -50,7 +47,7 @@ func (s *Server) handleUserPasswordReset(w http.ResponseWriter, r *http.Request,
 	}
 	newPass := r.FormValue("new_password")
 	if err := s.auth.ResetPasswordByAdmin(id, newPass); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		writeDomainError(w, err)
 		return
 	}
 	s.sessions.KickUser(id)

@@ -42,7 +42,7 @@ func (s *Server) handleSecurityExempts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := validateBanExemptIP(ip); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			writeDomainError(w, err)
 			return
 		}
 		if err := s.store.UpsertBanExempt(ip, body.Note, "manual"); err != nil {

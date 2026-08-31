@@ -2,9 +2,16 @@
 
 package winnet
 
+import "net"
+
 // ResolveInterfaceAlias 非 Windows 无 netsh 别名差异，直接返回配置名。
 func ResolveInterfaceAlias(configName string) string {
 	return configName
+}
+
+// FindAdapterIfIndex 非 Windows 不提供 Wintun ifIndex 解析。
+func FindAdapterIfIndex(name string) (int, error) {
+	return InterfaceIndex(name)
 }
 
 // InterfaceIndex 非 Windows 不提供 Wintun ifIndex 解析。
@@ -37,9 +44,27 @@ func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
 // DisableAllICS 非 Windows 无操作。
 func DisableAllICS() {}
 
+// DisableICSPair 非 Windows 无操作。
+func DisableICSPair(public, private string) { _, _ = public, private }
+
 // RunPSBestEffort 非 Windows 无操作（无 PowerShell）。
 func RunPSBestEffort(script, opName string) {
 	_, _ = script, opName
+}
+
+// RunPSOneShot 非 Windows 返回 ErrNotSupported。
+func RunPSOneShot(script string) ([]byte, error) {
+	_ = script
+	return nil, ErrNotSupported
+}
+
+// IPv4IsICSPrivate 非 Windows 仍提供纯函数判定（单测/跨平台共用）。
+func IPv4IsICSPrivate(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	return v4[0] == 192 && v4[1] == 168 && v4[2] == 137
 }
 
 // HasICSResidue 非 Windows 恒 false（无 ICS）。

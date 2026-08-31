@@ -46,7 +46,7 @@ if (-not $ok) {
 }
 if (-not $ok) { throw "网卡不存在或未 Up: $n" }
 `, winnet.EscapeSingleQuoted(name))
-	out, err := winnet.RunPS(ps)
+	out, err := winnet.RunPSOneShot(ps)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
 if ($found) { $found }
 `, network, mask)
 
-	out, err := winnet.RunPS(ps)
+	out, err := winnet.RunPSOneShot(ps)
 	if err != nil {
 		return "", err
 	}
@@ -115,7 +115,7 @@ if (-not $found) { throw "路由表无可用出站网卡" }
 $found
 `, probe)
 
-	out, err := winnet.RunPS(ps)
+	out, err := winnet.RunPSOneShot(ps)
 	if err != nil {
 		return "", err
 	}
@@ -147,9 +147,7 @@ regsvr32 /s hnetcfg.dll
 Get-CimInstance -Namespace ROOT/Microsoft/HomeNet -ClassName HNet_ConnectionProperties -ErrorAction SilentlyContinue |
   ForEach-Object { if ($_.IsIcsPrivate) { Set-CimInstance -InputObject $_ -Property @{ IsIcsPrivate = $false } -ErrorAction SilentlyContinue } }
 $net = New-Object -ComObject HNetCfg.HNetShare
-foreach ($c in @($net.EnumEveryConnection())) {
-  try { $net.INetSharingConfigurationForINetConnection($c).DisableSharing() } catch {}
-}
+%s
 netsh wlan stop hostednetwork 2>$null | Out-Null
 Set-Service SharedAccess -StartupType Manual -ErrorAction SilentlyContinue
 Restart-Service SharedAccess -Force -ErrorAction SilentlyContinue
@@ -179,7 +177,7 @@ $pubCfg = $net.INetSharingConfigurationForINetConnection($pub)
 $prvCfg = $net.INetSharingConfigurationForINetConnection($prv)
 $ok = $false
 foreach ($order in @('privateFirst','publicFirst')) {
-  foreach ($c in @($net.EnumEveryConnection())) { try { $net.INetSharingConfigurationForINetConnection($c).DisableSharing() } catch {} }
+  %s
   try {
     if ($order -eq 'privateFirst') { $prvCfg.EnableSharing(1); $pubCfg.EnableSharing(0) }
     else { $pubCfg.EnableSharing(0); $prvCfg.EnableSharing(1) }
@@ -188,12 +186,13 @@ foreach ($order in @('privateFirst','publicFirst')) {
   } catch { }
 }
 if (-not $ok) { throw "ICS EnableSharing 失败（0x80040201 常见于 Win11 家庭版，可设 nat.forward_only: true 或手工在「网络连接→共享」启用一次）" }
-`, winnet.EscapeSingleQuoted(lanIf), winnet.EscapeSingleQuoted(tunName), tunIfIndex, winnet.EscapeSingleQuoted(tunAlias))
+`, winnet.PSSnippetICSDisableSharingLoop(), winnet.EscapeSingleQuoted(lanIf), winnet.EscapeSingleQuoted(tunName), tunIfIndex, winnet.EscapeSingleQuoted(tunAlias), winnet.PSSnippetICSDisableSharingLoop())
 
-	if _, err := winnet.RunPS(ps); err != nil {
+	if _, err := winnet.RunPSOneShot(ps); err != nil {
 		return fmt.Errorf("ICS 启用失败: %w（家庭版请确认 LAN 网卡名正确且 SharedAccess 服务可启动）", err)
 	}
 	logger.Info("windows: ICS 已启用 public=%s private=%s（VPN→LAN NAT 回退）", lanIf, tunName)
+	winnet.RememberICSPair(lanIf, tunName)
 
 	// ICS 异步挂 192.168.137.1，稍等再设 SkipAsSource
 	time.Sleep(1500 * time.Millisecond)
@@ -212,9 +211,23 @@ if (-not $ok) { throw "ICS EnableSharing 失败（0x80040201 常见于 Win11 家
 	return nil
 }
 
-// disableICSPlatform 关闭本机全部 ICS 共享（Teardown 每栈仅调用一次）。
+// disableICSPlatform 关闭本会话 ICS（优先靶向网卡对，残留再全机 DisableAllICS）。
 func disableICSPlatform() {
 	start := time.Now()
-	winnet.DisableAllICS()
-	logger.Info("windows: disableICSPlatform elapsed=%s", time.Since(start))
+	pub, prv, ok := winnet.TakeICSPair()
+	if ok {
+		winnet.DisableICSPair(pub, prv)
+		// 仍有 192.168.137.* 则兜底全关
+		tun := prv
+		if tun == "" {
+			tun = pub
+		}
+		if winnet.HasICSResidue(tun) {
+			logger.Info("windows: DisableICSPair 后仍有 ICS 残留，DisableAllICS 兜底 tun=%s", tun)
+			winnet.DisableAllICS()
+		}
+	} else {
+		winnet.DisableAllICS()
+	}
+	logger.Info("windows: disableICSPlatform elapsed=%s pair=%v", time.Since(start), ok)
 }

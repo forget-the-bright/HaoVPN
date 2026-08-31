@@ -12,7 +12,6 @@ import (
 
 	"haovpn/internal/clientapp"
 	"haovpn/internal/config"
-	"haovpn/internal/credentials"
 	"haovpn/internal/logger"
 	"haovpn/internal/safeutil"
 )
@@ -43,6 +42,12 @@ type uiApp struct {
 	errLbl       *widget.Label
 	cfgPathLbl   *widget.Label
 
+	// 主窗/登录操作钮：engOpBusy 时 Disable，防连点看起来仍可点
+	reconnectBtn *widget.Button
+	logoutBtn    *widget.Button
+	quitBtn      *widget.Button
+	connectBtn   *widget.Button
+
 	pollStop chan struct{}
 
 	// engOpBusy：登出/手动重连等正在后台 Stop，防连点卡死与竞态
@@ -50,9 +55,10 @@ type uiApp struct {
 	engOpBusy bool
 
 	// 托盘当前种类（SetSystemTrayMenu 会冲掉图标，须随后 forceTrayIcon）
-	trayMu       sync.Mutex
-	trayKind     trayKind
-	trayMenuKey  string // 已连接时含 VPN IP，变化则重建菜单
+	trayMu      sync.Mutex
+	trayKind    trayKind
+	trayMenuKey string // 已连接时含 VPN IP，变化则重建菜单
+	lastTooltip string // 上次悬停文案，避免无意义 SetTooltip
 }
 
 // newUI 构造 UI 控制器并注册 logger sink，将日志行转发到 appendLog。
@@ -93,8 +99,8 @@ func (u *uiApp) showMain() {
 		}
 	}
 
-	reconnectBtn := widget.NewButton("重新连接", func() { u.reconnectVPN() })
-	logoutBtn := widget.NewButton("退出登录", func() { u.doLogout() })
+	u.reconnectBtn = widget.NewButton("重新连接", func() { u.reconnectVPN() })
+	u.logoutBtn = widget.NewButton("退出登录", func() { u.doLogout() })
 	saveSvcBtn := widget.NewButton("保存供服务使用", func() {
 		user := strings.TrimSpace(u.userEntry.Text)
 		pass := u.passEntry.Text
@@ -102,17 +108,19 @@ func (u *uiApp) showMain() {
 			u.appendLog("保存服务凭据失败: 请先填写账号密码")
 			return
 		}
-		if err := credentials.SaveService(user, pass); err != nil {
+		if err := clientapp.SaveServiceCredentials(user, pass); err != nil {
 			u.appendLog("保存服务凭据失败: " + err.Error())
 			return
 		}
 		u.appendLog("已保存 Windows 服务凭据")
 	})
-	quitBtn := widget.NewButton("退出程序", func() { u.quitApp() })
+	u.quitBtn = widget.NewButton("退出程序", func() { u.quitApp() })
 
 	top := container.NewVBox(u.statusLbl, u.vpnIPLbl, widget.NewSeparator())
-	btns := container.NewHBox(reconnectBtn, logoutBtn, saveSvcBtn, layout.NewSpacer(), quitBtn)
+	btns := container.NewHBox(u.reconnectBtn, u.logoutBtn, saveSvcBtn, layout.NewSpacer(), u.quitBtn)
 	w.SetContent(container.NewBorder(top, btns, nil, nil, container.NewPadded(u.logEntry)))
+	// 若仍处 engOpBusy（极少），立即灰掉
+	u.setEngineOpBusyUI(u.isEngineOpBusy())
 	// 登录阶段 sink 已写入 logLines，须刷入新建的日志框，否则首屏空白
 	u.flushLogView()
 	w.SetCloseIntercept(func() { w.Hide() })
@@ -141,6 +149,7 @@ func (u *uiApp) doLogout() {
 	if u.statusLbl != nil {
 		u.statusLbl.SetText("状态: 正在断开…")
 	}
+	u.applyTray(trayKindDisconnecting, true)
 	u.appendLog("正在退出登录（清理网络可能需数秒）…")
 	eng := u.takeEngine()
 	u.stopEngineAsync(eng, func() {
@@ -156,6 +165,10 @@ func (u *uiApp) finishLogoutUI() {
 		u.mainWin.Close()
 		u.mainWin = nil
 	}
+	// 主窗已销毁，避免 endEngineOp 对失效按钮 Enable
+	u.reconnectBtn = nil
+	u.logoutBtn = nil
+	u.quitBtn = nil
 	if u.passEntry != nil && !u.cfg.Auth.RememberPassword {
 		u.passEntry.SetText("")
 	}
@@ -167,6 +180,7 @@ func (u *uiApp) finishLogoutUI() {
 	}
 	u.trayMu.Lock()
 	u.trayMenuKey = ""
+	u.lastTooltip = ""
 	u.trayMu.Unlock()
 	u.applyTray(trayKindIdle, true)
 }

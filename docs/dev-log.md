@@ -6,6 +6,287 @@
 
 ---
 
+## 2026-08-31 · 文档治理（对齐 0.1.3 / 第 24 轮）
+
+### 目标
+
+修正活文档中与代码不符的过时表述、重复 FAQ、页脚漂移；**不改运行时行为**。
+
+### 改动摘要
+
+- 根 README CSP：`style-src 'self'`（删「样式仍可内联」）。
+- architecture FAQ：ICS/Shutdown/Configure 改为 `netstack` 门面；合并 listen_tun / TUN 预热重复行；修复表内空行；历史 CSP tip 标注已被第 22 轮取代；记住密码债单链 hardening §8。
+- codebase-guide 调用链与 vpnaccount/`winnet_facade`；记忆压缩「当前阶段」并对齐 VERSION **0.1.3**；internal/README 去掉「第二十二轮」标题并补 warmup/hard_restart。
+- docs/README 必读顺序：architecture → codebase-guide；deploy/hardening/troubleshooting 页脚统一。
+
+### 验证
+
+- 人工对照 import 边界与 FAQ 符号；本条仅文档。
+
+---
+
+## 2026-08-31 · 架构解耦第 24 轮（高内聚低耦合收口）
+
+### 目标
+
+收紧分层依赖、补齐 TUN/PS/静态路径安全校验、peer 写路径进 vpnaccount、统一领域错误；保持功能兼容。**跳过** GUI 记住密码 User DPAPI（仍听安排）。
+
+### 改动
+
+- **边界**：`clientapp.WarmupTun` / `SaveServiceCredentials`；`netstack` Windows 门面（`winnet_facade.go`）；切断 `clientgui→tun|credentials`、`clientapp→winnet`。
+- **安全**：`config.ValidateTunName`；`winnet.EscapeRegex`；`handleStatic` path.Clean；去掉 `PreferServerCipherSuites`。
+- **领域**：`vpnaccount/peer_write.go`；`writeDomainError` 覆盖 vpnaccount/auth/probedefense 哨兵。
+- **可维护**：`WaitDNSReady`→`RetryN`；三种 escape 方言交叉注释。
+- **文档**：architecture / internal/README / codebase-guide / security-hardening / troubleshooting / deploy / 记忆。
+
+### 验证
+
+- `go test` 相关包与 `./...`：除 `singleinstance`（本机已有客户端占用锁，环境干扰）外全部通过
+- `.\scripts\build-local.ps1` 通过（server/client/gui）
+
+### 未做（听安排）
+
+- GUI 记住密码脱离 yaml 明文 / CurrentUser DPAPI。
+
+---
+
+## 2026-08-31 · 架构解耦第 23 轮（高内聚低耦合收口）
+
+### 目标
+
+收敛 PS/ICS/Wintun 重复模板、把手动重连契约收口到 `clientapp`、路由部分失败可观测；保持功能兼容。
+
+### 改动
+
+- **winnet/ps_snippets.go**：`PSSnippetAssignAdapterIf` / ICS Disable / `BuildPrepareWintunOrphanScript`；address/resolver/ics/tun/netstack 改用模板。
+- **clientapp**：`WaitDNSReady` + `HardRestart`；GUI 仅 `fyne.Do` 挂载；禁止第三套重连编排。
+- **路由**：`route_install ok/fail`；期望非空且零成功 → applyPolicy 硬失败；部分失败 → `LastError`；Del 失败 Warn；Stop 清 `sessionPriv` 单测。
+- **TrimLower** 收口 sku/tls_policy；`Shutdown` 文档化为空挂点。
+- **未做（听安排）**：GUI 记住密码脱离 yaml 明文 / User DPAPI。
+
+### 验证
+
+- `go test ./internal/winnet/... ./internal/tun/... ./internal/netstack/... ./internal/clientapp/... ./internal/clientgui/... ./internal/security/...` 通过
+- `go test ./...`：除 `singleinstance`（本机已有客户端占用锁，环境干扰）外全部通过
+- `.\scripts\build-local.ps1` 通过（server/client/gui）
+
+---
+
+## 2026-08-31 · 退出防连点 + ICS 靶向关共享
+
+### 问题
+
+- 退出 ~10s，其中 ~8s 全机 `DisableAllICS`；合理但偏慢。
+- `beginEngineOp` 已防重入，按钮未 Disable，用户以为还能点。
+
+### 修复
+
+- 主窗/登录操作钮：`setEngineOpBusyUI` 随 begin/end 灰掉/恢复。
+- `RememberICSPair` + `DisableICSPair`；残留再 `DisableAllICS`。
+
+### 验证
+
+- `go test ./internal/clientgui/ ./internal/winnet/ ./internal/netstack/`
+
+---
+
+## 2026-08-31 · 删除 ps_resident + PreferVPN 一进程收口
+
+### 问题
+
+- ICS 后 `PreferVPNSourceWithICS` 仍走常驻 → IEX「意外的 }」熔断再回退一进程。
+- `ps_resident` 设计目标（加速 ICS/WinNAT）已被 OneShot/IP Helper/`sku_home` 替代，开 true 只有攻击面与噪声。
+
+### 修复
+
+- 删除 `ps_resident_*` 实现与配置字段；`RunPS`≡一进程；address/resolver/wintun 全部 `RunPSOneShot`。
+- 旧 yaml 含 `ps_resident` 键：Unmarshal 忽略，无影响。
+
+### 验证
+
+- `go test ./internal/winnet/ ./internal/netstack/ ./internal/tun/ ./internal/config/ ./internal/clientapp/ ./internal/clientgui/`
+
+---
+
+## 2026-08-31 · Tip 预算 63 + WinNAT/ICS OneShot + 家庭版快路径
+
+### 问题
+
+- tip「连接自: 20」：按 127 拼装，fyne systray 未 SETVERSION → Windows 只显示 ~64，日期被砍成残片。
+- `ps_resident` handshake ok 后空等 20s：首条严格 RunPS 是 Get-NetNat（常驻 + 脚本 `exit`），与常驻主机不兼容；家庭版仍白试 WinNAT。
+
+### 修复
+
+- tip：预算 **63**；行序品牌→IP→连接自（短日期）→主机；整行原子。
+- `RunPSOneShot`；NetNat/ICS 一律一进程；去掉 `exit`；exchange 日志 `op_hint`。
+- `IsWindowsHomeSKU` → `WinNAT skip reason=sku_home` 直进 ICS。
+
+### 验证
+
+- `go test ./internal/clientgui/ ./internal/netstack/ ./internal/winnet/`
+
+---
+
+## 2026-08-31 · 托盘 tip/状态机 + ps_resident BestEffort 余量
+
+### 问题
+
+- tip 末行只剩「分配」：Windows 127 UTF-16 盲截；长 hostname 砍掉 IP。
+- 鉴权后 GUI Connected，但 Engine 等 applyPolicy 才写 vpnIP → tip 长时间无 IP/像「正在连接」。
+- 登出/退出 Stop 期间 tip 仍像连接中。
+- `ps_resident` handshake ok 后 ICS/Remove-NetNat 空等 90s。
+
+### 修复
+
+- **tip**：行序品牌→IP→主机→时间；按预算 ellipsize 主机。
+- **状态机**：`trayKindDisconnecting`；logout/quit/reconnect Stop 立刻刷「正在断开」；engOpBusy 覆盖。
+- **Engine**：鉴权后早写 vpnIP 等；StateConnected/connectedAt 仍等数据面；Connecting+IP →「正在配置网络…」。
+- **PS**：`RunPSBestEffort` 只走一进程；resident 交换超时 20s。
+
+### 验证
+
+- `go test ./internal/clientgui/ ./internal/clientapp/ ./internal/winnet/`
+
+---
+
+## 2026-08-31 · 托盘悬停气泡 + ps_resident 熔断重写
+
+### 问题
+
+- 托盘悬停无 OpenVPN 式「已连接至 / 连接自 / 分配 IP」。
+- `ps_resident: true`：隐藏窗口下旧 Console 管道主机不回 PSOK → 60s timeout → 反复启停卡住。
+
+### 修复
+
+- **托盘**：`formatTrayTooltip` + `systray.SetTooltip`；`Engine.ConnectedSince()`。
+- **ps_resident**：`-EncodedCommand` 主机、`PSREADY` 握手、行通道同步、失败一次熔断回退一进程。
+
+### 验证
+
+- `go test` clientgui / clientapp / winnet
+- 手工：悬停气泡；`ps_resident: true` 见 handshake ok 或一次 `disabled reason=` 后无风暴
+
+---
+
+## 2026-08-31 · Fyne.Do 真正生效 + 自动连接重叠 + 路由/DNS/WinNAT 余量
+
+### 问题（家里机完整日志）
+
+- 仍打 Fyne「not migrated」：`FyneApp.toml` 未被 `go build` 加载。
+- UI 空等～5s：`tun_warmup wait done` 后才 `gui_auto_connect`（Wait 串行）。
+- 预热 handoff / `assign_ip method=iphlp` 已好；`route_add method=route_exe`、DNS netsh、家庭版每次先试 WinNAT 仍慢。
+
+### 修复
+
+- **Fyne**：`Invoke-GoBuildGui -tags migrated_fynedo`；`fyne_meta.go` SetMetadata；TOML ID=`com.haovpn.client`。
+- **auto_connect**：删 `waitTunWarmup`；`warmup_overlap=true` 立即拨号；后台预热保留。
+- **路由**：`MibIpForwardRow2` + `ConvertInterfaceIndexToLuid`；fail 打 Warn。
+- **DNS**：`SetInterfaceDnsSettings`（GUID 调用约定按架构）；失败回退 netsh。
+- **WinNAT**：会话缓存不可用后跳过重复 New-NetNat，直接 ICS。
+
+### 验证
+
+- `go test` clientgui / winnet / netstack / tun
+- 重建 GUI 后：无 Fyne migrated 警告；先 `gui_auto_connect begin warmup_overlap=true`；期望 `route_add/dns_set method=iphlp`
+
+---
+
+## 2026-08-31 · Fyne.Do + Windows IP Helper + 可选常驻 PS
+
+### 问题
+
+- 公司机热路径：`assign_ip_probe≈5s` / `wait≈14s` / `HasICSResidue cache≈9s`——根因是 Go `net.InterfaceByIndex`+`Addrs` 每次全表 GAA，非 O(1)。
+- Fyne「not migrated to fyne.Do」；手动重连若把 DNS settle 塞进 UI 会卡死。
+- netsh/route/dns 子进程税仍在；常驻 PS 只能削 powershell 冷启，不能修 GAA。
+
+### 修复
+
+- **Fyne**：`FyneApp.toml` `fyneDo=true`；reconnect settle 在后台；`stopEngineAsync`/`Start` 经 `fyne.Do`；`clientgui/doc.go` 线程规则。
+- **config**：`windows.use_ip_helper`（默认 true）、`ps_resident`（默认 false）；`NewEngine`→`winnet.Configure`；`Stop`→`Shutdown`。
+- **读**：`GetUnicastIpAddressTable` → `InterfaceHasIPv4` / ICS by_index；`method=iphlp|net_fallback`。
+- **wait**：真正尊重 deadline；配置已提交失败仅 Warn。
+- **写**：配 IP / 分流路由优先 IP Helper，失败回退 netsh/route；`method=` 日志；DNS 仍 netsh 并打 method。
+- **ps_resident**：stdin 协议 + Job Object；默认关；失败回退一进程一脚本。
+
+### 验证
+
+- `go test` winnet / tun / netstack / clientapp / clientgui / config + `./...`
+- 公司机期望：probe/ICS `method=iphlp` 亚秒；`assign_ip_wait` 不再十余秒
+
+### 文档
+
+- troubleshooting / architecture / codebase-guide / internal/README / security-hardening / 记忆 / winnet·clientgui doc
+
+---
+
+## 2026-08-31 · 配 IP 探测加速（禁 Interfaces 全表）
+
+### 问题
+
+- 预热/`from_warmup`/`已复用` 已生效，但仍见 `assign_ip≈42s`：session→netsh 空白 ~32s + wait ~10s。
+- 根因：`interfaceHasIPv4ByIndex` 每次 `net.Interfaces()` 全表；`InterfaceHasIPv4` 在 ByIndex 未命中 IP 时还 fallback ByName。
+
+### 修复
+
+- ByIndex 改 `net.InterfaceByIndex`；有 ifIndex 不再 ByName。
+- 非 reused 跳过配前 probe；reused 打 `assign_ip_probe elapsed`；wait 轮询 Debug。
+- HasICSResidue cache：`by_index`/`addrs` Debug 微埋点。
+
+### 验证
+
+- `go test` winnet / tun
+- 公司机期望：`assign_ip_probe` 亚秒；assign 总时接近 netsh+短 wait
+
+---
+
+## 2026-08-31 · 预热 Close 卸适配器 + 心跳暂停 + 手动重连 DNS
+
+### 问题
+
+- 预热 `CreateAdapter` 后 `Adapter.Close` 卸掉系统适配器 → 登录 `Element not found` 再 Create；仍 `reused=false`。
+- `assign_ip` 约 66s 触发 `heartbeat timeout` → `session_abandoned`（随后 noop 重连能好）。
+- 手动重连：Stop 后 `lookup i/o timeout` + `SetFailFast(true)` 首败停 loop，再点一次才连上。
+
+### 修复
+
+- **预热**：`warmedAdapter` 持有句柄禁止 Close；Open `take` → `reuse from_warmup`；auto_connect Wait 预热。
+- **心跳**：`Conn.SetHeartbeatTimeoutPaused` 包住 `applyPolicy`。
+- **配 IP**：`assign_ip_netsh|ps|wait` 子阶段；netsh 失败先探测地址再决定是否 PS。
+- **ICS**：有 LUID 缓存只查 ifIndex；`stage=cache|…`。
+- **手动重连**：去掉 FailFast；`reconnect_dns_settle` 短等 LookupHost；`RestoreDNS elapsed`。
+
+### 验证
+
+- `go test` tun / transport / clientapp / clientgui / winnet
+- 公司机：`tun_warmup held=true` → `from_warmup`；手动重连无需再点
+
+---
+
+## 2026-08-31 · 手动重连死循环修复 + 公司机慢登录加速
+
+### 问题
+
+- 手动「重新连接」后死循环：`lookup … i/o timeout`、握手 `invalid character '\x00'`；退出登录再连却正常。
+- 公司机首次登录 ~2min：冷 `CreateAdapter`（~70s）+ PowerShell `HasICSResidue`（~33s）+ route/netsh 子进程。
+
+### 修复
+
+- **R1/R2**：`ReconnectClient.Stop` 等 loop、Dial 后 stop 门闩、可中断 Sleep；`Engine.Stop` 等 rc 后再 `rt.close`。
+- **R3**：`Conn.SetOnHandshake`；Data 不再当握手 JSON。
+- **R4**：`clearRoutesLocked` 先 `RestoreDNS`（Warn）再删路由。
+- **R5**：手动重连 `SetFailFast(true)`（成功后 `markAuthOK` 关闭）。
+- **P0/P3**：`tun_open` / `policy_apply stage=` / `route_add` / `dns_apply` / `HasICSResidue elapsed` 分段埋点。
+- **P1**：`HasICSResidue` 优先 Go/net+LUID；仅无网卡才 `ps_fallback`。
+- **P2**：GUI 启动 `tun.WarmupAdapter`；登录走「已复用」；Open/Create 串行化。
+
+### 验证
+
+- `go test` transport / tunnel / clientapp / winnet / netstack / tun / clientgui
+- `go test ./...`（singleinstance 占锁属环境）
+- 手工：手动重连无死循环；公司机看 `method=native` 与登录 `已复用`
+
+---
+
 ## 2026-08-31 · 架构解耦第二十二轮（抽取 · PS 收口 · CSP · 文档）
 
 ### 问题
@@ -198,10 +479,6 @@
 
 - `go test ./...`：除 `singleinstance`（本机已有客户端实例占用锁，环境问题）外全绿。
 - `.\scripts\build-local.ps1` 通过。
-
----
-
-*最后更新：2026-08-31 · 架构解耦第二十轮*
 
 ---
 
@@ -848,10 +1125,6 @@ go test ./...
 
 ---
 
-*最后更新：2026-08-28 · 架构第十一轮*
-
----
-
 ## 2026-08-28 · 第十轮：架构收敛 + 全量审计 + 文档治理 + 商用授权（法律层）
 
 ### 动机
@@ -891,10 +1164,6 @@ go test ./...
 ```
 
 均通过。
-
----
-
-*最后更新：2026-08-28 · 架构第十轮*
 
 ---
 

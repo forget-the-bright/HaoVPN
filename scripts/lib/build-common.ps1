@@ -102,7 +102,9 @@ function Invoke-GoBuild {
         [string]$Package,
         [string]$OutputPath,
         [string]$Ldflags,
-        [bool]$CgoEnabled = $false
+        [bool]$CgoEnabled = $false,
+        # Tags 可选构建标签（空格分隔）；GUI 须含 migrated_fynedo，否则 Fyne 仍打「not migrated」警告。
+        [string]$Tags = ""
     )
     $env:GOOS = $Goos
     $env:GOARCH = $Goarch
@@ -115,7 +117,12 @@ function Invoke-GoBuild {
     if ($outDir -and -not (Test-Path $outDir)) {
         New-Item -ItemType Directory -Path $outDir -Force | Out-Null
     }
-    & go build -trimpath -ldflags $Ldflags -o $OutputPath $Package
+    $buildArgs = @("build", "-trimpath", "-ldflags", $Ldflags)
+    if ($Tags -and $Tags.Trim() -ne "") {
+        $buildArgs += @("-tags", $Tags.Trim())
+    }
+    $buildArgs += @("-o", $OutputPath, $Package)
+    & go @buildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "构建失败: $Goos/$Goarch $Package"
     }
@@ -142,9 +149,11 @@ function Invoke-GoBuildGui {
         throw "GUI 仅支持 windows/amd64 与 windows/arm64"
     }
     $guiLdflags = "$Ldflags -H windowsgui"
-    Write-Host "    gui   windows/$Goarch (Fyne CGO=1)"
+    # migrated_fynedo：与 FyneApp.toml [Migrations] fyneDo 等价；纯 go build 不读 toml，必须带此 tag。
+    Write-Host "    gui   windows/$Goarch (Fyne CGO=1 tags=migrated_fynedo)"
     Invoke-GoBuild -Root $Root -Goos "windows" -Goarch $Goarch `
-        -Package "./cmd/client-gui" -OutputPath $OutputPath -Ldflags $guiLdflags -CgoEnabled $true
+        -Package "./cmd/client-gui" -OutputPath $OutputPath -Ldflags $guiLdflags -CgoEnabled $true `
+        -Tags "migrated_fynedo"
 }
 
 function Write-ReleaseManifest {

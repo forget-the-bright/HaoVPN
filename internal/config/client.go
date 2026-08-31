@@ -18,6 +18,7 @@ import (
 //   GUI — 桌面客户端行为（自动连接、无窗口托盘）；
 //   LocalLANs — 可选本地网段列表；非空则登录上报并开启 via 出口；
 //   Security — Kill-switch 等客户端安全选项；
+//   Windows — 仅 Windows 生效的网卡加速开关（IP Helper）；其它平台忽略；
 //   Reconnect — 断线指数退避；
 //   Log — 日志级别与滚动文件路径。
 //
@@ -30,8 +31,26 @@ type ClientConfig struct {
 	GUI       ClientGUISection       `yaml:"gui"`        // 桌面 GUI 行为（自动连接、无窗口）
 	LocalLANs []string               `yaml:"local_lans"` // 手动配置的本地网段；空=关闭 via 广告与出口
 	Security  ClientSecuritySection  `yaml:"security"`   // Kill-switch 等客户端安全选项
+	Windows   ClientWindowsSection   `yaml:"windows"`    // Windows 专用：IP Helper（其它 OS 忽略）
 	Reconnect ReconnectSection       `yaml:"reconnect"`  // 断线指数退避重连
 	Log       LogSection             `yaml:"log"`        // 日志级别与文件路径
+}
+
+// ClientWindowsSection 仅 Windows 生效的网卡/子进程加速选项。
+//
+// 非 Windows 平台读入后忽略，不报错。默认 use_ip_helper=true。
+// 旧 yaml 若仍含 ps_resident 键：标准 Unmarshal 忽略未知字段，无影响。
+type ClientWindowsSection struct {
+	// UseIPHelper 地址探测/ICS/配 IP/路由/DNS 优先 IP Helper；失败回退 netsh/route/PS。nil=默认 true。
+	UseIPHelper *bool `yaml:"use_ip_helper"`
+}
+
+// UseIPHelperEnabled 是否启用 IP Helper 优先路径（未配置时默认 true）。
+func (w ClientWindowsSection) UseIPHelperEnabled() bool {
+	if w.UseIPHelper == nil {
+		return true
+	}
+	return *w.UseIPHelper
 }
 
 // ClientGUISection 桌面客户端（Fyne）行为选项；CLI/服务模式可忽略。
@@ -174,6 +193,9 @@ func (c *ClientConfig) Validate() error {
 	}
 	if c.GUI.AutoConnect && !c.CanAutoConnect() {
 		return fmt.Errorf("配置错误: gui.auto_connect 须同时开启 auth.remember_password 并保存密码")
+	}
+	if err := ValidateTunName(c.Tun.Name); err != nil {
+		return fmt.Errorf("配置错误: %w", err)
 	}
 	return nil
 }

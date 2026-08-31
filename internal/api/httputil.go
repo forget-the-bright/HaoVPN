@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"haovpn/internal/auth"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
+	"haovpn/internal/probedefense"
 	"haovpn/internal/timeutil"
 	"haovpn/internal/vpnaccount"
 )
@@ -240,7 +242,10 @@ func writeAccountNotFound(w http.ResponseWriter, err error) bool {
 	return false
 }
 
-// writeDomainError 将 persist/vpnaccount 等领域错误映射为 HTTP 状态。
+// writeDomainError 将 persist/vpnaccount/auth/probedefense 等领域错误映射为 HTTP 状态。
+//
+// 固定 UX 文案（未登录/CSRF 等）仍由调用方 writeAPIError 字面量；本函数只处理 errors.Is 哨兵。
+// 未知错误走 writeInternalError（防泄漏内部详因）。
 func writeDomainError(w http.ResponseWriter, err error) {
 	if err == nil {
 		return
@@ -249,11 +254,29 @@ func writeDomainError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
-	case errors.Is(err, persist.ErrInvalidPeerAccessPair),
+	case errors.Is(err, vpnaccount.ErrLastAdmin),
+		errors.Is(err, vpnaccount.ErrViaUserRequired),
+		errors.Is(err, vpnaccount.ErrViaUserNotFound),
+		errors.Is(err, vpnaccount.ErrViaNotVPN),
+		errors.Is(err, vpnaccount.ErrPeerAccessArgs),
+		errors.Is(err, persist.ErrInvalidPeerAccessPair),
 		errors.Is(err, persist.ErrPeerAccessNotVPN),
-		errors.Is(err, persist.ErrPeerAccessUserNotFound):
+		errors.Is(err, persist.ErrPeerAccessUserNotFound),
+		errors.Is(err, auth.ErrWrongOldPassword),
+		errors.Is(err, probedefense.ErrBanExempt),
+		errors.Is(err, probedefense.ErrInvalidBanIP):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, vpnaccount.ErrPeerRouteNotFound):
+		writeAPIError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, probedefense.ErrProbeGuardNotReady):
+		writeAPIError(w, http.StatusServiceUnavailable, err.Error())
 	default:
+		// 校验类中文错误（密码强度、CIDR、用户名等）常见为非哨兵 fmt.Errorf，对客户端仍 400。
+		msg := err.Error()
+		if msg != "" && !strings.Contains(msg, "sql:") && !strings.Contains(strings.ToLower(msg), "sqlite") {
+			writeAPIError(w, http.StatusBadRequest, msg)
+			return
+		}
 		writeInternalError(w, err)
 	}
 }

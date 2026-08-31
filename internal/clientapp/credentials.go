@@ -68,3 +68,23 @@ func PromptPassword() (string, error) {
 	}
 	return string(b), nil
 }
+
+// SaveServiceCredentials 将隧道账号密码写入 Windows LocalMachine DPAPI 服务凭据库。
+//
+// 供 GUI「保存供服务使用」/启用 SCM 自启前调用；与 ResolveCredentials 读取路径对称。
+// 为何经 clientapp 门面：clientgui 禁止直接 import credentials（分层收口）。
+//
+// 参数：username / password — 均非空。
+// 返回：加密或写盘失败（通常须管理员）。
+// 关联：credentials.SaveService；托盘/主窗按钮；本轮不含 User 范围「记住密码」DPAPI。
+func SaveServiceCredentials(username, password string) error {
+	return credentials.SaveService(username, password)
+}
+
+// DeleteServiceCredentials 删除已保存的 Windows 服务凭据文件。
+//
+// 返回：删除失败（文件不存在视为成功，见 credentials.DeleteService）。
+func DeleteServiceCredentials() error {
+	return credentials.DeleteService()
+}
+

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -63,15 +62,7 @@ func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := s.manualBanIP(ip, reason, durationSec); err != nil {
-			if errors.Is(err, probedefense.ErrProbeGuardNotReady) {
-				writeAPIError(w, http.StatusServiceUnavailable, err.Error())
-				return
-			}
-			if errors.Is(err, probedefense.ErrBanExempt) || errors.Is(err, probedefense.ErrInvalidBanIP) {
-				writeAPIError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			writeInternalError(w, err)
+			writeDomainError(w, err)
 			return
 		}
 		auditMeta := map[string]string{"ip": ip, "reason": reason}
@@ -102,11 +93,7 @@ func (s *Server) handleSecurityBlockByIP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.unbanIP(ip); err != nil {
-		if errors.Is(err, probedefense.ErrProbeGuardNotReady) {
-			writeAPIError(w, http.StatusServiceUnavailable, err.Error())
-			return
-		}
-		writeInternalError(w, err)
+		writeDomainError(w, err)
 		return
 	}
 	s.audit.Log(s.actorFromRequest(r), "probe_unban", "ip", nil, s.clientIP(r), map[string]string{"ip": ip})

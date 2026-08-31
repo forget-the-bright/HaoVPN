@@ -105,10 +105,19 @@ type Engine struct {
 	// nil 表示鉴权成功（非数据面就绪）；数据面失败走 OnDataplaneFailed。
 	firstResultOnce sync.Once
 	firstResultCh   chan error
+
+	// connectedAt 进入 StateConnected 的本地时间；未连接为零值（托盘「连接自」）。
+	connectedAt time.Time
 }
 
 // NewEngine 创建尚未连接的客户端 VPN 引擎实例。
 func NewEngine(cfg *config.ClientConfig) *Engine {
+	if cfg != nil {
+		// 经 netstack 门面注入 Windows 加速开关，禁止 clientapp 直接 import winnet。
+		netstack.ConfigureWindows(netstack.WindowsOptions{
+			UseIPHelper: cfg.Windows.UseIPHelperEnabled(),
+		})
+	}
 	return &Engine{
 		cfg:           cfg,
 		state:         StateIdle,
@@ -220,6 +229,13 @@ func (e *Engine) VPNIP() string {
 	return e.vpnIP
 }
 
+// ConnectedSince 返回进入已连接状态的本地时间；未连接时为零值。
+func (e *Engine) ConnectedSince() time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.connectedAt
+}
+
 // Gateway 返回最近一次握手的网关 IP。
 func (e *Engine) Gateway() string {
 	e.mu.Lock()
@@ -251,6 +267,9 @@ func (e *Engine) VPNSubnet() string {
 func (e *Engine) setState(st State) {
 	e.mu.Lock()
 	e.state = st
+	if st != StateConnected {
+		e.connectedAt = time.Time{}
+	}
 	e.mu.Unlock()
 }
 

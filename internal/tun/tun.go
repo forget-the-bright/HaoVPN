@@ -48,6 +48,16 @@ func Open(cfg Config) (Device, error) {
 	return openPlatform(cfg)
 }
 
+// WarmupAdapter 在登录前确保名为 name 的 Wintun 适配器已存在（Open 或 Create）。
+//
+// 参数：name — yaml tun.name；空则用品牌默认名。
+// 返回：平台创建失败时 error；非 Windows 为 noop nil。
+// 副作用：可能 CreateAdapter（公司机冷创建可数十秒）；关闭句柄但保留适配器，供随后 Open 走「已复用」。
+// 调用方：clientgui 托盘启动后台；失败仅 Warn，不阻断登录。
+func WarmupAdapter(name string) error {
+	return warmupPlatform(name)
+}
+
 // parseCIDR 解析 CIDR 并返回主机 IP 与网段（委托 netutil）。
 //
 // 故意不导出：外部请直接调 netutil.ParseCIDR，避免再造一层薄 re-export。

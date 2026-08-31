@@ -52,7 +52,7 @@ func (c *Conn) readLoop() {
 			}
 			return
 		}
-		// --- 阶段 3：按帧类型分发（心跳刷新 / 回调 onData） ---
+		// --- 阶段 3：按帧类型分发（心跳刷新 / Data vs Handshake 分回调） ---
 		for _, f := range frames {
 			switch f.Type {
 			case FrameTypeHeartbeat, FrameTypeMTUProbe:
@@ -68,9 +68,13 @@ func (c *Conn) readLoop() {
 			case FrameTypeHandshake:
 				c.touchHB()
 				c.mu.Lock()
+				hs := c.onHandshake
 				fn := c.onData
 				c.mu.Unlock()
-				if fn != nil {
+				if hs != nil {
+					hs(f.Payload)
+				} else if fn != nil {
+					// 兼容未设 onHandshake 的旧路径/测试
 					fn(f.Payload)
 				}
 			}
@@ -112,7 +116,10 @@ func (c *Conn) heartbeatLoop() {
 			case c.sendQ <- frame:
 			default:
 			}
-			// --- 阶段 2：检查对端静默超时 ---
+			// --- 阶段 2：检查对端静默超时（配网 pause 时跳过）---
+			if c.hbPause.Load() {
+				continue
+			}
 			last := time.Unix(0, c.lastHB.Load())
 			if time.Since(last) > c.cfg.HeartbeatTimeout {
 				logger.Warn("heartbeat timeout, closing connection")

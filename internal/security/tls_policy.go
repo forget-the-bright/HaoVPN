@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net/http"
-	"strings"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
@@ -26,7 +25,8 @@ func TLSConfig(cert tls.Certificate, isServer bool) *tls.Config {
 			tls.TLS_AES_256_GCM_SHA384,
 			tls.TLS_CHACHA20_POLY1305_SHA256,
 		},
-		PreferServerCipherSuites: true,
+		// 不再设 PreferServerCipherSuites：该字段对 TLS 1.3 无效，且在 Go 1.22+ 已弃用；
+		// 协商由 CipherSuites + MinVersion 约束即可。
 	}
 	if isServer {
 		cfg.Certificates = []tls.Certificate{cert}
@@ -120,7 +120,7 @@ func RequestIsHTTPS(r *http.Request, secureCookies bool, trustedProxyCIDRs []str
 	remoteIP := netutil.HostFromAddr(r.RemoteAddr)
 	parsed, err := netutil.ParseHostIP(remoteIP)
 	if err == nil && netutil.IPMatchesRules(parsed, trustedProxyCIDRs) {
-		proto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")))
+		proto := netutil.TrimLower(r.Header.Get("X-Forwarded-Proto"))
 		return proto == "https"
 	}
 	return false

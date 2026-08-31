@@ -130,6 +130,9 @@ func buildLaunchdPlist(label string, programArgs []string, keepAlive bool) strin
 	return b.String()
 }
 
+// shellQuote 为 desktop/systemd Exec 行做 POSIX 风格引号（含空格路径）。
+//
+// 转义方言：与 winnet.EscapeSingleQuoted（PowerShell）及 platform EscapeArg（Windows cmdline）不同，勿混用。
 func shellQuote(s string) string {
 	if s == "" {
 		return `""`
@@ -140,6 +143,9 @@ func shellQuote(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
+// xmlEscape 转义 LaunchAgent/Daemon plist 中的 XML 文本节点。
+//
+// 转义方言：仅 XML 五实体；与 shellQuote / winnet PS 转义无关。
 func xmlEscape(s string) string {
 	r := strings.NewReplacer(
 		`&`, `&amp;`,

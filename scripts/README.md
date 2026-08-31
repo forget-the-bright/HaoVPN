@@ -37,6 +37,8 @@
 品牌语义：**对勾路径** =「好 / 通路确认」；**节点连线** = VPN 组网。改源图后：`go run .\scripts\gen-icons.go` → `.\scripts\embed-win-icons.ps1` → `.\scripts\build-local.ps1`。
 
 `FyneApp.toml` / winres 的版本号由构建脚本从根目录 **VERSION** 同步，勿手写死（见 [docs/versioning.md](../docs/versioning.md)）。
+
+**GUI 构建注意**：`Invoke-GoBuildGui` 固定带 `-tags migrated_fynedo`（Fyne 2.6+ 线程迁移）。仅改 `cmd/client-gui/FyneApp.toml` 的 `[Migrations] fyneDo` **不够**——本仓库用 `go build` 不读该 toml；另见 `internal/clientgui/fyne_meta.go` 运行时 `SetMetadata`。
 Linux/macOS 分发的是无壳裸二进制，无 Windows 式文件图标；可用 `assets/appicon.png` 做 `.desktop` / 安装包图标。
 
 ---

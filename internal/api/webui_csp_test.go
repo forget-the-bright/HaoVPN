@@ -343,6 +343,41 @@ func loginTestAdmin(t *testing.T, srv *api.Server) []*http.Cookie {
 	return loginW.Result().Cookies()
 }
 
+// TestHandleStaticRejectsPathTraversal 恶意 .. 路径不得打开 embed 外或返回 200。
+func TestHandleStaticRejectsPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	store, err := persist.Open(filepath.Join(dir, "static_trav.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	authSvc := auth.New(store, 5, 60, 3600)
+	cfg := testServerCfg()
+	pool, _ := ippool.New(cfg.VPN.Subnet)
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, pool, cfg), nil, time.Now(), "pk")
+
+	// 合法资源仍 200
+	okReq := httptest.NewRequest(http.MethodGet, "/static/style.css", nil)
+	okW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(okW, okReq)
+	if okW.Code != http.StatusOK {
+		t.Fatalf("style.css status=%d", okW.Code)
+	}
+
+	for _, p := range []string{
+		"/static/../templates/login.html",
+		"/static/..%2Ftemplates/login.html",
+		"/static/foo/../../templates/login.html",
+	} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, req)
+		if w.Code == http.StatusOK {
+			t.Fatalf("path %q should not return 200", p)
+		}
+	}
+}
+
 // stripJSComments 去掉行注释与块注释（不解析正则字面量；足以扫 HTML 的 onclick= 字面量）。
 // 注意：勿用简易状态机把 /"/g 的引号当成字符串起点，否则后续 // 注释会漏删。
 func stripJSComments(src string) string {

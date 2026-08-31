@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 
 	"haovpn/internal/brand"
 	"haovpn/internal/logger"
@@ -13,19 +14,54 @@ import (
 	"haovpn/internal/winnet"
 )
 
+var (
+	winnatMu                  sync.Mutex
+	winnatUnavailableCached bool // 本进程已确认无 WinNAT（家庭版等），跳过重复 PS
+)
+
 // setupNATPlatform 为 VPN 子网访问 LAN 配置 SNAT。
 // 优先 WinNAT（New-NetNat，需 Hyper-V）；家庭版等无 WinNAT 时回退 ICS（见 ics_nat_windows.go）。
 func setupNATPlatform(vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outboundIf string) error {
+	// 家庭版/Core：无 Hyper-V WinNAT，跳过 Get-NetNat/New-NetNat（避免 resident/CIM 空等）。
+	if winnet.IsWindowsHomeSKU() {
+		markWinNATUnavailable()
+		logger.Info("WinNAT skip reason=sku_home，直接 ICS 回退")
+		return setupICSPlatform(tunName, lanCIDR, outboundIf, tunIP)
+	}
+	if isWinNATCachedUnavailable() {
+		logger.Info("WinNAT 本进程已确认不可用，跳过 New-NetNat，直接 ICS 回退")
+		return setupICSPlatform(tunName, lanCIDR, outboundIf, tunIP)
+	}
 	winErr := setupWinNAT(vpnSubnet)
 	if winErr == nil {
 		return nil
 	}
 	if isWinNATUnavailable(winErr) {
+		markWinNATUnavailable()
 		logger.Warn("WinNAT 不可用（Windows 家庭版或未启用 Hyper-V）: %v", winErr)
 		logger.Info("尝试 ICS 回退（Internet 连接共享）…")
 		return setupICSPlatform(tunName, lanCIDR, outboundIf, tunIP)
 	}
 	return winErr
+}
+
+func isWinNATCachedUnavailable() bool {
+	winnatMu.Lock()
+	defer winnatMu.Unlock()
+	return winnatUnavailableCached
+}
+
+func markWinNATUnavailable() {
+	winnatMu.Lock()
+	winnatUnavailableCached = true
+	winnatMu.Unlock()
+}
+
+// resetWinNATCacheForTest 单测重置缓存。
+func resetWinNATCacheForTest() {
+	winnatMu.Lock()
+	winnatUnavailableCached = false
+	winnatMu.Unlock()
 }
 
 // setupWinNAT 使用 New-NetNat（依赖 Hyper-V/WinNAT 子系统）。
@@ -47,7 +83,7 @@ func setupWinNAT(vpnSubnet string) error {
 		`New-NetNat -Name %s -InternalIPInterfaceAddressPrefix %s -ErrorAction Stop`,
 		name, vpnSubnet,
 	)
-	out, err := winnet.RunPS(ps)
+	out, err := winnet.RunPSOneShot(ps)
 	if err != nil {
 		return platform.CommandOutputError("New-NetNat", out, err)
 	}
@@ -72,7 +108,10 @@ func teardownNATPlatform(vpnSubnet, lanCIDR, tunName string) error {
 	_ = vpnSubnet
 	_ = lanCIDR
 	_ = tunName
-	// 尽力删 WinNAT；ICS 由 Teardown 末尾 disableICSPlatform 统一关一次，避免多 LAN 重复 COM。
+	// 已确认无 WinNAT 时跳过无意义的 Remove-NetNat。
+	if isWinNATCachedUnavailable() {
+		return nil
+	}
 	winnet.RunPSBestEffort(
 		`Remove-NetNat -Name `+brand.WinNATName+` -Confirm:$false -ErrorAction SilentlyContinue`,
 		"Remove-NetNat-teardown",
@@ -81,14 +120,25 @@ func teardownNATPlatform(vpnSubnet, lanCIDR, tunName string) error {
 }
 
 // winNATMatches 检查是否已有相同 prefix 的 NetNat 规则（避免每次重启 Remove+New）。
+// 一律 RunPSOneShot：Get-NetNat 等 CIM 脚本禁止走已删除的常驻主机。
 func winNATMatches(name, prefix string) bool {
+	if isWinNATCachedUnavailable() {
+		return false
+	}
 	ps := fmt.Sprintf(`
 $n = Get-NetNat -Name '%s' -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $n) { exit 1 }
-if ($n.InternalIPInterfaceAddressPrefix -eq '%s') { exit 0 }
-exit 2
+if (-not $n) { Write-Output 'MISS' }
+elseif ($n.InternalIPInterfaceAddressPrefix -eq '%s') { Write-Output 'MATCH' }
+else { Write-Output 'DIFF' }
 `, winnet.EscapeSingleQuoted(name), winnet.EscapeSingleQuoted(prefix))
-	// exit 0 = 匹配；非零（含 exit 1/2）经 RunPS 变为 error → false。
-	_, err := winnet.RunPS(ps)
-	return err == nil
+	out, err := winnet.RunPSOneShot(ps)
+	if err != nil {
+		return false
+	}
+	return parseWinNATMatchOutput(string(out))
+}
+
+// parseWinNATMatchOutput 解析 winNATMatches 脚本 stdout（表驱动单测）。
+func parseWinNATMatchOutput(out string) bool {
+	return strings.Contains(strings.ToUpper(strings.TrimSpace(out)), "MATCH")
 }

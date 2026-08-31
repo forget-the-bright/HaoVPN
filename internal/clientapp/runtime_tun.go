@@ -10,6 +10,9 @@ import (
 )
 
 // runtime_tun.go：TUN 读循环、上送过滤与 local_lans 网段缓存。
+//
+// 读循环内 time.Sleep：设备未就绪或读错误时的持续轮询（有 ctx 生命周期），
+// 非「有限次 settle」——勿改成 safeutil.RetryN（会改变语义为失败退出）。
 
 // cacheExitLANNetsLocked 解析 local_lans 供 TUN 上送过滤；调用方须已持 rt.mu。
 func (rt *runtime) cacheExitLANNetsLocked() {

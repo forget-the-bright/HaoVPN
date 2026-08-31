@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"haovpn/internal/brand"
+	"haovpn/internal/winnet"
 )
 
 func TestIsExpectedWintunDebug(t *testing.T) {
@@ -27,7 +28,7 @@ func TestIsExpectedWintunDebug(t *testing.T) {
 }
 
 func TestBuildPrepareWintunPSScript(t *testing.T) {
-	ps := buildPrepareWintunPSScript("haovpn0")
+	ps := winnet.BuildPrepareWintunOrphanScript("haovpn0")
 	for _, frag := range []string{"haovpn0", "Remove-NetAdapter", brand.WintunPool} {
 		if !strings.Contains(ps, frag) {
 			t.Fatalf("script missing %q: %s", frag, ps)

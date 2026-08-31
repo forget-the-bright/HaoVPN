@@ -74,8 +74,8 @@ func (u *uiApp) showLogin(elevHint string) {
 	sub := widget.NewLabelWithStyle(version.String(), fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
 	logo := icons.LogoImage()
 
-	connectBtn := widget.NewButton("连接", func() { u.tryConnect() })
-	connectBtn.Importance = widget.HighImportance
+	u.connectBtn = widget.NewButton("连接", func() { u.tryConnect() })
+	u.connectBtn.Importance = widget.HighImportance
 
 	form := container.New(layout.NewFormLayout(),
 		widget.NewLabel("服务器"), u.serverEntry,
@@ -93,18 +93,20 @@ func (u *uiApp) showLogin(elevHint string) {
 		form,
 		u.cfgPathLbl,
 		u.errLbl,
-		connectBtn,
+		u.connectBtn,
 		layout.NewSpacer(),
 	)
 	w.SetContent(container.NewPadded(content))
 	w.CenterOnScreen()
 	w.SetCloseIntercept(func() { w.Hide() })
 	w.Show()
+	u.setEngineOpBusyUI(u.isEngineOpBusy())
 }
 
 // tryConnect 校验表单、启动 Engine；鉴权成功（WaitConnected）后进主界面，TUN 在后台继续配置。
 //
 // 密码错误、账号已在线等失败留在登录页并显示 errLbl。
+// 预热与 Open 经 wintunOpenMu / warmedAdapter 交接，勿在 UI 线程阻塞 Wait。
 func (u *uiApp) tryConnect() {
 	if !u.requireAdmin("须以管理员运行（TUN/路由/杀开关）", func(m string) { u.errLbl.SetText(m) }) {
 		return
@@ -163,9 +165,15 @@ func (u *uiApp) tryConnect() {
 	u.setEngine(eng)
 	u.errLbl.SetText("正在连接…")
 	u.applyTray(trayKindConnecting, true)
+	if u.connectBtn != nil {
+		u.connectBtn.Disable() // 等待鉴权期间防连点（非 engOpBusy）
+	}
 	if err := eng.Start(); err != nil {
 		u.errLbl.SetText(err.Error())
 		u.applyTray(trayKindError, true)
+		if u.connectBtn != nil {
+			u.connectBtn.Enable()
+		}
 		return
 	}
 
@@ -190,6 +198,9 @@ func (u *uiApp) tryConnect() {
 				}
 				u.errLbl.SetText(msg)
 				u.applyTray(trayKindError, true)
+				if u.connectBtn != nil {
+					u.connectBtn.Enable()
+				}
 			})
 			return
 		}

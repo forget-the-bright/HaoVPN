@@ -12,6 +12,7 @@
 |------|------|
 | `-ldflags` → `internal/version.Version` | `build-local` / `build-release` |
 | `cmd/client-gui/FyneApp.toml` 的 `Version` | 同上（`Sync-FyneAppTomlFromVersion`） |
+| GUI Fyne.Do 迁移 | **构建** `-tags migrated_fynedo`（`Invoke-GoBuildGui`）+ **代码** `SetMetadata`；toml `[Migrations]`  alone 对 `go build` 无效 |
 | Windows `winres` 文件版本 / ProductVersion | `embed-win-icons.ps1`（占位符 `{{VERSION}}`） |
 
 `FyneApp.toml` 本身不能「引用」VERSION 文件（Fyne 只读静态 TOML），因此以**构建前同步**为准；仓库里该字段仅作缓存，发版以根目录 `VERSION` 为准。

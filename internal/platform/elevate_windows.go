@@ -66,6 +66,8 @@ func RelaunchElevated() (launched bool, err error) {
 // joinElevatedArgs 将参数列表合成为 ShellExecute lpParameters 字符串。
 //
 // 使用 windows.EscapeArg，保证含空格的 -c 配置路径不被拆碎。
+// 转义方言：本处为 Windows 命令行 argv；勿与 winnet.EscapeSingleQuoted（PS '...'）
+// / EscapeRegex（-match）或 autostart shellQuote/xmlEscape 混用。
 func joinElevatedArgs(args []string) string {
 	if len(args) == 0 {
 		return ""

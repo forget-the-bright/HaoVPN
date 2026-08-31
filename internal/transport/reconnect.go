@@ -11,6 +11,9 @@ import (
 	"haovpn/internal/safeutil"
 )
 
+// stopWaitTimeout Stop 等待 loop 退出的上限；超时打 Warn，避免永久卡死（异常 Dial 挂死）。
+const stopWaitTimeout = 45 * time.Second
+
 // ReconnectClient 客户端自动重连管理器：指数退避 Dial，连接成功后回调 onConnect。
 //
 // 字段：
@@ -18,15 +21,17 @@ import (
 //   addr — 目标 host:port；不变。
 //   tlsCfg — 客户端 TLS 配置；Dial 时传入。
 //   onData — 收到数据帧时转发给上层（通常为 tunnel 解密入口）。
-//   onConnect — 每次 Dial 成功、StateConnected 后调用；用于重新握手。
+//   onConnect — 每次 Dial 成功后调用；用于重新握手（Stop 后禁止再调）。
 //   onDialError — 拨号/TLS 失败时可选回调（供 GUI 首次失败提示）；可为 nil。
 //   mu — 保护 conn 指针读写。
 //   conn — 当前活跃 *Conn；重连间隙或 Stop 后为 nil。
 //   stop — Stop 时 close，通知 loop 退出。
+//   done — loop 退出时 close；Stop 须等待，避免与 NewEngine.Start 竞态。
 //   once — 保证 stop channel 只关闭一次。
 //   started — 防双 Start（CAS）；重复 Start 打 Warn 并忽略。
 //
 // 线程安全：Start/Stop/Conn 可从任意 goroutine 调用；loop 经 safeutil.GoSafe 运行。
+// 关联：手动重连须 Engine.Stop（等本 Stop 返回）后再 NewEngine.Start，见 clientgui/tray.go。
 type ReconnectClient struct {
 	cfg         Config
 	addr        string
@@ -37,6 +42,7 @@ type ReconnectClient struct {
 	mu          sync.Mutex
 	conn        *Conn
 	stop        chan struct{}
+	done        chan struct{}
 	once        sync.Once
 	started     atomic.Bool
 }
@@ -55,6 +61,7 @@ func NewReconnectClient(addr string, tlsCfg *tls.Config, cfg Config, onData func
 		onData:    onData,
 		onConnect: onConnect,
 		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -76,6 +83,7 @@ func (r *ReconnectClient) Start() {
 }
 
 func (r *ReconnectClient) loop() {
+	defer close(r.done)
 	backoff := r.cfg.EffectiveReconnectInitial()
 	maxBackoff := r.cfg.EffectiveReconnectMax()
 	dialTO := r.cfg.EffectiveDialTimeout()
@@ -101,9 +109,19 @@ func (r *ReconnectClient) loop() {
 			if r.onDialError != nil {
 				r.onDialError(err)
 			}
-			time.Sleep(backoff)
+			if !r.sleepInterruptible(backoff) {
+				return
+			}
 			backoff = safeutil.ExpBackoff(backoff, maxBackoff)
 			continue
+		}
+		// Stop 已发出：丢弃迟到 Dial，禁止僵尸 onConnect（手动重连竞态根因）
+		select {
+		case <-r.stop:
+			logger.Info("reconnect_dial_discarded_after_stop addr=%s", r.addr)
+			conn.Close()
+			return
+		default:
 		}
 		backoff = r.cfg.EffectiveReconnectInitial()
 		r.mu.Lock()
@@ -111,7 +129,14 @@ func (r *ReconnectClient) loop() {
 		r.mu.Unlock()
 		// --- 阶段 2：通知上层重新握手 ---
 		if r.onConnect != nil {
-			r.onConnect(conn)
+			select {
+			case <-r.stop:
+				logger.Info("onConnect skipped stopped addr=%s", r.addr)
+				conn.Close()
+				return
+			default:
+				r.onConnect(conn)
+			}
 		}
 		// --- 阶段 3：等待连接断开（Conn.Done，禁止 100ms 空转）---
 		select {
@@ -128,14 +153,37 @@ func (r *ReconnectClient) loop() {
 		// --- 阶段 4：断线后短暂停顿再重拨 ---
 		pause := AfterDisconnectPause()
 		logger.Info("将重连 addr=%s pause=%s dial_timeout=%s", r.addr, pause, dialTO)
-		time.Sleep(pause)
+		if !r.sleepInterruptible(pause) {
+			return
+		}
 		backoff = r.cfg.EffectiveReconnectInitial()
 	}
 }
 
-// Stop 停止重连循环并关闭当前 Conn。
+// sleepInterruptible 可被 Stop 打断的等待；返回 false 表示已 stop、loop 应退出。
+func (r *ReconnectClient) sleepInterruptible(d time.Duration) bool {
+	if d <= 0 {
+		select {
+		case <-r.stop:
+			return false
+		default:
+			return true
+		}
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-r.stop:
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// Stop 停止重连循环、关闭当前 Conn，并等待 loop 退出。
 //
-// 副作用：close(stop) 一次；关闭 r.conn（若存在）；loop 退出后不再 Dial。
+// 副作用：close(stop) 一次；关闭 r.conn（若存在）；阻塞直至 loop 结束或超时。
+// 为何等待：GUI 手动重连在 Stop 后立刻 NewEngine.Start；若不等待，旧 Dial 仍可能 onConnect。
 // 并发：可安全多次调用（once 保护）；与 Start 后的 loop 并发安全。
 func (r *ReconnectClient) Stop() {
 	r.once.Do(func() { close(r.stop) })
@@ -144,6 +192,19 @@ func (r *ReconnectClient) Stop() {
 		r.conn.Close()
 	}
 	r.mu.Unlock()
+	if !r.started.Load() {
+		// 从未 Start：done 不会被 close，直接返回
+		return
+	}
+	logger.Debug("reconnect_stop wait_loop addr=%s", r.addr)
+	t := time.NewTimer(stopWaitTimeout)
+	defer t.Stop()
+	select {
+	case <-r.done:
+		logger.Debug("reconnect_stop loop_exited addr=%s", r.addr)
+	case <-t.C:
+		logger.Warn("reconnect_stop wait_loop timeout=%s addr=%s（loop 可能仍卡在 Dial）", stopWaitTimeout, r.addr)
+	}
 }
 
 // Conn 返回当前活跃连接；重连间隙或 Stop 后可能为 nil。

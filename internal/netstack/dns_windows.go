@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
+	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/winnet"
 )
@@ -35,20 +37,24 @@ func ApplyDNS(adapterName string, servers []string) error {
 	if adapterName == "" || len(servers) == 0 {
 		return nil
 	}
+	start := time.Now()
 	resolved := winnet.ResolveInterfaceAlias(adapterName)
 	dnsMu.Lock()
 	defer dnsMu.Unlock()
 	if prior, ok := dnsApplied[resolved]; ok && dnsServersEqual(prior, servers) {
+		logger.Info("dns_apply elapsed=%s adapter=%s result=unchanged", time.Since(start), adapterName)
 		return nil
 	}
 	if _, ok := dnsSaved[resolved]; !ok {
 		dhcp, prior, _ := readDNS(resolved)
 		dnsSaved[resolved] = dnsState{dhcp: dhcp, servers: append([]string{}, prior...)}
 	}
-	if err := applyStaticDNS(resolved, servers); err != nil {
+	if err := applyStaticDNS(adapterName, resolved, servers); err != nil {
+		logger.Warn("dns_apply elapsed=%s adapter=%s err=%v", time.Since(start), adapterName, err)
 		return err
 	}
 	dnsApplied[resolved] = append([]string{}, servers...)
+	logger.Info("dns_apply elapsed=%s adapter=%s servers=%v", time.Since(start), adapterName, servers)
 	return nil
 }
 
@@ -78,26 +84,29 @@ func RestoreDNS(adapterName string) error {
 		}
 		return nil
 	}
-	return applyStaticDNS(resolved, st.servers)
+	return applyStaticDNS(adapterName, resolved, st.servers)
 }
 
 func dnsServersEqual(a, b []string) bool {
 	return netutil.StringSlicesEqualTrimmed(a, b)
 }
 
-func applyStaticDNS(adapterName string, servers []string) error {
+func applyStaticDNS(configName, ifName string, servers []string) error {
 	if len(servers) == 0 {
 		return nil
 	}
-	if err := winnet.SetInterfaceDNSStatic(adapterName, servers[0]); err != nil {
-		return err
-	}
-	for i := 1; i < len(servers); i++ {
-		if err := winnet.AddInterfaceDNS(adapterName, servers[i], i+1); err != nil {
-			return err
+	idx := 0
+	if configName != "" {
+		if i, err := winnet.InterfaceIndex(configName); err == nil {
+			idx = i
 		}
 	}
-	return nil
+	if idx <= 0 && ifName != "" {
+		if i, err := winnet.InterfaceIndex(ifName); err == nil {
+			idx = i
+		}
+	}
+	return winnet.SetInterfaceDNSServers(ifName, idx, servers)
 }
 
 func readDNS(adapterName string) (dhcp bool, servers []string, err error) {

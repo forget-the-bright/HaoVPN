@@ -63,31 +63,25 @@ func (s *Server) addPeerAccess(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	if err := s.store.AddPeerAccessPair(body.UserID, body.PeerUserID); err != nil {
+	if err := s.peerPolicy.AddPeerAccess(body.UserID, body.PeerUserID); err != nil {
 		writeDomainError(w, err)
 		return
 	}
 	s.audit.Log(s.actorFromRequest(r), "peer_access_add", "user", &body.UserID, s.clientIP(r), map[string]string{
 		"peer_user_id": strconv.FormatInt(body.PeerUserID, 10), "bidirectional": "true",
 	})
-	s.markPeerDirtyUsers(body.UserID, body.PeerUserID)
 	writePendingApply(w, nil)
 }
 
 func (s *Server) removePeerAccess(w http.ResponseWriter, r *http.Request) {
 	uid := parseQueryInt64(r, "user_id")
 	pid := parseQueryInt64(r, "peer_user_id")
-	if uid <= 0 || pid <= 0 {
-		writeAPIError(w, http.StatusBadRequest, "须提供 user_id 与 peer_user_id")
-		return
-	}
-	if err := s.store.RemovePeerAccessPair(uid, pid); err != nil {
-		writeInternalError(w, err)
+	if err := s.peerPolicy.RemovePeerAccess(uid, pid); err != nil {
+		writeDomainError(w, err)
 		return
 	}
 	s.audit.Log(s.actorFromRequest(r), "peer_access_remove", "user", &uid, s.clientIP(r), map[string]string{
 		"peer_user_id": strconv.FormatInt(pid, 10), "bidirectional": "true",
 	})
-	s.markPeerDirtyUsers(uid, pid)
 	writePendingApply(w, nil)
 }

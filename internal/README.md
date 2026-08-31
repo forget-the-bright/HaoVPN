@@ -10,16 +10,30 @@
 |----------|--------|
 | 管理 API 路由 | `api/handler_routes.go` |
 | 健康 / 审计 / Dashboard / 备份 / 日志 | `api/handler_ops.go`（公开 health 仅 ok+uptime；历史日志 items 再脱敏）；Dashboard 字段 `health/dashboard.go` |
-| 托管路由 / 互访 / LAN 注册 / HTTP 应用生效 | `api/handler_peer_routes.go`、`handler_peer_access.go`、`handler_lan_registry.go`、`handler_peers_apply.go`、`handler_peers_dirty.go`；DTO `readmodel/peers.go` |
+| 托管路由 / 互访 / LAN 注册 / HTTP 应用生效 | `api/handler_peer_*.go`；写用例 `vpnaccount/peer_write.go`；DTO `readmodel/peers.go` |
 | peer dirty / 应用生效（领域） | `vpnaccount/peer_apply.go`（`PeerPolicyApplier`）；重启 WARN `serverapp/boot_api.go` |
 | Session Cookie 写入/清除 / 滑动续期 | `api/auth_handlers.go`：`setSessionCookie` / `clearSessionCookie`（Secure/SameSite 对齐）；Touch 重发 |
 | API JSON 成功 / pending_apply / items / JSON 体上限 / 方法守卫 | `api/httputil.go` → `writeOK*`/`writePendingApply`/`writeItems*`/`decodeJSONBody`（1MiB）/`requireMethod` |
 | WebUI CSP / 页面脚本 | CSP `security/tls_policy.go`（script+style 均 `'self'`）；`web/static/*.js` + `style.css`；显隐 `HaoVPN.setVisible`/`setOverlayOpen` |
 | 字符串 Trim+小写 / VPN 子网 hint | `netutil.TrimLower`；`netutil.InferVPNSubnetHint` |
-| Windows PowerShell | `winnet.RunPS` / `RunPSBestEffort`（唯一入口） |
+| Windows PowerShell | `RunPS*` + **`ps_snippets.go`**（找网卡/ICS/孤儿模板） |
+| Windows IP Helper / 配 IP | `winnet/iphlp_*`、`SetInterfaceIPv4OnIndex`；开关 `config.windows.use_ip_helper` |
+| 分流路由 / DNS 写入 | `netstack/route_ops_windows.go`、`dns_windows.go` |
+| 分流路由部分失败 | `clientapp/runtime_routes.go`（`route_install`）；零成功硬失败 |
 | DNS show 解析 | `winnet.ParseDNSShowOutput` |
+| 手动重连 / Soft vs Hard | Soft：`transport/reconnect.go`；Hard：`clientapp/hard_restart.go`；GUI：`reconnect_dns.go` |
+| Stop 屏障 / DNS 先恢复 | `engine_lifecycle.go`；`runtime_routes.go` |
+| GUI 线程 / 防连点 | `fyne_meta.go`；`engine_stop.go`（`beginEngineOp` + 按钮 Disable） |
+| 托盘悬停气泡 | `tray_tooltip.go`（预算 **63**）；Disconnecting；鉴权后早写 VPNIP |
+| GUI 自动连接 / 预热重叠 | `clientgui/run.go`：后台 `clientapp.WarmupTun`；立即 `gui_auto_connect` |
+| 握手勿解析 Data | `transport.SetOnHandshake`；`tunnel/client_handshake.go` |
+| TUN 预热 | `clientapp.WarmupTun`（禁止 GUI→tun）；孤儿清理 `winnet.BuildPrepareWintunOrphanScript` |
+| 服务凭据 DPAPI | `clientapp.SaveServiceCredentials`（禁止 GUI→credentials） |
+| Windows ICS/加速门面 | `netstack.ConfigureWindows` / `HasICSResidue` 等（`winnet_facade.go`）；clientapp 禁 winnet |
+| TUN 名校验 | `config.ValidateTunName` |
+| PS `-match` 转义 | `winnet.EscapeRegex` + `EscapeSingleQuoted` |
 | 杀开关前缀去重 | `netutil.DedupTrimNonEmpty` |
-| 空 local_lans ICS 清理 | `clientapp/via_exit.go`（无残留跳过）；`winnet/ics_windows.go`（HasICSResidue / CleanupICSResidue / DisableAllICS） |
+| 空 local_lans ICS 清理 | `via_exit.go`；`HasICSResidue`；Teardown：`DisableICSPair`→残留再 `DisableAllICS` |
 | 短时重试（Listen 等） | `safeutil/retry.go`（`RetryN`、`ExpBackoff`）；长生命周期 goroutine `safeutil.GoSafe` |
 | AbsPair / EnsureDir / ACL / 世界可读 | `fileutil/fs.go`、`mkdir.go`、`perm_*.go`（`RestrictToAdminsOnly`、`CheckWorldReadable`） |
 | 广告 LAN 禁 VPN 池重叠 | `netutil.ValidateAdvertisedLANNotForbidden`；握手 `tunnel/server_handler.go` |
@@ -59,25 +73,27 @@
 
 ---
 
-## 按包：主要文件（第二十二轮）
+## 按包：主要文件（现行）
 
 | 包 | 文件 | 做什么 |
 |----|------|--------|
 | **dialerr** | `errors.go` / `classify.go` | 拨号哨兵（中文 Error）、banner 常量、共用前缀匹配、FatalDial、TLS bad-record |
 | **autherr** | `classify.go` | 分类 + code；子串表与 Is* 共用；依赖 dialerr，不依赖 transport |
 | **probedefense** | `guard.go`（`OnHandshakeReject`）/ `classify_*.go` | 探针；实现 tunnel.ProbeRecorder；无 ErrSourceDenied re-export |
-| **clientapp** | `dial_errors.go` / `fatal_auth.go` / `engine_*.go` / `via_exit.go` | UX、fatal（直接 autherr）；via/ICS 智能清理 |
-| **clientgui** | `tray_routes.go` | 托盘路由；子网 hint 用 `netutil.InferVPNSubnetHint` |
+| **clientapp** | `dial_errors.go` / `fatal_auth.go` / `engine_*.go` / `hard_restart.go` / `warmup.go` / `via_exit.go` | UX、fatal；HardRestart；WarmupTun；via/ICS（经 netstack 门面） |
+| **clientgui** | `run.go` / `tray_*.go` / `reconnect_dns.go` | 托盘/重连调度；禁 tun/winnet/credentials |
 | **transport** | `transport.go` / `server.go` / `probe_banner.go` / `reconnect.go` | Conn/Listen GoSafe；banner I/O；重连 Done/ExpBackoff |
-| **tunnel** | `server_handler.go` / `server_handshake_auth.go` / `server_handshake_session.go` / `handshake*.go` | 握手编排文件簇；源 IP 直接 netutil |
+| **tunnel** | `server_handler.go` / `server_handshake_*.go` / `handshake*.go` | 握手编排文件簇；源 IP 直接 netutil |
 | **netutil** | `source_ip.go` / `strings.go` / `gateway.go` | TrimLower、InferVPNSubnetHint、源白名单 wrap dialerr |
-| **winnet** | `ps_windows.go` / `address_windows.go` / `dns_netsh_windows.go` / `ics_windows.go` / `dns_parse.go` | RunPS/RunPSBestEffort；ICS；ParseDNSShowOutput |
-| **netstack** | `forward_`/`nat_`/`ics_nat_`/`route_ops_windows.go`；`killswitch_windows.go` + `killswitch_wfp_*.go` | 转发/NAT/ICS/路由；WFP 杀开关分文件 |
+| **winnet** | `ps_snippets.go` / `escape.go` / `options.go` / `iphlp_*` / `ics_*` | PS 模板；EscapeRegex；IP Helper；ICS |
+| **netstack** | `forward_`/`nat_`/`ics_nat_`/`route_ops_`；`winnet_facade.go`；killswitch WFP | 转发/NAT/ICS/路由；对 clientapp 的 Windows 门面 |
 | **safeutil** | `goroutine.go` / `retry.go` | `GoSafe`、`RetryN`、`ExpBackoff` |
-| **api** | `auth_handlers.go` / `httputil.go` / `handler_peers_*.go` | Cookie helpers；decodeJSONBody；HTTP 薄层 |
+| **api** | `auth_handlers.go` / `httputil.go` / `handler_peer_*.go` | Cookie helpers；`writeDomainError`；HTTP 薄层 |
+| **vpnaccount** | `peer_write.go` / `peer_apply.go` / `provision.go` | peer 写+脏标；开户/策略 |
 | **serverapp** | `boot_persist.go` … `boot_api.go` | 启动分阶段；可 import api 启动 HTTP |
 | **fileutil** | `fs.go` / `mkdir.go` / `perm_*.go` | EnsureDir、AbsPair、ACL |
 | **security** | `tls_policy.go` | CSP `script-src`/`style-src` 均 `'self'` |
+| **config** | `client.go` / `tun_name.go` | YAML；`ValidateTunName` |
 | **logger** | `redact.go` | Authorization / session= 脱敏 |
 | **readmodel** | `peers.go` | Peer 视图 DTO |
 | **autostart** | `logon_*.go` / `service_*.go` / `gen.go` | 跨平台自启 |
@@ -88,18 +104,19 @@
 
 ```
 clientapp / clientgui / serverapp
-    ├── api ──► vpnaccount（含 PeerPolicyApplier）/ auth / probedefense
+    ├── api ──► vpnaccount（含 PeerPolicyApplier + peer_write）/ auth / probedefense
     ├── tunnel ──► tun
     ├── transport ← Probe
-    ├── netstack ──► platform
+    ├── netstack ──► winnet / platform
     ├── maintenance
     └── persist + sessionmgr
-netutil / winnet / fileutil / timeutil / paginate / readmodel / security / config / safeutil / dialerr / autherr
+netutil / winnet / fileutil / timeutil / paginate / readmodel / security / config / safeutil / dialerr / autherr / credentials
 ```
 
 完整包一览见 [architecture.md § CODEMAP](../docs/architecture.md#internal-包-codemap)。
 
 > 架构轮次变更摘要只写 [docs/dev-log.md](../docs/dev-log.md)，本文件不重复堆「第 N 轮」。
+> 依赖不变量：`clientgui` 禁 tun/winnet/credentials；`clientapp` 禁 winnet（经 netstack 门面）。
 
 ---
 
@@ -132,9 +149,10 @@ netutil / winnet / fileutil / timeutil / paginate / readmodel / security / confi
 | 文件簇 | 做什么 |
 |--------|--------|
 | `engine_*.go` | 状态机、连接、生命周期 |
+| `hard_restart.go` / `warmup.go` | HardRestart / WaitDNSReady；WarmupTun（GUI 门面） |
 | `dial_errors.go` / `fatal_auth.go` | 拨号 UX、致命鉴权（autherr+dialerr） |
 | `runtime_*.go` / `via_exit.go` / `policy_diff.go` | TUN/路由/策略数据面 |
-| `credentials.go` / `bootstrap.go` | 凭据与启动 |
+| `credentials.go` / `bootstrap.go` | 凭据门面与启动 |
 
 ### probedefense/
 

@@ -202,6 +202,11 @@ security:
   # false：断线仅清 TUN 路由（默认，多数现场够用）
   kill_switch: false
 
+# Windows 专用网卡加速（其它平台忽略本段）
+# use_ip_helper：地址/ICS/配 IP/路由/DNS 优先 IP Helper，失败回退 netsh/route（默认 true）
+windows:
+  # use_ip_helper: true
+
 # 桌面 GUI 行为（CLI/Windows 服务可忽略本段）
 gui:
   # 启动后自动连接：须 remember_password=true 且已保存 password；工控常与 start_minimized 同开

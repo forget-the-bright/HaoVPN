@@ -21,9 +21,9 @@
 
 | 文档 | 说明 |
 |------|------|
+| [architecture.md](architecture.md) | **CODEMAP**（包边界、依赖、HTTP 路由） |
 | [codebase-guide.md](codebase-guide.md) | **代码库导读**（分层、横切关注点、新人全景） |
 | [development-principles.md](development-principles.md) | 开发原则与验收底线 |
-| [architecture.md](architecture.md) | **CODEMAP**（包边界、依赖、HTTP 路由） |
 | [../internal/README.md](../internal/README.md) | 改 X 功能来哪 |
 | [comment-style.md](comment-style.md) | 中文注释规范 |
 | [dev-log.md](dev-log.md) | **唯一进度 / 变更日志** |
@@ -74,4 +74,4 @@
 3. 改行为（配置项、安全默认、自启、API）时同步：`deploy` / `security-hardening` / `troubleshooting` 中相关节。
 4. 新增文档遵守上方「放置规则」；活文档尽量留在根目录，避免打断代码里的 `docs/deploy.md` 等硬路径。
 
-*最后更新：2026-08-31 · 文档治理（删 release-notes DRAFT；plans/archive 浅分层）*
+*最后更新：2026-08-31 · VERSION 0.1.3 · 文档治理（对齐第 24 轮）*

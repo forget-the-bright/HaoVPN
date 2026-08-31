@@ -9,11 +9,12 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 
-	"haovpn/internal/brand"
+	"haovpn/internal/logger"
 )
 
 var (
@@ -97,6 +98,9 @@ func ResolveInterfaceAlias(configName string) string {
 //   ifIndex — 已知索引时可 >0 加速；≤0 时从缓存或按名解析。
 //   ipStr — 期望的 IPv4 字符串。
 // 返回：已绑定且与 ipStr 相等时为 true。
+//
+// 性能：默认 IP Helper GetUnicastIpAddressTable（O(表)）；失败才 net.InterfaceByIndex。
+// 有 ifIndex 时不用 ByName，避免二次慢路径。
 func InterfaceHasIPv4(configName string, ifIndex int, ipStr string) bool {
 	want := net.ParseIP(ipStr)
 	if want == nil {
@@ -107,8 +111,17 @@ func InterfaceHasIPv4(configName string, ifIndex int, ipStr string) bool {
 			ifIndex = idx
 		}
 	}
-	if ifIndex > 0 && interfaceHasIPv4ByIndex(ifIndex, want) {
-		return true
+	if ifIndex > 0 {
+		if UseIPHelperEnabled() {
+			start := time.Now()
+			ok, err := interfaceHasIPv4ByIPHelper(ifIndex, want)
+			if err == nil {
+				logger.Debug("InterfaceHasIPv4 method=iphlp elapsed=%s ifIndex=%d hit=%v", time.Since(start), ifIndex, ok)
+				return ok
+			}
+			logger.Debug("InterfaceHasIPv4 method=net_fallback elapsed=%s ifIndex=%d err=%v", time.Since(start), ifIndex, err)
+		}
+		return interfaceHasIPv4ByIndex(ifIndex, want)
 	}
 	return interfaceHasIPv4ByName(configName, want)
 }
@@ -170,22 +183,17 @@ func luidToAlias(luid uint64) (string, error) {
 	return alias, nil
 }
 
+// interfaceHasIPv4ByIndex 按 ifIndex 查地址；用 InterfaceByIndex，禁止 Interfaces() 全表。
 func interfaceHasIPv4ByIndex(ifIndex int, want net.IP) bool {
-	ifaces, err := net.Interfaces()
+	iface, err := net.InterfaceByIndex(ifIndex)
 	if err != nil {
 		return false
 	}
-	for _, iface := range ifaces {
-		if iface.Index != ifIndex {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			return false
-		}
-		return addrsContainIPv4(addrs, want)
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return false
 	}
-	return false
+	return addrsContainIPv4(addrs, want)
 }
 
 func interfaceHasIPv4ByName(name string, want net.IP) bool {
@@ -216,19 +224,22 @@ func addrsContainIPv4(addrs []net.Addr, want net.IP) bool {
 	return false
 }
 
-// findAdapterIfIndexPS 通过 PowerShell 按 Name 或 Wintun/HaoVPN 描述查找网卡 ifIndex。
+// FindAdapterIfIndex 按 TUN 配置名解析 ifIndex（与 InterfaceIndex 同义）。
 //
-// 返回：解析失败的 stdout 或非正整数时 error。
-func findAdapterIfIndexPS(name string) (int, error) {
-	ps := fmt.Sprintf(`
-$if = Get-NetAdapter | Where-Object { $_.Name -eq '%s' } | Select-Object -First 1
-if (-not $if) {
-  $if = Get-NetAdapter | Where-Object { $_.InterfaceDescription -match '%s|%s' } | Select-Object -First 1
+// CODEMAP 推荐此名表达「找网卡」；实现委托 InterfaceIndex（LUID→ByName→PS）。
+func FindAdapterIfIndex(name string) (int, error) {
+	return InterfaceIndex(name)
 }
+
+// findAdapterIfIndexPS 通过 PowerShell 按 Name 或 Wintun/品牌池描述查找网卡 ifIndex。
+//
+// 找网卡模板唯一源：PSSnippetAssignAdapterIf。
+func findAdapterIfIndexPS(name string) (int, error) {
+	ps := PSSnippetAssignAdapterIf(name) + `
 if (-not $if) { throw 'adapter not found' }
 Write-Output $if.ifIndex
-`, EscapeSingleQuoted(name), "Wintun", brand.WintunPool)
-	out, err := RunPS(ps)
+`
+	out, err := RunPSOneShot(ps)
 	if err != nil {
 		return 0, fmt.Errorf("查网卡索引 %q: %w", name, err)
 	}

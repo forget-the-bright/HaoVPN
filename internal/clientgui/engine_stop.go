@@ -6,19 +6,30 @@ import (
 	"haovpn/internal/safeutil"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/widget"
 )
 
 // beginEngineOp 标记正在停引擎/重连，防止按钮连点；已忙则返回 false。
 //
 // 与 getEngine/setEngine/takeEngine 共用 engOpMu，保证 eng 指针与忙状态一致可见。
+// 成功时灰掉主窗/登录操作钮（须在 UI 线程调用）。
 func (u *uiApp) beginEngineOp() bool {
 	u.engOpMu.Lock()
-	defer u.engOpMu.Unlock()
 	if u.engOpBusy {
+		u.engOpMu.Unlock()
 		return false
 	}
 	u.engOpBusy = true
+	u.engOpMu.Unlock()
+	u.setEngineOpBusyUI(true)
 	return true
+}
+
+// isEngineOpBusy 是否正在异步 Stop/重连（托盘 tip 用「正在断开」覆盖）。
+func (u *uiApp) isEngineOpBusy() bool {
+	u.engOpMu.Lock()
+	defer u.engOpMu.Unlock()
+	return u.engOpBusy
 }
 
 // endEngineOp 结束忙状态（须在 UI 线程或经 fyne.Do 调用以配合界面刷新）。
@@ -26,6 +37,25 @@ func (u *uiApp) endEngineOp() {
 	u.engOpMu.Lock()
 	u.engOpBusy = false
 	u.engOpMu.Unlock()
+	u.setEngineOpBusyUI(false)
+}
+
+// setEngineOpBusyUI 按忙态 Disable/Enable 主窗与登录操作钮（按钮可为 nil）。
+func (u *uiApp) setEngineOpBusyUI(busy bool) {
+	set := func(b *widget.Button) {
+		if b == nil {
+			return
+		}
+		if busy {
+			b.Disable()
+		} else {
+			b.Enable()
+		}
+	}
+	set(u.reconnectBtn)
+	set(u.logoutBtn)
+	set(u.quitBtn)
+	set(u.connectBtn)
 }
 
 // getEngine 在锁保护下读取当前引擎指针（只读快照；返回后指针可能被他处 take）。
@@ -72,10 +102,11 @@ func (u *uiApp) isSameEngine(eng *clientapp.Engine) bool {
 // stopEngineAsync 在后台 Stop（ICS/路由清理可能数秒），完成后在 UI 线程执行 onDone。
 //
 // 切勿在 Fyne UI 回调里同步 eng.Stop：DisableAllICS 的 PowerShell COM 会卡住界面。
+// eng==nil 时 onDone 仍经 fyne.Do，避免调用方假定已在主线程（fyneDo=true 后更关键）。
 func (u *uiApp) stopEngineAsync(eng *clientapp.Engine, onDone func()) {
 	if eng == nil {
 		if onDone != nil {
-			onDone()
+			fyne.Do(onDone)
 		}
 		return
 	}

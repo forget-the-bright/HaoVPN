@@ -6,6 +6,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/systray"
 
 	"haovpn/internal/brand"
 	"haovpn/internal/clientapp"
@@ -21,6 +22,7 @@ const (
 	trayKindConnecting
 	trayKindConnected
 	trayKindError
+	trayKindDisconnecting // 退出登录/退出程序 Stop 中
 )
 
 // installTray 应用启动后安装系统托盘（登录前即存在）。
@@ -37,6 +39,7 @@ func (u *uiApp) installTray() {
 	desk.SetSystemTrayMenu(u.loginTrayMenu())
 	// Fyne：SetSystemTrayMenu 可能用 App Icon 覆盖托盘，须在菜单之后再设状态图标
 	u.forceTrayIcon(trayKindIdle)
+	u.refreshTrayTooltip()
 }
 
 // applyTray 按种类更新托盘图标；forceMenu 时重建菜单（登录/登出/连接成功时）。
@@ -62,6 +65,7 @@ func (u *uiApp) applyTray(kind trayKind, forceMenu bool) {
 	if changed || needMenu {
 		u.forceTrayIcon(kind)
 	}
+	u.refreshTrayTooltip()
 }
 
 func (u *uiApp) forceTrayIcon(kind trayKind) {
@@ -76,6 +80,8 @@ func (u *uiApp) forceTrayIcon(kind trayKind) {
 		desk.SetSystemTrayIcon(icons.Connecting)
 	case trayKindError:
 		desk.SetSystemTrayIcon(icons.Error)
+	case trayKindDisconnecting:
+		desk.SetSystemTrayIcon(icons.Connecting) // 视觉上表示忙碌；文案为「正在断开」
 	default:
 		desk.SetSystemTrayIcon(icons.Idle)
 	}
@@ -114,6 +120,35 @@ func (u *uiApp) syncTrayFromEngine(forceMenu bool) {
 	}
 	u.trayMu.Unlock()
 	u.applyTray(kind, forceMenu)
+}
+
+// refreshTrayTooltip 按 Engine/配置刷新悬停气泡（Fyne 无官方 API，经 fyne.io/systray）。
+// engOpBusy（正在 Stop）时强制「正在断开…」，避免残留「正在连接」。
+func (u *uiApp) refreshTrayTooltip() {
+	in := trayTooltipInput{State: clientapp.StateIdle}
+	if u.isEngineOpBusy() {
+		in.Phase = trayTipDisconnecting
+	} else {
+		if u.cfg != nil {
+			in.Server = strings.TrimSpace(u.cfg.Server.Address)
+		}
+		eng := u.getEngine()
+		if eng != nil {
+			in.State = eng.State()
+			in.VPNIP = eng.VPNIP()
+			in.Since = eng.ConnectedSince()
+			in.LastError = eng.LastError()
+		}
+	}
+	tip := formatTrayTooltip(in)
+	u.trayMu.Lock()
+	if tip == u.lastTooltip {
+		u.trayMu.Unlock()
+		return
+	}
+	u.lastTooltip = tip
+	u.trayMu.Unlock()
+	systray.SetTooltip(tip)
 }
 
 // refreshTrayMenu 强制重建托盘菜单并恢复当前状态图标。
@@ -208,18 +243,12 @@ func (u *uiApp) reconnectVPN() {
 	if u.statusLbl != nil {
 		u.statusLbl.SetText("状态: 正在重新连接…")
 	}
-	u.applyTray(trayKindConnecting, true)
+	// Stop 期间 tip 为「正在断开」；清理完成后再标连接中
+	u.applyTray(trayKindDisconnecting, true)
 	u.appendLog("手动重新连接（清理后重拨，可能需数秒）…")
 	old := u.takeEngine()
-	u.stopEngineAsync(old, func() {
-		eng := clientapp.NewEngine(u.cfg)
-		eng.SetCredentials(creds)
-		u.setEngine(eng)
-		_ = eng.Start()
-		u.startPoll()
-		u.endEngineOp()
-		u.applyTray(trayKindConnecting, true)
-	})
+	// HardRestart 内含 Stop；勿再 stopEngineAsync，避免双重 Stop / onDone 竞态。
+	u.reconnectVPNAfterStop(old, creds)
 }
 
 func (u *uiApp) quitApp() {
@@ -231,6 +260,7 @@ func (u *uiApp) quitApp() {
 	if u.statusLbl != nil {
 		u.statusLbl.SetText("状态: 正在退出（清理网络）…")
 	}
+	u.applyTray(trayKindDisconnecting, true)
 	u.appendLog("正在退出（清理网络可能需数秒）…")
 	logger.Info("gui_quit begin")
 	eng := u.takeEngine()

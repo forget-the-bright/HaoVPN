@@ -1,23 +1,16 @@
-// Package winnet 封装 Windows 网卡/LUID/netsh/PowerShell 公共能力。
+// Package winnet 封装 Windows 网卡/LUID/IP Helper/netsh/PowerShell 公共能力。
 //
-// 职责边界：
-//   - 解析 Wintun 配置名 → 系统 ifIndex / netsh 别名
-//   - 统一 PowerShell：RunPS（Bypass）/ RunPSBestEffort（失败 Warn）；禁止业务包 raw powershell
-//   - netsh 薄封装；ParseDNSShowOutput（netsh DNS 输出解析，跨平台纯函数）
-//   - ICS：HasICSResidue（便宜探测 137）、CleanupICSResidue（一次 PS 关共享+清地址）、
-//     DisableAllICS / PreferVPNSourceWithICS / RemoveICSAddressesKeepVPN
-//   - 不依赖 tun/netstack（tun 打开设备后调用 RegisterFromLUID 写入缓存）
+// 职责边界（叶子包；netstack/tun/clientapp 调用，勿反向依赖业务）：
+//   - 解析 Wintun 配置名 → 系统 ifIndex / netsh 别名（InterfaceIndex / FindAdapterIfIndex）
+//   - 读/写地址与路由、DNS（IP Helper 优先，失败回退 netsh）
+//   - PowerShell：RunPS / RunPSOneShot / RunPSBestEffort（一律一进程一脚本）
+//   - PS 模板单一真相源：ps_snippets.go（找网卡、ICS 关共享、孤儿 Wintun 清理）
+//   - SKU：IsWindowsHomeSKU（家庭版跳过 WinNAT）
+//   - ICS 残留探测与清理；RememberICSPair + DisableICSPair（退出快关）
+//   - Shutdown：进程退出挂点（当前空操作；曾用于常驻 PS，已删除）
 //
-// 关键文件（Windows 实现见 *_windows.go；非 Windows 见 stub.go）：
-//   escape.go — EscapeSingleQuoted
-//   dns_parse.go — ParseDNSShowOutput
-//   ps_windows.go — RunPS / RunPSBestEffort / RunNetsh
-//   address_windows.go — SetInterfaceIPv4、AssignIPv4PowerShell、PreferVPNSource、RemoveICSAddresses
-//   dns_netsh_windows.go — Set/Add/Restore/Show DNS（netsh）
-//   ics_windows.go — HasICSResidue / CleanupICSResidue / DisableAllICS
-//   resolver_windows.go — ifIndex / LUID / 别名
+// 关键文件：options.go、sku*.go、iphlp_*、dns_*、ps_windows.go、ps_snippets.go、
+// address_windows.go、ics_*、resolver_*。
 //
-// 上游：internal/tun（Wintun 生命周期）、internal/netstack（路由/DNS/NAT）、
-// clientapp/via_exit（空 local_lans 智能清理）。
-// 下游：internal/platform（无窗口子进程）、internal/logger。
+// 关联：netstack 只编排「何时」EnableSharing/装路由；脚本片段须来自本包，禁止业务包复制 Get-NetAdapter。
 package winnet

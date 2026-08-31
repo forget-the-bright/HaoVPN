@@ -78,7 +78,8 @@ func (c *ClientHandshake) runRaw(conn *transport.Conn, req []byte, timeout time.
 	var once sync.Once
 	finish := func() { once.Do(func() { close(done) }) }
 
-	conn.SetOnData(func(data []byte) {
+	// 仅挂 Handshake 回调：Data 密文常以 \\x00 开头，不可走 json.Unmarshal。
+	conn.SetOnHandshake(func(data []byte) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.done || c.err != nil {
@@ -86,7 +87,11 @@ func (c *ClientHandshake) runRaw(conn *transport.Conn, req []byte, timeout time.
 		}
 		resp, err := ParseHandshakeResponse(data)
 		if err != nil {
-			c.err = err
+			prefix := data
+			if len(prefix) > 8 {
+				prefix = prefix[:8]
+			}
+			c.err = fmt.Errorf("握手应答非 JSON len=%d head=%x: %w", len(data), prefix, err)
 			finish()
 			return
 		}
@@ -116,6 +121,8 @@ func (c *ClientHandshake) runRaw(conn *transport.Conn, req []byte, timeout time.
 	case <-time.After(timeout):
 		return HandshakeResult{}, fmt.Errorf("握手超时")
 	}
+
+	conn.SetOnHandshake(nil) // 鉴权结束，后续只走 SetOnData
 
 	c.mu.Lock()
 	defer c.mu.Unlock()

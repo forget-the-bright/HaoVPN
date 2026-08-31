@@ -7,8 +7,8 @@ import (
 	"fyne.io/fyne/v2"
 
 	"haovpn/internal/autostart"
+	"haovpn/internal/clientapp"
 	"haovpn/internal/config"
-	"haovpn/internal/credentials"
 	"haovpn/internal/logger"
 )
 
@@ -138,7 +138,7 @@ func (u *uiApp) toggleServiceAutostart() {
 		u.appendLog("启用服务前请先记住密码（服务凭据需要账号密码）")
 		return
 	}
-	if err := credentials.SaveService(user, pass); err != nil {
+	if err := clientapp.SaveServiceCredentials(user, pass); err != nil {
 		u.appendLog("保存服务凭据失败: " + err.Error())
 		return
 	}
@@ -170,7 +170,7 @@ func (u *uiApp) maybeAutoConnect() {
 	if !u.requireAdmin("", func(string) { logger.Info("gui_auto_connect skip: not admin") }) {
 		return
 	}
-	logger.Info("gui_auto_connect begin")
+	// begin 日志在 run.go（含 warmup_overlap）；此处直接拨号。
 	u.tryConnect()
 }
 

@@ -42,6 +42,8 @@ type runtime struct {
 	viaFPKnown   bool // 是否已成功应用过 via 状态（区分「从未应用」与「via 关闭」）
 	appliedDNS   []string
 	exitLANNets  []*net.IPNet
+	// routeWarn 最近一次 applyPolicy 部分装路由失败的用户可见文案（takeRouteWarn 取出）。
+	routeWarn string
 }
 
 // allowedIPs 返回 AllowedIPs 副本，供杀开关 Enable 使用。

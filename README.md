@@ -62,7 +62,7 @@ mkdir home -Force
 
 Windows 也可用 CLI：`haovpn-client.exe --service install`。
 
-管理台：页面脚本在 `web/static/*.js`，CSP `script-src 'self'`（样式仍可内联）。
+管理台：页面脚本在 `web/static/*.js`，样式在 `web/static/style.css`；CSP `script-src` 与 `style-src` 均仅 `'self'`（禁止内联 style / 内联脚本）。
 
 ---
 

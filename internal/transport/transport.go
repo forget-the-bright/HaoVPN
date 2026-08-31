@@ -23,29 +23,33 @@ import (
 //   tls — TLS 会话；读写均经此层。
 //   decoder — 粘包拆帧解码器。
 //   state — 连接生命周期（State，atomic）。
-//   mu — 保护 onData/onClose 回调指针。
+//   mu — 保护 onData/onHandshake/onClose 回调指针。
 //   sendQ — 待发编码帧队列；满则 SendRaw 失败。
-//   onData — 收到 Data/Handshake 帧时的回调。
+//   onData — 收到 Data 帧时的回调（鉴权后隧道密文）。
+//   onHandshake — 收到 Handshake 帧时的回调；nil 时 Handshake 回退到 onData（兼容旧测）。
 //   onClose — Close 或读写出错时的回调。
 //   lastHB — 最近一次收到对端活跃帧的时间戳（纳秒，atomic）。
+//   hbPause — applyPolicy 配网期间为 true：仍发心跳，但不因静默超时 Close。
 //   closed — Close 时关闭，通知 read/write/heartbeat 协程退出。
 //   closeOnce — 保证 Close 只执行一次。
 //
 // 并发：内部启动 readLoop、writeLoop、heartbeatLoop；须通过 Close 停止。
 type Conn struct {
-	cfg       Config
-	raw       net.Conn
-	tls       *tls.Conn
-	decoder   Decoder
-	state     atomic.Int32
-	mu        sync.Mutex
-	writeMu   sync.Mutex // 保护 tls.Write（writeLoop 与 SendRawSync）
-	sendQ     chan []byte
-	onData    func([]byte)
-	onClose   func(error)
-	lastHB    atomic.Int64
-	closed    chan struct{}
-	closeOnce sync.Once
+	cfg         Config
+	raw         net.Conn
+	tls         *tls.Conn
+	decoder     Decoder
+	state       atomic.Int32
+	mu          sync.Mutex
+	writeMu     sync.Mutex // 保护 tls.Write（writeLoop 与 SendRawSync）
+	sendQ       chan []byte
+	onData      func([]byte)
+	onHandshake func([]byte)
+	onClose     func(error)
+	lastHB      atomic.Int64
+	hbPause     atomic.Bool // applyPolicy 期间为 true：仍发心跳，但不因静默超时 Close
+	closed      chan struct{}
+	closeOnce   sync.Once
 }
 
 // Dial 以 TLS 连接 addr 并启动读/写/心跳协程（客户端出站）。
@@ -143,6 +147,20 @@ func (c *Conn) LastPeerActivity() time.Time {
 
 func (c *Conn) touchHB() { c.lastHB.Store(time.Now().UnixNano()) }
 
+// SetHeartbeatTimeoutPaused 暂停/恢复「对端静默超时关连接」。
+//
+// 用途：客户端 applyPolicy 配 TUN/路由可能数十秒到两分钟，期间若对端心跳偶发缺失，
+// 不应掐掉刚鉴权成功的隧道（否则 session_abandoned）。仍照常发送本端心跳。
+func (c *Conn) SetHeartbeatTimeoutPaused(paused bool) {
+	if c == nil {
+		return
+	}
+	c.hbPause.Store(paused)
+	if !paused {
+		c.touchHB() // 恢复时刷新，避免立刻误判超时
+	}
+}
+
 // RemoteAddr 返回底层 TCP 远端地址。
 func (c *Conn) RemoteAddr() string {
 	if c.raw == nil {
@@ -151,10 +169,20 @@ func (c *Conn) RemoteAddr() string {
 	return c.raw.RemoteAddr().String()
 }
 
-// SetOnData 动态设置数据回调（握手完成后切换为数据转发）。
+// SetOnData 动态设置 Data 帧回调（握手完成后切换为解密转发）。
 func (c *Conn) SetOnData(fn func([]byte)) {
 	c.mu.Lock()
 	c.onData = fn
+	c.mu.Unlock()
+}
+
+// SetOnHandshake 设置 Handshake 帧回调（鉴权等待期间专用，勿与 Data 混用）。
+//
+// 为何分离：Data 常为密文以 \\x00 开头，若与 Handshake 共用 onData，
+// json.Unmarshal 会报 invalid character '\\x00'（手动重连竞态时尤甚）。
+func (c *Conn) SetOnHandshake(fn func([]byte)) {
+	c.mu.Lock()
+	c.onHandshake = fn
 	c.mu.Unlock()
 }
 

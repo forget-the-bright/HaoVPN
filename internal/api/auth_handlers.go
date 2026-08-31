@@ -257,7 +257,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.auth.ChangePassword(se.UserID, oldPass, newPass); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		writeDomainError(w, err)
 		return
 	}
 	n := s.auth.LogoutAllForUser(se.UserID)

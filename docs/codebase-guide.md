@@ -39,7 +39,9 @@
 
 - 叶子包（`netutil`、`fileutil`、`safeutil`、`dialerr`…）**不得** import `api` / `serverapp` / `sessionmgr`
 - `serverapp` **可以** import `api` 以启动 HTTP（`boot_api.go`）；公网绑定等**审计文案**走 `audit/public_bind.go`，勿把审计逻辑塞回 api
-- `clientgui` **不得** import `tunnel`（展示 DTO 走 `clientapp.ManagedRouteView`）
+- `clientgui` **不得** import `tunnel`（展示 DTO 走 `clientapp.ManagedRouteView`）；**不得** import `tun` / `winnet` / `credentials`（预热/服务凭据经 `clientapp`）
+- `clientapp` **不得** import `winnet`（经 `netstack` 门面）
+- peer 写路径经 `vpnaccount.PeerPolicyApplier`（`peer_write.go`），api 只做 HTTP
 - `tunnel` **不得** import `probedefense`；`autherr` **不得** import `transport`
 
 ---
@@ -59,30 +61,52 @@
 
 | 文件 | 做什么 |
 |------|--------|
-| `engine_connect.go` / `engine_lifecycle.go` | 拨号、重连、握手 |
+| `engine_connect.go` / `engine_lifecycle.go` | 拨号、Soft 重连（`protectForReconnect`）、握手 |
+| `hard_restart.go` | **HardRestart** / **WaitDNSReady**（手动全量重连契约） |
 | `runtime*.go` | TUN、路由、策略增量 apply |
-| `via_exit.go` | via/ICS：指纹跳过；空 local_lans 先 `HasICSResidue` 再清理（实现在 `winnet/ics_windows.go`） |
+| `via_exit.go` | via/ICS：指纹跳过；空 local_lans 先 `HasICSResidue` 再清理（native 优先） |
+| `runtime_routes.go` | 清路由：先 RestoreDNS 再删；`route_install`；零成功硬失败 / 部分失败 warn |
+| `runtime_policy.go` | `policy_apply stage=tun|routes|dns|via_cleanup` 分段 elapsed |
 | `route_view.go` | **`ManagedRouteView`** 展示 DTO（供 GUI 托盘） |
 | `fatal_auth.go` / `dial_errors.go` | 封禁 / 鉴权致命错误 UX（直接 `autherr`/`dialerr`，无薄 Is* re-export） |
+
+**重连双路径**：Soft = `transport.ReconnectClient` + 保 dataplane；Hard = `HardRestart`（全清后再拨）。GUI/CLI 禁止第三套编排。
 
 ### clientgui — 桌面托盘（Fyne）
 
 | 文件 | 做什么 |
 |------|--------|
-| `tray.go` / `tray_routes.go` | 托盘菜单与路由展示（子网 hint → `netutil.InferVPNSubnetHint`） |
-| `login.go` / `admin.go` | 登录与服务提权 |
+| `run.go` | 启动；后台 `clientapp.WarmupTun`（与拨号重叠）；`applyFyneDoMigration` |
+| `fyne_meta.go` | `SetMetadata(Migrations.fyneDo)`；构建另须 `-tags migrated_fynedo` |
+| `tray.go` / `tray_routes.go` | 托盘菜单与路由展示；Disconnecting；手动重连入口 |
+| `tray_tooltip.go` | 悬停文案：预算 63；IP→连接自→主机；Connecting+IP / 正在断开 |
+| `reconnect_dns.go` | 调用 `clientapp.HardRestart`；UI 经 `fyne.Do` 挂载 |
+| `engine_stop.go` | 异步 Stop；nil/非空 `onDone` 均 `fyne.Do` |
+| `login.go` / `admin.go` | 登录与服务提权（登录页仍 FailFast，勿走 HardRestart） |
 
-### Windows 子进程调用链（via / ICS / NAT）
+线程规则：后台只算账，UI 只 `fyne.Do`；主线程回调勿再 `DoAndWait`；重活禁止塞进 `Do`。
+
+### Windows 子进程与 IP Helper 调用链
 
 ```
 clientapp/via_exit.go
-    → winnet.HasICSResidue / CleanupICSResidue / DisableAllICS  （ics_windows.go）
-    → winnet.PreferVPNSourceWithICS / RemoveICSAddressesKeepVPN （address_windows.go）
+    → netstack.HasICSResidue / CleanupICSResidue / DisableICSPair（优先）/ DisableAllICS（门面 → winnet）
+    → PreferVPNSourceWithICS / RemoveICSAddressesKeepVPN（winnet/address；经 netstack/ICS 路径）
+tun assignIPv4
+    → winnet.InterfaceHasIPv4 / SetInterfaceIPv4OnIndex（iphlp → netsh → PS）
 netstack Setup/Teardown
     → forward_windows.go（IP 转发）
-    → nat_windows.go（WinNAT）→ 失败则 ics_nat_windows.go（服务端 ICS SNAT）
-    → route_ops_windows.go（客户端 on-link 路由）
-所有 PowerShell → winnet.RunPS / RunPSBestEffort（ps_windows.go，Bypass；失败 Warn）
+    → nat_windows.go（WinNAT）→ 失败则 ics_nat_windows.go（RememberICSPair）
+    → route_ops_windows.go（iphlp → route.exe；method=）/ dns_windows.go（dns_apply；DNS method=netsh）
+clientgui → beginEngineOp + 按钮 Disable；Stop 异步；WarmupTun / SaveServiceCredentials 仅经 clientapp
+所有 PowerShell → RunPS*（一律一进程）；脚本模板 → `winnet/ps_snippets.go`
+家庭版 → IsWindowsHomeSKU → 跳过 WinNAT → ICS
+DNS → SetInterfaceDNSServers（iphlp→netsh）；路由 → AddOnLinkRouteIPHelper（LUID+MIB→route.exe）
+WinNAT → 会话缓存 / sku_home 后直接 ICS（nat_windows.go）
+开关 → client.yaml windows.use_ip_helper → NewEngine → netstack.ConfigureWindows
+手动重连 → clientapp.HardRestart（Stop + WaitDNSReady + 新 Engine）
+鉴权后 → Engine 早写 vpnIP；applyPolicy 后才 StateConnected
+托盘悬停 → refreshTrayTooltip（预算 63；busy→正在断开）→ systray.SetTooltip
 ```
 
 ---
@@ -156,8 +180,8 @@ flowchart LR
 | **transport** | TLS-TCP 帧、重连、Probe 钩子 | `server.go`, `transport.go`, `conn_loops.go`, `probe_banner.go`, `reconnect.go`（生产路径 GoSafe） |
 | **tunnel** | 握手、IP 转发 | `server_handler.go`, `server_handshake_auth.go`, `server_handshake_session.go`, `handshake_reject.go` |
 | **sessionmgr** | 在线会话、报文路由、横向隔离 | `register.go`, `route*.go` |
-| **tun** / **netstack** | TUN 设备、路由/DNS/NAT/杀开关 | 平台分文件 |
-| **vpnaccount** | 开户、策略、peer 应用生效 | `peer_apply.go`, `peer_policy.go` |
+| **vpnaccount** | 开户、策略、peer 写+应用生效 | `peer_write.go`, `peer_apply.go`, `peer_policy.go` |
+| **tun** / **netstack** | TUN 设备、路由/DNS/NAT/杀开关；Windows 门面 | 平台分文件；`winnet_facade.go` |
 
 ---
 
@@ -172,10 +196,10 @@ flowchart LR
 | **timeutil** | SQLite UTC、RFC3339、配置秒 → Duration | `sqlite.go`, `duration.go` |
 | **paginate** | API limit/offset、bool 查询 | `parse.go`, `clamp.go` |
 | **safeutil** | `GoSafe`、`RetryN`、`ExpBackoff`、Ticker | `goroutine.go`, `retry.go` |
-| **winnet** | Windows 网卡 / 统一 PS / ICS / DNS 解析 | `ps_windows.go`, `ics_windows.go`, `dns_parse.go`, `address_windows.go` |
+| **winnet** | Windows 网卡 / IP Helper / 统一 PS / ICS / DNS | `options.go`, `iphlp_*`, `ps_*.go`, `ics_windows.go`, `dns_*`, `address_windows.go` |
 | **logger** | 分级日志 + `RedactSensitive` | `redact.go` |
 | **readmodel** | API 读模型 DTO（与 persist 解耦） | `peers.go` 等 |
-| **config** | YAML 加载/默认值/校验 | `defaults.go`, `server.go`, `client.go` |
+| **config** | YAML 加载/默认值/校验 / TUN 名 | `defaults.go`, `server.go`, `client.go`, `tun_name.go` |
 
 ---
 
@@ -192,4 +216,4 @@ flowchart LR
 
 ---
 
-*第二十二轮后 · TrimLower/InferVPNSubnetHint、RunPSBestEffort、winnet/netstack 文件簇、CSP style-src 'self'。*
+*最后更新：2026-08-31 · 架构解耦第 24 轮 / VERSION 0.1.3*

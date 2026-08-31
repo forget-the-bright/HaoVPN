@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -75,7 +74,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		username := strings.TrimSpace(r.FormValue("username"))
 		// 领域层 ProvisionWebAccount 仍会校验；此处提前返回便于 API 文案一致
 		if err := auth.ValidateUsername(username); err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			writeDomainError(w, err)
 			return
 		}
 		password := r.FormValue("password")
@@ -87,7 +86,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 		requestedIP := strings.TrimSpace(r.FormValue("vpn_ip"))
 		hash, err := auth.HashPassword(password)
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			writeDomainError(w, err)
 			return
 		}
 		res, err := s.vpnSvc.ProvisionWebAccount(vpnaccount.ProvisionInput{
@@ -95,7 +94,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			RequestedIP: requestedIP, KeyEnc: s.keyEnc,
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			writeDomainError(w, err)
 			return
 		}
 		id, vpnIP := res.UserID, res.VPNIP
@@ -149,11 +148,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodDelete:
 		if err := s.vpnSvc.DeleteAccount(id); err != nil {
-			if errors.Is(err, vpnaccount.ErrLastAdmin) {
-				writeAPIError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			writeInternalError(w, err)
+			writeDomainError(w, err)
 			return
 		}
 		revoked := s.auth.LogoutAllForUser(id)
@@ -167,11 +162,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		action := r.FormValue("action")
 		if action == "disable" {
 			if err := s.vpnSvc.SetAccountEnabled(id, false); err != nil {
-				if errors.Is(err, vpnaccount.ErrLastAdmin) {
-					writeAPIError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				writeInternalError(w, err)
+				writeDomainError(w, err)
 				return
 			}
 			revoked := s.auth.LogoutAllForUser(id)
@@ -179,7 +170,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			s.audit.Log(&se.UserID, "user_disable", "user", &id, s.clientIP(r), nil)
 		} else if action == "enable" {
 			if err := s.vpnSvc.SetAccountEnabled(id, true); err != nil {
-				writeInternalError(w, err)
+				writeDomainError(w, err)
 				return
 			}
 			s.audit.Log(&se.UserID, "user_enable", "user", &id, s.clientIP(r), nil)

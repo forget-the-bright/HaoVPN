@@ -36,16 +36,13 @@ func DisableInterfaceIPv6(ifName string) error {
 // 返回：找不到网卡或 PowerShell 报错时 error。
 func AssignIPv4PowerShell(configName, ip string, prefix int) error {
 	ps := fmt.Sprintf(`
-$if = Get-NetAdapter | Where-Object { $_.Name -eq '%s' } | Select-Object -First 1
-if (-not $if) {
-  $if = Get-NetAdapter | Where-Object { $_.InterfaceDescription -match 'Wintun|HaoVPN' } | Select-Object -First 1
-}
+%s
 if (-not $if) { throw '未找到 Wintun 网卡' }
 Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
   Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
 New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress '%s' -PrefixLength %d -ErrorAction Stop | Out-Null
-`, EscapeSingleQuoted(configName), ip, prefix)
-	_, err := RunPS(ps)
+`, PSSnippetAssignAdapterIf(configName), EscapeSingleQuoted(ip), prefix)
+	_, err := RunPSOneShot(ps)
 	return err
 }
 
@@ -64,10 +61,7 @@ func PreferVPNSourceWithICS(configName, vpnIP string) error {
 	ps := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 $vpn = '%s'
-$if = Get-NetAdapter | Where-Object { $_.Name -eq '%s' } | Select-Object -First 1
-if (-not $if) {
-  $if = Get-NetAdapter | Where-Object { $_.InterfaceDescription -match 'Wintun|HaoVPN' } | Select-Object -First 1
-}
+%s
 if (-not $if) { throw '未找到 Wintun 网卡' }
 $idx = $if.ifIndex
 # 确保 VPN IP 仍在（ICS 有时冲掉 /32）
@@ -84,8 +78,8 @@ Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyC
     Set-NetIPAddress -InterfaceIndex $idx -IPAddress $_.IPAddress -SkipAsSource $true -ErrorAction SilentlyContinue
   }
 }
-`, EscapeSingleQuoted(vpnIP), EscapeSingleQuoted(configName))
-	out, err := RunPS(ps)
+`, EscapeSingleQuoted(vpnIP), PSSnippetAssignAdapterIf(configName))
+	out, err := RunPSOneShot(ps)
 	if err != nil {
 		return platform.CommandOutputError("PreferVPNSourceWithICS", out, err)
 	}
@@ -104,10 +98,7 @@ func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
 	ps := fmt.Sprintf(`
 $ErrorActionPreference = 'SilentlyContinue'
 $vpn = '%s'
-$if = Get-NetAdapter | Where-Object { $_.Name -eq '%s' } | Select-Object -First 1
-if (-not $if) {
-  $if = Get-NetAdapter | Where-Object { $_.InterfaceDescription -match 'Wintun|HaoVPN' } | Select-Object -First 1
-}
+%s
 if (-not $if) { throw '未找到 Wintun 网卡' }
 Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 |
   Where-Object { $_.IPAddress -ne $vpn -and $_.IPAddress -like '192.168.137.*' } |
@@ -116,7 +107,7 @@ $has = Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 | Where-
 if (-not $has) {
   New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress $vpn -PrefixLength 32 -ErrorAction SilentlyContinue | Out-Null
 }
-`, EscapeSingleQuoted(vpnIP), EscapeSingleQuoted(configName))
-	_, err := RunPS(ps)
+`, EscapeSingleQuoted(vpnIP), PSSnippetAssignAdapterIf(configName))
+	_, err := RunPSOneShot(ps)
 	return err
 }

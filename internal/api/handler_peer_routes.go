@@ -10,6 +10,7 @@ import (
 	"haovpn/internal/paginate"
 	"haovpn/internal/persist"
 	"haovpn/internal/readmodel"
+	"haovpn/internal/vpnaccount"
 )
 
 // handlePeerRoutes GET 列表 / POST 新增托管路由（只写库，不踢线）。
@@ -47,29 +48,15 @@ func (s *Server) handlePeerRouteByID(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodDelete) {
 		return
 	}
-	old, err := s.store.GetPeerRoute(id)
-	if err != nil || old == nil {
-		writeAPIError(w, http.StatusNotFound, "路由不存在")
-		return
-	}
-	if err := s.store.DeletePeerRoute(id); err != nil {
-		writeInternalError(w, err)
+	old, err := s.peerPolicy.DeletePeerRoute(id)
+	if err != nil {
+		writeDomainError(w, err)
 		return
 	}
 	s.audit.Log(s.actorFromRequest(r), "peer_route_delete", "peer_route", &id, s.clientIP(r), map[string]string{
 		"dest": old.DestCIDR, "via_user_id": strconv.FormatInt(old.ViaUserID, 10),
 	})
-	s.markDirtyForMembers(old.MemberUserIDs)
 	writePendingApply(w, nil)
-}
-
-func (s *Server) markDirtyForMembers(members []int64) {
-	s.peerPolicy.MarkMembers(members)
-}
-
-// markDirtyForMembersUnion 对旧∪新访问方打脏（成员收窄时被移除方也须踢线）。
-func (s *Server) markDirtyForMembersUnion(oldMembers, newMembers []int64) {
-	s.peerPolicy.MarkMembersUnion(oldMembers, newMembers)
 }
 
 func (s *Server) replacePeerRouteMembers(w http.ResponseWriter, r *http.Request, id int64) {
@@ -86,24 +73,12 @@ func (s *Server) replacePeerRouteMembers(w http.ResponseWriter, r *http.Request,
 	if body.ApplyAll {
 		body.MemberUserIDs = []int64{persist.PeerRouteMemberAll}
 	}
-	old, err := s.store.GetPeerRoute(id)
-	if err != nil || old == nil {
-		writeAPIError(w, http.StatusNotFound, "路由不存在")
-		return
-	}
-	if err := s.store.ReplacePeerRouteMembers(id, body.MemberUserIDs); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+	rt, err := s.peerPolicy.ReplacePeerRouteMembers(id, body.MemberUserIDs)
+	if err != nil {
+		writeDomainError(w, err)
 		return
 	}
 	s.audit.Log(s.actorFromRequest(r), "peer_route_members", "peer_route", &id, s.clientIP(r), nil)
-	// 旧∪新：收窄访问方时被踢出者也须应用生效后丢弃旧 ViaRoutes
-	s.markDirtyForMembersUnion(old.MemberUserIDs, body.MemberUserIDs)
-	rt, err := s.store.GetPeerRoute(id)
-	if err != nil || rt == nil {
-		logger.Warn("peer_route_members 写库成功但回读失败 id=%d: %v", id, err)
-		writePendingApply(w, nil)
-		return
-	}
 	byID, err := s.userDirMap()
 	if err != nil {
 		writeInternalError(w, err)
@@ -159,29 +134,18 @@ func (s *Server) createPeerRoute(w http.ResponseWriter, r *http.Request) {
 	} else if len(members) == 0 && body.UserID != nil {
 		members = []int64{*body.UserID}
 	}
-	if body.ViaUserID <= 0 {
-		writeAPIError(w, http.StatusBadRequest, "须指定 via 账号")
-		return
-	}
-	via, err := s.store.GetUserByID(body.ViaUserID)
-	if err != nil || via == nil {
-		writeAPIError(w, http.StatusBadRequest, "via 账号不存在")
-		return
-	}
-	if !via.HasVPN() {
-		writeAPIError(w, http.StatusBadRequest, "via 须为 VPN 账号")
-		return
-	}
-	id, err := s.store.InsertPeerRoute(body.DestCIDR, body.ViaUserID, members)
+	res, err := s.peerPolicy.CreatePeerRoute(vpnaccount.CreatePeerRouteInput{
+		DestCIDR: body.DestCIDR, ViaUserID: body.ViaUserID, MemberUserIDs: members,
+	})
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Error())
+		writeDomainError(w, err)
 		return
 	}
+	id := res.ID
 	s.audit.Log(s.actorFromRequest(r), "peer_route_create", "peer_route", &id, s.clientIP(r), map[string]string{
 		"dest": body.DestCIDR, "via_user_id": strconv.FormatInt(body.ViaUserID, 10),
 		"apply_all": strconv.FormatBool(persist.PeerRouteHasAllMembers(members)),
 	})
-	s.markDirtyForMembers(persist.NormalizeMemberUserIDs(members))
 	rt, err := s.store.GetPeerRoute(id)
 	if err != nil || rt == nil {
 		logger.Warn("peer_route_create 写库成功但回读失败 id=%d: %v", id, err)

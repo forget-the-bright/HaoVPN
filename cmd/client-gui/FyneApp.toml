@@ -1,11 +1,17 @@
 # Fyne 打包/元数据。Version 由构建脚本从根目录 VERSION 同步，勿手写死版本号。
 # 见 docs/versioning.md、scripts/lib/build-common.ps1 → Sync-FyneAppTomlFromVersion
+# 本仓库 GUI 用 go build（非 fyne package）：fyneDo 还须 -tags migrated_fynedo + Run 内 SetMetadata。
 [Details]
 Name = "HaoVPN"
-ID = "com.haovpn.client.gui"
+ID = "com.haovpn.client"
 Icon = "Icon.png"
-Version = "0.1.2"
+Version = "0.1.3"
 [LinuxAndBSD]
 GenericName = "HaoVPN"
 Categories = ["Network"]
 Comment = "HaoVPN industrial VPN client"
+
+# Fyne 2.6+ 线程模型：后台 goroutine 改 UI 必须 fyne.Do；开启后移除 EnsureMain 自动搬运与警告。
+# 见 https://docs.fyne.io/started/goroutines 与 internal/clientgui/doc.go
+[Migrations]
+fyneDo = true

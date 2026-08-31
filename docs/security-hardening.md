@@ -310,10 +310,28 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 | 威胁模型 | **机器级**保护：本机任意能读凭据文件的本地主体均可解密；非用户绑定 DPAPI |
 | 为何如此 | 服务账户无交互桌面，须 LocalMachine 才能在开机自启时读密 |
 | 运维建议 | 凭据文件写后 `RestrictToAdminsOnly`；生产机勿开共享登录；勿把凭据文件拷到非受信主机 |
-| GUI 托盘服务自启 | 启用前 `credentials.SaveService`；与 CLI `--service` 共用服务名 `HaoVPNClient` |
-| yaml 明文密码 | `remember_password` / `gui.auto_connect` 依赖 `client.yaml` 明文；限制文件 ACL |
+| GUI 托盘服务自启 | 启用前 `clientapp.SaveServiceCredentials`；与 CLI `--service` 共用服务名 `HaoVPNClient` |
+| yaml 明文密码 | `remember_password` / `gui.auto_connect` 依赖 `client.yaml` 明文；限制文件 ACL（**User DPAPI 仍听安排，第 24 轮未做**） |
+| TUN 名 | `config.ValidateTunName`：仅 `[A-Za-z0-9_-]{1,64}`，降低 netsh/PS 注入面 |
+| PS `-match` | `winnet.EscapeRegex` 后再 `EscapeSingleQuoted`；模板见 `ps_snippets.go` |
+| 静态资源 | `handleStatic` 对路径 `path.Clean` 并拒绝 `..` |
 
 `ResolveCredentials`：YAML 已有 `username` 但密码空时，仍可从服务凭据库补密码。
+
+---
+
+## 8.1 客户端 Windows 网卡加速（`windows` 段）
+
+```yaml
+windows:
+  use_ip_helper: true   # 默认 true：读/写优先 IP Helper；失败回退 netsh/route
+```
+
+| 项 | 安全结论 |
+|----|----------|
+| `use_ip_helper` | 与现网同级管理员权限；无额外提权；失败回退不降权 |
+| （已移除）`ps_resident` | 曾长驻 Bypass 管理员 PowerShell；与 CIM/ICS 不兼容且无加速，**代码与配置均已删除** |
+| 默认 | Helper 开；PowerShell 一律一进程一脚本 |
 
 ---
 
@@ -335,4 +353,4 @@ api:
 
 ---
 
-*最后更新：2026-08-31 · 架构解耦第二十二轮（CSP style-src 'self' / RunPS 收口）*
+*最后更新：2026-08-31 · 架构解耦第 24 轮 / VERSION 0.1.3*

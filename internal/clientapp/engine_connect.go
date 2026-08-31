@@ -15,8 +15,8 @@ import (
 
 // onConnect 由 transport.ReconnectClient 在每次 TLS 连接建立后回调。
 //
-// 鉴权成功后立即 signalFirstResult(nil)，使 GUI WaitConnected 可先进入主界面；
-// TUN/路由在后台继续配置，完成后才置 StateConnected。
+// 鉴权成功后：先写入 vpnIP 等展示字段，再 signalFirstResult(nil)，使 GUI/托盘可显示分配 IP；
+// TUN/路由在后台继续配置，完成后才置 StateConnected / connectedAt。
 func (e *Engine) onConnect(conn *transport.Conn) {
 	e.setState(StateConnecting)
 	e.mu.Lock()
@@ -85,6 +85,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		e.protectForReconnect()
 		e.mu.Lock()
 		e.state = StateReconnecting
+		e.connectedAt = time.Time{}
 		e.mu.Unlock()
 	})
 	e.activeMu.Lock()
@@ -93,17 +94,30 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	e.sessionPriv = priv
 	e.activeMu.Unlock()
 
-	// 鉴权已通过：关闭登录 failFast，唤醒 WaitConnected，后台继续配 TUN/路由
+	// 鉴权已通过：先写入展示用会话字段（主窗/托盘可显示 VPN IP），再 signal；
+	// StateConnected / connectedAt 仍等 applyPolicy 成功后再置（数据面就绪）。
+	e.mu.Lock()
+	e.vpnIP = hsRes.Policy.VPNIP
+	e.gateway = hsRes.Policy.GatewayIP
+	e.vpnSubnet = strings.TrimSpace(hsRes.Policy.VPNSubnet)
+	e.managedRoutes = ManagedRoutesFromTunnel(hsRes.Policy.ManagedRoutes)
+	e.allowedIPs = append([]string{}, hsRes.Policy.AllowedIPs...)
+	e.mu.Unlock()
+
 	e.markAuthOK()
 	e.signalFirstResult(nil)
-	logger.Info("鉴权成功，正在配置 TUN/路由…")
+	logger.Info("鉴权成功，正在配置 TUN/路由… vpn_ip=%s", hsRes.Policy.VPNIP)
 
 	policyStart := time.Now()
-	if err := e.rt.applyPolicy(hsRes.Policy); err != nil {
+	conn.SetHeartbeatTimeoutPaused(true)
+	err = e.rt.applyPolicy(hsRes.Policy)
+	conn.SetHeartbeatTimeoutPaused(false)
+	if err != nil {
 		logger.Warn("应用服务端策略失败: %v elapsed=%s", err, time.Since(policyStart))
 		e.dataplaneFailed(conn, fmt.Sprintf("应用服务端策略失败: %v", err))
 		return
 	}
+	routeWarn := e.rt.takeRouteWarn()
 
 	e.activeMu.Lock()
 	stillActive := e.activeConn == conn && conn.State() == transport.StateConnected
@@ -122,16 +136,22 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	}
 	mtu := netutil.ResolveMTU(hsRes.Policy.MTU, e.cfg.Tun.MTU)
 	e.mu.Lock()
+	// vpnIP 等已在鉴权后写入；此处确认并打点连接时刻
 	e.vpnIP = hsRes.Policy.VPNIP
 	e.gateway = hsRes.Policy.GatewayIP
 	e.vpnSubnet = strings.TrimSpace(hsRes.Policy.VPNSubnet)
 	e.managedRoutes = ManagedRoutesFromTunnel(hsRes.Policy.ManagedRoutes)
 	e.allowedIPs = append([]string{}, hsRes.Policy.AllowedIPs...)
 	e.state = StateConnected
-	e.lastError = ""
+	e.connectedAt = time.Now()
+	// 部分分流失败保留提示；否则清空旧错误
+	e.lastError = routeWarn
 	e.mu.Unlock()
 	e.activeMu.Unlock()
 
+	if routeWarn != "" {
+		logger.Warn("partial_routes=true connected_with_warn: %s", routeWarn)
+	}
 	if e.cfg.Security.KillSwitch {
 		if err := e.ks.Disable(); err != nil {
 			logger.Error("杀开关拆除失败: %v", err)

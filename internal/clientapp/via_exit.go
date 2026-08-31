@@ -9,7 +9,6 @@ import (
 	"haovpn/internal/logger"
 	"haovpn/internal/netstack"
 	"haovpn/internal/netutil"
-	"haovpn/internal/winnet"
 )
 
 // viaExit 客户端作托管路由 via 时的出口（复用 netstack.Stack）。
@@ -20,13 +19,14 @@ type viaExit struct {
 	stack *netstack.Stack
 }
 
-// ICS 清理钩子（可测注入；生产默认指向 winnet）。
+// ICS 清理钩子（可测注入；生产默认指向 netstack 门面 → winnet）。
 //
 // 为何可替换：单测不得真跑十几秒 DisableAllICS COM；断言「无残留不清理 / hadVia 只清地址」。
+// 为何不直接 import winnet：clientapp 只依赖 netstack 编排层。
 var (
-	hasICSResidueFn         = winnet.HasICSResidue
-	cleanupICSResidueFn     = winnet.CleanupICSResidue
-	removeICSAddressesFn    = winnet.RemoveICSAddressesKeepVPN
+	hasICSResidueFn      = netstack.HasICSResidue
+	cleanupICSResidueFn  = netstack.CleanupICSResidue
+	removeICSAddressesFn = netstack.RemoveICSAddressesKeepVPN
 )
 
 // willViaSetupLocked 预判本次 setupViaExitLocked 是否会真正执行 Stack.Setup。
@@ -124,7 +124,10 @@ func (rt *runtime) setupViaExitLocked(vpnSubnet, tunName, tunIP string, localLAN
 //   - 有残留且 hadVia → 只删 137（避免二次十几秒 COM）；
 //   - 有残留且非 hadVia → CleanupICSResidue 一次 PS（Disable+清地址）。
 func cleanupTUNAfterViaDisabled(tunName, vpnIP string, hadVia bool) {
-	if !hasICSResidueFn(tunName) {
+	probeStart := time.Now()
+	hasResidue := hasICSResidueFn(tunName)
+	logger.Info("via_cleanup HasICSResidue elapsed=%s hit=%v tun=%s hadVia=%v", time.Since(probeStart), hasResidue, tunName, hadVia)
+	if !hasResidue {
 		logger.Debug("via_exit skipped local_lans empty (no ICS residue) tun=%s", tunName)
 		return
 	}

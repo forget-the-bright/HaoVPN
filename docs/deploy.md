@@ -340,7 +340,7 @@ cd C:\haovpn-client
 .\haovpn-client.exe --service start
 ```
 
-首次连接会在 **exe 同目录** 释放 `wintun.dll`（须可写）。GUI 可「记住密码」（明文写入 `client.yaml`，限制 ACL、勿提交 git）；杀开关在 yaml `security.kill_switch` 或托盘「配置」。断线自动重连时保留 TUN/via（未变则不重跑 ICS）；登出 / 手动重连仍全清。
+首次连接会在 **exe 同目录** 释放 `wintun.dll`（须可写）。GUI 可「记住密码」（明文写入 `client.yaml`，限制 ACL、勿提交 git）；杀开关在 yaml `security.kill_switch` 或托盘「配置」。`tun.name` 仅允许字母数字、下划线、连字符（长度 1～64），非法名启动 Validate 失败。断线自动重连时保留 TUN/via（未变则不重跑 ICS）；登出 / 手动重连仍全清。
 
 ### 5.3 Linux / macOS 客户端
 
@@ -483,7 +483,7 @@ cp /opt/HaoVPN/data/haovpn.db /backup/HaoVPN-$(date +%F).db
 3. 替换二进制。
 4. 启动服务，查看日志确认迁移成功。
 
-**0.1.2 注意**：本小版本含握手/注册表/via、peer 应用生效与 Cookie/CSP 等管理面改动，**请同时更新服务端与客户端**（含 GUI）。仅升一端可能导致策略不同步或旧客户端行为差异。详见 [dev-log.md](dev-log.md) 第十七轮与 [architecture.md](architecture.md)。
+**升版注意**：服务端与客户端（含 GUI）请按根目录 [`VERSION`](../VERSION) 与最新 [dev-log.md](dev-log.md) **成对升级**。跨小版本可能含握手/策略/管理面/TUN 名校验等行为变化；仅升一端可能导致策略不同步。详见 architecture CODEMAP 与本轮发版条目。
 ### 8.3 回滚
 
 1. 停止服务。
@@ -535,4 +535,4 @@ cp /opt/HaoVPN/data/haovpn.db /backup/HaoVPN-$(date +%F).db
 
 ---
 
-*最后更新：2026-08-24*
+*最后更新：2026-08-31 · VERSION 0.1.3 · 文档治理*
