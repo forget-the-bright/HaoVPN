@@ -3,6 +3,8 @@ package security
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"net/http"
+	"strings"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
@@ -84,6 +86,42 @@ func SecurityHeaders() map[string]string {
 	return map[string]string{
 		"X-Content-Type-Options":  "nosniff",
 		"X-Frame-Options":         "DENY",
+		"Referrer-Policy":           "strict-origin-when-cross-origin",
 		"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
 	}
+}
+
+// SecurityHeadersForRequest 按请求上下文追加 HSTS 等动态头。
+//
+// 参数 secureCookies — 配置 api.secure_cookies；trustedProxyCIDRs — 反代信任列表。
+// 当直连 TLS、secure_cookies 或可信反代 X-Forwarded-Proto: https 时设置 HSTS。
+func SecurityHeadersForRequest(r *http.Request, secureCookies bool, trustedProxyCIDRs []string) map[string]string {
+	h := SecurityHeaders()
+	if RequestIsHTTPS(r, secureCookies, trustedProxyCIDRs) {
+		h["Strict-Transport-Security"] = "max-age=31536000"
+	}
+	return h
+}
+
+// RequestIsHTTPS 判断管理口请求是否应视为 HTTPS（Cookie Secure / HSTS）。
+func RequestIsHTTPS(r *http.Request, secureCookies bool, trustedProxyCIDRs []string) bool {
+	if secureCookies {
+		return true
+	}
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	if len(trustedProxyCIDRs) == 0 {
+		return false
+	}
+	remoteIP := netutil.HostFromAddr(r.RemoteAddr)
+	parsed, err := netutil.ParseHostIP(remoteIP)
+	if err == nil && netutil.IPMatchesRules(parsed, trustedProxyCIDRs) {
+		proto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")))
+		return proto == "https"
+	}
+	return false
 }

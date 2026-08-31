@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"haovpn/internal/tunnel"
+	"haovpn/internal/clientapp"
 )
 
 func TestTrayRouteLinesIncludesAllowedLAN(t *testing.T) {
@@ -39,11 +39,11 @@ func TestTrayRouteLinesIncludesAllowedLAN(t *testing.T) {
 }
 
 func TestFormatManagedRouteStale(t *testing.T) {
-	got := formatManagedRouteLine(tunnel.ManagedRoute{Dest: "192.168.31.0/24", ViaIP: "10.88.0.5", Stale: true})
+	got := formatManagedRouteLine(clientapp.ManagedRouteView{Dest: "192.168.31.0/24", ViaIP: "10.88.0.5", Stale: true})
 	if !strings.Contains(got, "（失效）") {
 		t.Fatalf("Stale 应标失效: %q", got)
 	}
-	offline := formatManagedRouteLine(tunnel.ManagedRoute{Dest: "192.168.31.0/24", ViaUsername: "home", Stale: true})
+	offline := formatManagedRouteLine(clientapp.ManagedRouteView{Dest: "192.168.31.0/24", ViaUsername: "home", Stale: true})
 	if !strings.Contains(offline, "(离线)") || !strings.Contains(offline, "（失效）") {
 		t.Fatalf("离线+失效: %q", offline)
 	}
@@ -63,7 +63,7 @@ func TestFormatTUNLinePrefersVPNSubnet(t *testing.T) {
 func TestTrayRouteLinesManagedPeers(t *testing.T) {
 	lines := trayRouteLines("10.88.0.0/24", "10.88.0.2", "10.88.0.1",
 		[]string{"192.168.3.0/24"},
-		[]tunnel.ManagedRoute{{Dest: "192.168.31.0/24", ViaIP: "10.88.0.9"}},
+		[]clientapp.ManagedRouteView{{Dest: "192.168.31.0/24", ViaIP: "10.88.0.9"}},
 	)
 	joined := strings.Join(lines, "\n")
 	if strings.Contains(joined, "（无对端托管路由）") {

@@ -5,17 +5,16 @@
 package probedefense
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
-	"haovpn/internal/timeutil"
+	"haovpn/internal/transport"
 )
 
 // 阶段与动作常量（写入 security_events）。
@@ -48,6 +47,7 @@ type Config struct {
 	EventRetentionDays     int
 	IgnoreSignaturesForBan []string
 	AllowedSourceIPs       []string // tunnel_allowed_source_ips；命中则永不自动封
+	BanExemptIPs           []string // probe_defense.ban_exempt_ips；启动 yaml + DB 合并
 }
 
 // DefaultConfig 温和默认：启用记录与自动封禁（与 ApplyDefaults 数值对齐）。
@@ -75,11 +75,15 @@ func DefaultConfig() Config {
 type Guard struct {
 	store *persist.Store
 	cfg   Config
+	exemptMu     sync.RWMutex
+	banExemptIPs []string // yaml + DB 合并；ReloadBanExempt 更新
 }
 
 // New 创建 Guard；store 不可为 nil；cfg 由调用方 ApplyDefaults 后传入。
 func New(store *persist.Store, cfg Config) *Guard {
-	return &Guard{store: store, cfg: cfg}
+	g := &Guard{store: store, cfg: cfg}
+	g.banExemptIPs = append([]string(nil), cfg.BanExemptIPs...)
+	return g
 }
 
 // Enabled 自动防御总开关（记录/自动封）；封禁表命中仍由 IsBlocked 强制拒绝。
@@ -90,11 +94,19 @@ func (g *Guard) Enabled() bool {
 	return g.cfg.Enabled
 }
 
-// IsBlocked 查询 IP 是否处于生效封禁（不依赖 Enabled，手动封禁始终生效）。
+// IsBlocked 查询 IP 是否处于生效封禁（豁免 IP 视为未封禁）。
 func (g *Guard) IsBlocked(ip string) bool {
 	if g == nil || g.store == nil || ip == "" {
 		return false
 	}
+	if g.IsBanExempt(ip) {
+		return false
+	}
+	return g.isBlockedRaw(ip)
+}
+
+// isBlockedRaw 仅查 ip_blocks，不考虑豁免。
+func (g *Guard) isBlockedRaw(ip string) bool {
 	b, err := g.store.GetActiveIPBlock(ip)
 	return err == nil && b != nil
 }
@@ -104,11 +116,7 @@ func (g *Guard) AllowSourceIP(ip string) bool {
 	if g == nil || len(g.cfg.AllowedSourceIPs) == 0 {
 		return true
 	}
-	parsed, err := netutil.ParseHostIP(ip)
-	if err != nil {
-		return false
-	}
-	return netutil.IPMatchesRules(parsed, g.cfg.AllowedSourceIPs)
+	return netutil.CheckSourceIPAllowed(ip, g.cfg.AllowedSourceIPs) == nil
 }
 
 // IsAllowlisted 是否在源白名单内（白名单 IP 永不自动封禁）。
@@ -121,36 +129,36 @@ func (g *Guard) IsAllowlisted(ip string) bool {
 	return g.AllowSourceIP(ip)
 }
 
-// AllowAccept 实现 transport.ProbeObserver：封禁或源白名单拒绝时返回 false。
-//
-// 已封禁 IP 始终拒绝（不看 Enabled）；源白名单（tunnel_allowed_source_ips）同样始终生效，
-// 与握手侧 CheckTunnelSourceIP 对齐，避免 Enabled=false 时扫描器仍走完 TLS Accept。
-func (g *Guard) AllowAccept(remoteAddr string) bool {
+// CheckAccept 实现 transport.ProbeObserver：返回是否允许接入及 TLS 前拒绝 banner。
+func (g *Guard) CheckAccept(remoteAddr string) (allow bool, rejectBanner string) {
 	if g == nil {
-		return true
+		return true, ""
 	}
 	ip, port := netutil.SplitRemoteAddr(remoteAddr)
-	if g.IsBlocked(ip) {
+	if g.isBlockedRaw(ip) && !g.IsBanExempt(ip) {
 		g.RecordBanHit(ip, port)
 		logger.Warn("探针防御拒绝(已封禁) ip=%s port=%s", ip, port)
-		return false
+		return false, transport.BannerIPBanned
 	}
-	// 源白名单与 tunnel.CheckTunnelSourceIP 共用 netutil.IPMatchesRules，不依赖 Enabled。
 	if len(g.cfg.AllowedSourceIPs) > 0 && !g.AllowSourceIP(ip) {
-		if g.cfg.Enabled {
-			g.RecordReject(ip, port, PhaseTCPAccept, "source_deny", "不在 tunnel_allowed_source_ips")
-		}
+		g.RecordReject(ip, port, PhaseTCPAccept, SigSourceDeny, "不在 tunnel_allowed_source_ips")
 		logger.Warn("探针防御拒绝(源白名单) ip=%s port=%s", ip, port)
-		return false
+		return false, ""
 	}
-	return true
+	return true, ""
+}
+
+// AllowAccept 实现 transport.ProbeObserver（兼容旧调用路径）。
+func (g *Guard) AllowAccept(remoteAddr string) bool {
+	allow, _ := g.CheckAccept(remoteAddr)
+	return allow
 }
 
 // OnTransportReadError 实现 transport.ProbeObserver。
 //
 // 读超时/已关闭连接忽略；真 TLS 协议错记事件并打一条 Warn（transport 侧不再重复 Warn）。
 func (g *Guard) OnTransportReadError(remoteAddr string, err error) {
-	if g == nil || !g.cfg.Enabled || err == nil || IsIgnorableTransportError(err) {
+	if g == nil || err == nil || IsIgnorableTransportError(err) {
 		return
 	}
 	ip, port := netutil.SplitRemoteAddr(remoteAddr)
@@ -161,7 +169,7 @@ func (g *Guard) OnTransportReadError(remoteAddr string, err error) {
 
 // OnFrameDecodeError 实现 transport.ProbeObserver。
 func (g *Guard) OnFrameDecodeError(remoteAddr string, invalidLen int, err error) {
-	if g == nil || !g.cfg.Enabled {
+	if g == nil {
 		return
 	}
 	ip, port := netutil.SplitRemoteAddr(remoteAddr)
@@ -180,16 +188,22 @@ func (g *Guard) RecordBanHit(ip, port string) {
 	if err := g.store.IncrementIPBlockHit(ip); err != nil {
 		logger.Warn("封禁命中计数失败 ip=%s: %v", ip, err)
 	}
-	g.record(ip, port, PhaseBanHit, "banned", ActionBannedHit, "")
+	g.record(ip, port, PhaseBanHit, SigBanned, ActionBannedHit, "")
 }
 
-// RecordReject 记录一次拒绝并可能触发自动封禁。
+// RecordReject 记录一次探针自动路径拒绝并可能触发自动封禁。
+//
+// record_events 控制是否写 security_events；enabled 控制是否参与 maybeAutoBan 计数。
 func (g *Guard) RecordReject(ip, port, phase, signature, detail string) {
-	if g == nil || !g.cfg.Enabled {
+	if g == nil {
 		return
 	}
-	g.record(ip, port, phase, signature, ActionRejected, detail)
-	g.maybeAutoBan(ip, signature)
+	if g.cfg.RecordEvents {
+		g.record(ip, port, phase, signature, ActionRejected, detail)
+	}
+	if g.cfg.Enabled {
+		g.maybeAutoBan(ip, signature)
+	}
 }
 
 // ManualBan 管理员手动封禁（不依赖 Enabled；封禁表始终可写）。
@@ -198,20 +212,13 @@ func (g *Guard) RecordReject(ip, port, phase, signature, detail string) {
 // durationSec：BanDurationUseDefault(-1) 使用 cfg.BanDurationSec；0 永久；>0 指定秒数。
 func (g *Guard) ManualBan(ip, reason string, durationSec int) error {
 	if g == nil || g.store == nil {
-		return nil
+		return ErrProbeGuardNotReady
 	}
-	ip = strings.TrimSpace(ip)
-	if net.ParseIP(ip) == nil {
-		return fmt.Errorf("无效 IP 地址")
-	}
-	b := persist.IPBlock{
-		IP: ip, Reason: reason, Source: "manual", Enabled: true,
-	}
-	b.ExpiresAt = g.resolveBanExpiry(durationSec)
-	if err := g.store.UpsertIPBlock(b); err != nil {
+	if err := ManualBanStore(g.store, g.IsBanExempt, ip, reason, durationSec, g.cfg.BanDurationSec); err != nil {
 		return err
 	}
-	g.record(ip, "", PhaseTCPAccept, "manual", ActionManualBanned, reason)
+	ip = strings.TrimSpace(ip)
+	g.record(ip, "", PhaseTCPAccept, SigManual, ActionManualBanned, reason)
 	return nil
 }
 
@@ -234,15 +241,7 @@ func ValidateManualBanDuration(durationSec int) error {
 
 // resolveBanExpiry 根据 durationSec 计算封禁过期时间；nil 表示永久。
 func (g *Guard) resolveBanExpiry(durationSec int) *time.Time {
-	sec := durationSec
-	if sec == BanDurationUseDefault {
-		sec = g.cfg.BanDurationSec
-	}
-	if sec <= 0 {
-		return nil
-	}
-	exp := time.Now().Add(timeutil.Seconds(sec))
-	return &exp
+	return resolveBanExpiryTime(durationSec, g.cfg.BanDurationSec)
 }
 
 // Unban 解封。
@@ -267,98 +266,5 @@ func (g *Guard) record(ip, port, phase, signature, action, detail string) {
 		Signature: signature, Action: action, DetailJSON: detailJSON,
 	}); err != nil {
 		logger.Warn("写入 security_events 失败: %v", err)
-	}
-}
-
-func (g *Guard) maybeAutoBan(ip, signature string) {
-	if !g.cfg.AutoBan || ip == "" {
-		return
-	}
-	if g.IsAllowlisted(ip) {
-		return
-	}
-	for _, ign := range g.cfg.IgnoreSignaturesForBan {
-		if signature == strings.TrimSpace(ign) {
-			return
-		}
-	}
-	window := timeutil.Seconds(g.cfg.BanWindowSec)
-	if window <= 0 {
-		window = 10 * time.Minute
-	}
-	threshold := g.cfg.BanAfterEvents
-	if threshold <= 0 {
-		threshold = 8
-	}
-	n, err := g.store.CountSecurityEventsSince(ip, time.Now().Add(-window), g.cfg.IgnoreSignaturesForBan)
-	if err != nil || n < threshold {
-		return
-	}
-	reason := "auto: " + signature + " 窗口内达阈值"
-	b := persist.IPBlock{
-		IP: ip, Reason: reason, Source: "auto", Signature: signature, Enabled: true,
-	}
-	b.ExpiresAt = g.resolveBanExpiry(BanDurationUseDefault)
-	if err := g.store.UpsertIPBlock(b); err != nil {
-		logger.Warn("自动封禁失败 ip=%s: %v", ip, err)
-		return
-	}
-	g.record(ip, "", PhaseTCPAccept, signature, ActionAutoBanned, reason)
-	logger.Warn("探针防御自动封禁 ip=%s reason=%s events=%d", ip, reason, n)
-}
-
-// ClassifyTLSError 将 TLS/读错误映射为 signature。
-func ClassifyTLSError(err error) string {
-	if err == nil {
-		return "unknown"
-	}
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "sslv2"):
-		return "sslv2"
-	case strings.Contains(msg, "first record does not look like a tls"):
-		return "tls_bad_record"
-	case strings.Contains(msg, "no cipher suite"):
-		return "tls_cipher_mismatch"
-	case strings.Contains(msg, "unsupported versions"), strings.Contains(msg, "client offered only unsupported"):
-		return "tls_old_version"
-	case strings.Contains(msg, "connection reset"):
-		return "connection_reset"
-	case strings.Contains(msg, "unexpected eof"), strings.Contains(msg, "eof"):
-		return "unexpected_eof"
-	default:
-		return "tls_error"
-	}
-}
-
-// ClassifyFrameLength 将非法帧长（大端 4 字节）映射为协议特征。
-func ClassifyFrameLength(n int) string {
-	if n <= 0 {
-		return "frame_invalid"
-	}
-	var b [4]byte
-	binary.BigEndian.PutUint32(b[:], uint32(n))
-	s := string(b[:])
-	switch {
-	case strings.HasPrefix(s, "GET "), s == "GET ":
-		return "http_get"
-	case strings.HasPrefix(s, "POST"), strings.HasPrefix(s, "HEAD"), strings.HasPrefix(s, "OPTI"):
-		return "http_method"
-	case s == "AMQP":
-		return "amqp"
-	case s == "JRMI":
-		return "jrmi"
-	case s == "GIOP":
-		return "giop"
-	case s == "CONN":
-		return "conn_probe"
-	case s == "HELP":
-		return "help_probe"
-	case b[0] == 0x16 && b[1] == 0x03:
-		return "nested_tls"
-	case b[0] == 0x0d && b[1] == 0x0a:
-		return "http_blank"
-	default:
-		return "frame_invalid"
 	}
 }

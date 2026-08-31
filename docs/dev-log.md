@@ -6,7 +6,91 @@
 
 ---
 
-*最后更新：2026-08-31 · WebUI favicon + 手动封禁时长*
+## 2026-08-31 · 架构解耦第十九轮（审计整改 + 公共抽取续）
+
+### 安全与正确性
+
+- **TLS Accept 探针**：`transport/server.go` 握手失败调用 `Probe.OnTransportReadError`；`server_probe_test.go`。
+- **手动封禁**：`probedefense/manual_ban.go`（`ManualBanStore` 始终检查豁免）；无 Guard 时 API 503。
+- **豁免 YAML 导入**：非法 CIDR 跳过 + WARN。
+- **`api.listen_tun`**（默认 true）：可关闭 TUN 网关管理口绑定；`audit/tun_listen.go`。
+- **HSTS / Secure Cookie**：`security/RequestIsHTTPS`；可信反代 `X-Forwarded-Proto: https`。
+- **GUI 记住密码**：勾选时显示明文存储警告（行为不变）。
+
+### 公共抽取
+
+- **`internal/autherr`**：`Classify` / `IsIPBanned` / `IsFatalAuth`；probedefense/clientapp 共用。
+- **netutil**：`MergeDedupTrimNonEmpty`、`CheckSourceIPAllowed`、`source_ip.go`。
+- **paginate**：`ParseOnlyEnabled`。
+- **api**：`validateWebSession`；`writeDomainError`；`persist/peer_access_errors.go` 哨兵。
+- **health**：`CheckDirWritable` 替代重复 `EnsureParentDir`。
+
+### 文档
+
+- 更新 architecture、internal/README、codebase-guide、deploy、security-hardening、troubleshooting、记忆。
+
+### 验证
+
+- `go test ./...`（`singleinstance` 若本机锁占用可跳过）
+- `.\scripts\build-local.ps1`
+
+---
+
+*最后更新：2026-08-31 · 架构解耦第十九轮*
+
+---
+
+## 2026-08-31 · 架构解耦第十八轮（审计整改 + 公共抽取）
+
+### 缺陷修复
+
+- **CIDR 豁免 DELETE**：`handler_security_exempts.go` 移除对 `/` 的误判，改用 `ValidateIPOrCIDR`；补 `TestSecurityExemptCIDRDelete`。
+- **`enabled` / `record_events` 语义**：`RecordReject` 落库看 `record_events`，auto-ban 计数看 `enabled`；`guard_record_test` 覆盖四组合。
+- **`tunnel/source_ip.go` 注释**：Accept 侧白名单不依赖 probe `enabled`。
+
+### 公共抽取与降耦
+
+- `audit/public_bind.go`：`LogPublicBindEnabled`；`serverapp/boot_persist.go` 不再 import `api`。
+- `netutil/validate_ip.go`：`ValidateIPOrCIDR`；`ValidateCIDRList` / guard / API 共用。
+- `probedefense`：拆 `signatures.go`、`classify_tls.go`、`classify_handshake.go`、`errors.go`、`auto_ban.go`。
+- `api/session_context.go`：`requireAuth` 注入 Session；安全 handler 统一 `actorFromRequest`。
+- `api/handler_security_*.go`：按 events/blocks/exempts/common 拆分。
+- `tunnel/handshake_reject.go`：握手拒绝 + 探针记录。
+- `clientapp/route_view.go` + `clientgui/tray_routes.go`：GUI 不再 import `tunnel`。
+- Manual ban 无 Guard 时直写 `ip_blocks`；API 错误文案中文化；`requireMethod` 补全。
+
+### 文档
+
+- 新增 [docs/codebase-guide.md](codebase-guide.md)。
+- 更新 architecture、internal/README、security-hardening、记忆、docs/README。
+
+### 验证
+
+- `go test ./...`：除 `singleinstance`（本机已有客户端实例占用锁，环境问题）外全绿。
+- `.\scripts\build-local.ps1` 通过。
+
+---
+
+*最后更新：2026-08-31 · 架构解耦第十九轮*
+
+---
+
+## 2026-08-31 · 封禁豁免白名单 + 客户端封禁友好提示
+
+### 动机
+
+自测手动封禁后客户端仅显示 `tls handshake: forcibly closed`，无法区分封禁与网络故障；需可配置/动态维护「永不封禁」名单（与 `tunnel_allowed_source_ips` 接入白名单语义分离）。
+
+### 改动
+
+- **豁免**：`probe_defense.ban_exempt_ips` + 表 `ip_ban_exempt`；Guard `IsBanExempt`/`ReloadBanExempt`；API `/api/v1/security/exempts`；WebUI「封禁豁免」卡片。
+- **客户端**：TCP 接入后 TLS 前写 `HAOVPN:IP_BANNED`；`transport.ErrIPBanned`；`clientapp.FormatDialError` 中文提示并 fatal 停重试。
+- **transport**：`ListenTLS` 改为 TCP Accept → CheckAccept → TLS Handshake。
+
+### 验证
+
+- `go test ./internal/probedefense/... ./internal/api/... ./internal/transport/... ./internal/clientapp/... -count=1` 通过。
+- 重建 server + client 后：封禁 IP 登录窗应显示友好文案；豁免 IP 不可封且已封记录无效。
 
 ---
 

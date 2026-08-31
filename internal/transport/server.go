@@ -2,35 +2,28 @@ package transport
 
 import (
 	"crypto/tls"
+	"io"
 	"net"
+	"time"
 
 	"haovpn/internal/logger"
 )
 
-// Server TLS 入站监听器：acceptLoop 接受连接并交给 onConn。
-//
-// 字段：
-//   cfg — 传给 AcceptConn 的心跳/队列配置。
-//   listener — tls.Listen 所得。
-//   onConn — 每建立一条 TLS 连接时的回调（tunnel 握手入口）。
+// Server TLS 入站监听器：TCP Accept → 探针检查 → TLS 握手 → 交给 onConn。
 type Server struct {
 	cfg      Config
 	listener net.Listener
+	tlsCfg   *tls.Config
 	onConn   func(*Conn)
 }
 
-// ListenTLS 在 addr 上启动 TLS 监听并接受客户端连接。
-//
-// 参数：addr — host:port；tlsCfg — 服务端证书；cfg — 心跳/队列参数；onConn — 每接受一条 TLS 连接后回调（通常进入握手）。
-// 返回：*Server 已在后台 acceptLoop；err 常见为地址占用或证书无效。
-// 副作用：启动 goroutine 接受连接；日志记录 listening 地址。
-// 并发：acceptLoop 与调用方并行；Stop 时须 Server.Close。
+// ListenTLS 在 addr 上启动 TCP 监听，探针通过后完成 TLS 握手。
 func ListenTLS(addr string, tlsCfg *tls.Config, cfg Config, onConn func(*Conn)) (*Server, error) {
-	ln, err := tls.Listen("tcp", addr, tlsCfg)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, listener: ln, onConn: onConn}
+	s := &Server{cfg: cfg, listener: ln, tlsCfg: tlsCfg, onConn: onConn}
 	go s.acceptLoop()
 	logger.Info("transport listening on %s", addr)
 	return s, nil
@@ -43,31 +36,53 @@ func (s *Server) acceptLoop() {
 			logger.Info("transport listener closed: %v", err)
 			return
 		}
-		remote := raw.RemoteAddr().String()
-		if s.cfg.Probe != nil && !s.cfg.Probe.AllowAccept(remote) {
-			_ = raw.Close()
-			continue
-		}
-		tlsConn, ok := raw.(*tls.Conn)
-		if !ok {
-			raw.Close()
-			continue
-		}
-		conn := AcceptConn(tlsConn, s.cfg, nil, func(err error) {
-			logger.Debug("peer disconnected: %v", err)
-		})
-		if s.onConn != nil {
-			s.onConn(conn)
-		}
+		go s.handleConn(raw)
 	}
 }
 
-// Close 关闭 TLS 监听器；acceptLoop 将因 Accept 错误退出。
+func (s *Server) handleConn(raw net.Conn) {
+	remote := raw.RemoteAddr().String()
+	if s.cfg.Probe != nil {
+		allow, banner := s.cfg.Probe.CheckAccept(remote)
+		if !allow {
+			if banner != "" {
+				_, _ = raw.Write([]byte(banner))
+			}
+			_ = raw.Close()
+			return
+		}
+	}
+	tlsConn := tls.Server(raw, s.tlsCfg)
+	_ = raw.SetDeadline(time.Now().Add(30 * time.Second))
+	if err := tlsConn.Handshake(); err != nil {
+		// TLS 握手失败（HTTPS 扫描/协议错）须上报探针，否则仅 TCP Accept 路径能记事件。
+		if s.cfg.Probe != nil {
+			s.cfg.Probe.OnTransportReadError(remote, err)
+		}
+		_ = raw.Close()
+		return
+	}
+	_ = raw.SetDeadline(time.Time{})
+	conn := AcceptConn(tlsConn, s.cfg, nil, func(err error) {
+		logger.Debug("peer disconnected: %v", err)
+	})
+	if s.onConn != nil {
+		s.onConn(conn)
+	}
+}
+
+// Close 关闭监听器。
 func (s *Server) Close() error {
 	return s.listener.Close()
 }
 
-// Addr 返回监听器地址（用于测试获取动态端口）。
+// Addr 返回监听器地址。
 func (s *Server) Addr() net.Addr {
 	return s.listener.Addr()
+}
+
+// discardConn 测试用：读尽并关闭。
+func discardConn(c net.Conn) {
+	_, _ = io.Copy(io.Discard, c)
+	_ = c.Close()
 }

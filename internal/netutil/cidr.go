@@ -39,11 +39,8 @@ func ValidateCIDRList(field string, cidrs []string) error {
 		if c == "" {
 			continue
 		}
-		if _, _, err := net.ParseCIDR(c); err == nil {
-			continue
-		}
-		if net.ParseIP(c) == nil {
-			return fmt.Errorf("%s 含无效项 %q", field, c)
+		if err := ValidateIPOrCIDR(field, c, true); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -102,6 +102,7 @@ type DatabaseSection struct {
 // listen_hosts 含 0.0.0.0/:: 时须 allow_public_bind: true；session_ttl_sec 控制 Cookie 有效期。
 type APISection struct {
 	ListenHosts      []string `yaml:"listen_hosts"`       // 绑定地址列表；默认 127.0.0.1
+	ListenTun        *bool    `yaml:"listen_tun"`         // TUN 就绪后是否追加 VPN 网关 IP；nil/true=追加；false=仅 listen_hosts
 	Port             int      `yaml:"port"`               // 端口；Validate 须 1–65535
 	AllowPublicBind  bool     `yaml:"allow_public_bind"`  // 含 0.0.0.0/:: 时须显式 true
 	LoginMaxAttempts     int      `yaml:"login_max_attempts"`      // 登录失败上限；0 用内置默认
@@ -110,6 +111,15 @@ type APISection struct {
 	TrustedProxyCIDRs    []string `yaml:"trusted_proxy_cidrs"`   // 信任反代 CIDR；空则 clientIP 仅用 RemoteAddr（防 XFF 绕过锁定）
 	SecureCookies        bool     `yaml:"secure_cookies"`          // true 或 HTTPS 请求时 Session Cookie 设 Secure
 	DisplayTimezone      string   `yaml:"display_timezone"`        // WebUI 展示时区；默认 UTC；存库仍 UTC
+}
+
+// ListenTunEnabled 是否在 TUN 就绪后将 VPN 网关 IP 追加到管理口 listen_hosts。
+// nil 或未写 yaml 时默认 true（与历史行为一致）。
+func (a APISection) ListenTunEnabled() bool {
+	if a.ListenTun == nil {
+		return true
+	}
+	return *a.ListenTun
 }
 
 // SecuritySection 隧道接入源 IP 限制、分流策略与公网探针防御。
@@ -136,6 +146,7 @@ type ProbeDefenseSection struct {
 	BanDurationSec         int      `yaml:"ban_duration_sec"`         // 封禁时长秒；0=永久；整段未配置时默认 3600
 	EventRetentionDays     int      `yaml:"event_retention_days"`     // 事件保留天；≤0 默认 30
 	IgnoreSignaturesForBan []string `yaml:"ignore_signatures_for_ban"` // 不计入自动封禁的特征码；nil 填默认列表
+	BanExemptIPs           []string `yaml:"ban_exempt_ips"`            // 封禁豁免；启动导入 DB，与动态条目合并
 }
 
 // BoolOr 解引用 *bool；nil 时返回 def（供 ApplyDefaults 前后读取）。
@@ -205,6 +216,10 @@ func (c *ServerConfig) ApplyDefaults() {
 	c.VPN.SendQueueSize = clampSendQueueLogged("vpn.send_queue_size", c.VPN.SendQueueSize)
 	if len(c.API.ListenHosts) == 0 {
 		c.API.ListenHosts = []string{"127.0.0.1"}
+	}
+	if c.API.ListenTun == nil {
+		t := true
+		c.API.ListenTun = &t
 	}
 	if strings.TrimSpace(c.API.DisplayTimezone) == "" {
 		c.API.DisplayTimezone = "UTC"
@@ -298,6 +313,9 @@ func (c *ServerConfig) Validate() error {
 		return fmt.Errorf("配置错误: %w", err)
 	}
 	if err := netutil.ValidateCIDRList("security.tunnel_allowed_source_ips", c.Security.TunnelAllowedSourceIPs); err != nil {
+		return fmt.Errorf("配置错误: %w", err)
+	}
+	if err := netutil.ValidateCIDRList("security.probe_defense.ban_exempt_ips", c.Security.ProbeDefense.BanExemptIPs); err != nil {
 		return fmt.Errorf("配置错误: %w", err)
 	}
 	if err := netutil.ValidateCIDRList("api.trusted_proxy_cidrs", c.API.TrustedProxyCIDRs); err != nil {

@@ -5,7 +5,50 @@ import (
 
 	"haovpn/internal/auth"
 	"haovpn/internal/logger"
+	"haovpn/internal/security"
 )
+
+// webSessionStatus validateWebSession 的校验结果。
+type webSessionStatus int
+
+const (
+	webSessionOK webSessionStatus = iota
+	webSessionUnauthorized
+	webSessionInvalid
+	webSessionMustChangePassword
+)
+
+// validateWebSession 校验 Cookie/Context 会话：存在、用户有效、须改密策略。
+//
+// allowMustChangeBypass 为 true 时（requireAuth）允许改密/登出/CSRF 路径；Page 中间件传 false。
+func (s *Server) validateWebSession(r *http.Request, allowMustChangeBypass bool) (auth.SessionEntry, webSessionStatus) {
+	se, ok := s.sessionFromRequest(r)
+	if !ok {
+		return auth.SessionEntry{}, webSessionUnauthorized
+	}
+	if err := s.auth.UserActiveForSession(se.UserID); err != nil {
+		s.invalidateRequestSession(r)
+		return auth.SessionEntry{}, webSessionInvalid
+	}
+	mustChange, err := s.auth.MustChangePassword(se.UserID)
+	if err != nil {
+		s.invalidateRequestSession(r)
+		return auth.SessionEntry{}, webSessionInvalid
+	}
+	if mustChange {
+		if allowMustChangeBypass {
+			allowed := r.URL.Path == "/api/v1/password" ||
+				r.URL.Path == "/api/v1/logout" ||
+				(r.Method == http.MethodGet && r.URL.Path == "/api/v1/csrf")
+			if !allowed {
+				return se, webSessionMustChangePassword
+			}
+		} else {
+			return se, webSessionMustChangePassword
+		}
+	}
+	return se, webSessionOK
+}
 
 // requireAuth 鉴权中间件，包装需登录的 API 处理器。
 //
@@ -17,30 +60,17 @@ import (
 // POST/PUT/PATCH/DELETE 须通过 validateCSRF；GET 豁免 CSRF（敏感下载已改为 POST）。
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		se, ok := s.sessionFromRequest(r)
-		if !ok {
+		se, st := s.validateWebSession(r, true)
+		switch st {
+		case webSessionUnauthorized:
 			writeAPIError(w, http.StatusUnauthorized, "未登录")
 			return
-		}
-		if err := s.auth.UserActiveForSession(se.UserID); err != nil {
-			s.invalidateRequestSession(r)
+		case webSessionInvalid:
 			writeAPIError(w, http.StatusUnauthorized, "会话已失效")
 			return
-		}
-		mustChange, err := s.auth.MustChangePassword(se.UserID)
-		if err != nil {
-			s.invalidateRequestSession(r)
-			writeAPIError(w, http.StatusUnauthorized, "会话已失效")
+		case webSessionMustChangePassword:
+			writeAPIError(w, http.StatusForbidden, "须先修改密码")
 			return
-		}
-		if mustChange {
-			allowed := r.URL.Path == "/api/v1/password" ||
-				r.URL.Path == "/api/v1/logout" ||
-				(r.Method == http.MethodGet && r.URL.Path == "/api/v1/csrf")
-			if !allowed {
-				writeAPIError(w, http.StatusForbidden, "须先修改密码")
-				return
-			}
 		}
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete {
 			if !s.validateCSRF(r) {
@@ -50,17 +80,16 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if c, err := r.Cookie("session"); err == nil {
 			s.auth.TouchSession(c.Value)
-			// 重发 Cookie 刷新浏览器 MaxAge，否则仅服务端滑动、浏览器仍按登录时 MaxAge 丢弃。
 			s.setSessionCookie(w, r, c.Value)
 		}
-		next(w, r)
+		next(w, withRequestSession(r, se))
 	}
 }
 
 // sessionCookieSecure 是否应对 session Cookie 置 Secure。
-// 配置 api.secure_cookies 或请求已走 TLS（反代终止 TLS 时靠配置）时为 true。
+// 配置 api.secure_cookies、直连 TLS，或可信反代 X-Forwarded-Proto: https 时为 true。
 func (s *Server) sessionCookieSecure(r *http.Request) bool {
-	return s.cfg.API.SecureCookies || r.TLS != nil
+	return security.RequestIsHTTPS(r, s.cfg.API.SecureCookies, s.cfg.API.TrustedProxyCIDRs)
 }
 
 // setSessionCookie 写入/刷新 session Cookie（登录与 Touch 滑动续期共用）。
@@ -105,25 +134,12 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 // 未登录、用户失效或须改密时重定向 /login；不返回 JSON，供 HTML 页面路由使用。
 func (s *Server) requireAuthPage(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		se, ok := s.sessionFromRequest(r)
-		if !ok {
+		se, st := s.validateWebSession(r, false)
+		if st != webSessionOK {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		if err := s.auth.UserActiveForSession(se.UserID); err != nil {
-			s.invalidateRequestSession(r)
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-		mustChange, err := s.auth.MustChangePassword(se.UserID)
-		if err != nil || mustChange {
-			if err != nil {
-				s.invalidateRequestSession(r)
-			}
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-		next(w, r)
+		next(w, withRequestSession(r, se))
 	}
 }
 
@@ -134,10 +150,11 @@ func (s *Server) invalidateRequestSession(r *http.Request) {
 	}
 }
 
-// sessionFromRequest 从请求 Cookie 解析并校验 Web 会话。
-//
-// 返回：会话条目与是否有效；Cookie 缺失或 token 过期时 ok=false。
+// sessionFromRequest 从 request.Context（middleware 注入）或 Cookie 解析 Web 会话。
 func (s *Server) sessionFromRequest(r *http.Request) (auth.SessionEntry, bool) {
+	if se, ok := sessionFromContext(r); ok {
+		return se, true
+	}
 	c, err := r.Cookie("session")
 	if err != nil {
 		return auth.SessionEntry{}, false
@@ -225,8 +242,8 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	se, ok := s.sessionFromRequest(r)
-	if !ok {
+	se, _ := sessionFromContext(r)
+	if se.UserID == 0 {
 		writeAPIError(w, http.StatusUnauthorized, "未登录")
 		return
 	}
@@ -255,7 +272,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 // 未登录或会话无效时返回 401；供 WebUI 写操作前刷新 token。
 // 经 sessionFromRequest 校验会话，直接使用 SessionEntry.CSRFToken（与登录路径一致）。
 func (s *Server) handleCSRF(w http.ResponseWriter, r *http.Request) {
-	se, ok := s.sessionFromRequest(r)
+	se, ok := sessionFromContext(r)
 	if !ok || se.CSRFToken == "" {
 		writeAPIError(w, http.StatusUnauthorized, "未登录")
 		return

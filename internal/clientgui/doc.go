@@ -8,6 +8,7 @@
 //	notice.go — 单实例/致命提示（文案回退 singleinstance.AlreadyRunningMessage）
 //	app.go — 主窗口、safeutil.RunTickerStop 轮询、登出与 shutdown
 //	log.go — 日志缓冲与 logger sink（UI 默认保留最近 300 行；磁盘日志不受限）
+//	tray_routes.go — 托盘托管路由展示（clientapp.ManagedRouteView）
 //	engine_stop.go — 后台 Stop（避免 ICS 清理卡死 Fyne UI 线程）
 //
 // 上游：cmd/client-gui（标志解析、UAC、单实例、主题）。

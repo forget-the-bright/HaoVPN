@@ -1,9 +1,6 @@
 package clientapp
 
 import (
-	"net"
-	"strings"
-
 	"haovpn/internal/logger"
 	"haovpn/internal/netstack"
 	"haovpn/internal/netutil"
@@ -57,7 +54,11 @@ func (rt *runtime) syncRoutesDiffLocked(desired []string, gw, tunName string) (a
 // gatewayHostRouteNeeded 判断是否需单独添加网关主机路由（/32）。
 // 若 AllowedIPs 中已有 CIDR 包含网关 IP（如 10.88.0.0/24 含 10.88.0.1），则不必再装。
 func gatewayHostRouteNeeded(gw string, allowed []string) bool {
-	ip := net.ParseIP(strings.TrimSpace(gw))
+	norm, err := netutil.NormalizeIPv4(gw)
+	if err != nil {
+		return false
+	}
+	ip := netutil.ParseHostIPOrNil(norm)
 	if ip == nil {
 		return false
 	}

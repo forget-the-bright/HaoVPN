@@ -102,6 +102,16 @@ type IPBlock struct {
 	LastHitAt *time.Time `json:"last_hit_at,omitempty"`
 }
 
+// IPBanExempt 封禁豁免条目，对应 ip_ban_exempt 表一行。
+type IPBanExempt struct {
+	ID        int64     `json:"id"`
+	IP        string    `json:"ip"`
+	Note      string    `json:"note"`
+	Source    string    `json:"source"` // manual / yaml_import
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // HasVPN 是否已配置隧道身份（有公钥）。
 func (u *User) HasVPN() bool {
 	return u != nil && u.PublicKey != ""

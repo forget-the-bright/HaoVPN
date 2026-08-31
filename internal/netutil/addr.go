@@ -66,7 +66,12 @@ func DedupTrimNonEmpty(items []string) []string {
 	return out
 }
 
-// IsLimitedBroadcast 判断是否为 IPv4 受限广播 255.255.255.255。
+// MergeDedupTrimNonEmpty 合并两个字符串列表后 Trim、去空、保序去重。
+//
+// 用途：封禁豁免 yaml + DB 合并；避免 probedefense/api 各写一套 map 去重。
+func MergeDedupTrimNonEmpty(a, b []string) []string {
+	return DedupTrimNonEmpty(append(append([]string(nil), a...), b...))
+}
 //
 // 用途：sessionmgr / clientapp 过滤 TUN 噪声，避免与组播/链路本地判断散落两套实现。
 func IsLimitedBroadcast(ip net.IP) bool {

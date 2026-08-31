@@ -92,6 +92,31 @@
           </div>
         </div>
 
+        <div class="card" style="margin-top:1rem" id="exemptSection">
+          <h2>封禁豁免</h2>
+          <p class="text-muted card-hint">列表内 IP/CIDR 永不自动或手动封禁，且不受已有封禁记录影响。可与 server.yaml 的 ban_exempt_ips 合并。</p>
+          <div class="toolbar">
+            <div class="form-group">
+              <label>豁免 IP / CIDR</label>
+              <input id="exemptIP" placeholder="x.x.x.x 或 203.0.113.0/24">
+            </div>
+            <div class="form-group">
+              <label>备注</label>
+              <input id="exemptNote" placeholder="如：办公室出口">
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAddExempt">添加</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshExempts">刷新</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>IP / CIDR</th><th>备注</th><th>来源</th><th>添加时间</th><th></th></tr>
+              </thead>
+              <tbody id="exempts"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="card" style="margin-top:1rem">
           <h2>安全事件</h2>
           <div class="toolbar">

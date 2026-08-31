@@ -231,6 +231,7 @@ launchd 配置历史见 `docs/dev-log.md`。
 |------|--------|------|
 | `server.listen` | `0.0.0.0:8443` | 隧道监听（可走 frp） |
 | `api.listen_hosts` | `["127.0.0.1"]` | 管理口绑定地址 |
+| `api.listen_tun` | `true` | TUN 就绪后是否追加 VPN 网关 IP（明文 HTTP）；false 仅 bind listen_hosts |
 | `api.allow_public_bind` | `false` | **危险**：绑 0.0.0.0 须显式 true |
 | `api.port` | `8080` | 管理端口 |
 | `vpn.subnet` | `10.88.0.0/24` | VPN 地址池 |
@@ -280,6 +281,7 @@ launchd 配置历史见 `docs/dev-log.md`。
 | `ban_duration_sec` | `3600` | 封禁秒；`0`=永久（整段未配置时才默认 3600） |
 | `event_retention_days` | `30` | 事件保留天 |
 | `ignore_signatures_for_ban` | `connection_reset` 等 | 不计入自动封（仍记事件）；默认含 `auth_failed` |
+| `ban_exempt_ips` | `[]` | 封禁豁免（启动导入 DB；WebUI 动态维护） |
 
 手动封禁与已有 `ip_blocks` **始终生效**，不依赖 `enabled`（服务端启动时有 Guard 即挂到 Accept）。完整说明与中英文对照见 [security-hardening.md](security-hardening.md)。
 

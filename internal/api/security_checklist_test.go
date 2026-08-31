@@ -65,7 +65,7 @@ func TestSecurityChecklistMetaPlan(t *testing.T) {
 
 	// #2 allow_public_bind 审计记录
 	auditLog := audit.New(store)
-	api.LogPublicBindAudit(auditLog)
+	audit.LogPublicBindEnabled(auditLog)
 	logs, _, err := store.ListAuditLogsFiltered(readmodel.AuditListFilter{Limit: 10})
 	if err != nil {
 		t.Fatal(err)

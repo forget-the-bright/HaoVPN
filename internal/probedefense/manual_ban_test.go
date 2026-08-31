@@ -102,3 +102,21 @@ func TestValidateManualBanDuration(t *testing.T) {
 		t.Fatal("over max should fail")
 	}
 }
+
+// TestManualBanStoreExempt ManualBanStore 须拒绝豁免 IP。
+func TestManualBanStoreExempt(t *testing.T) {
+	store, err := persist.Open(filepath.Join(t.TempDir(), "manual_exempt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	exempt := func(ip string) bool { return ip == "203.0.113.99" }
+	err = probedefense.ManualBanStore(store, exempt, "203.0.113.99", "test", 3600, 3600)
+	if err == nil || err.Error() != probedefense.ErrBanExempt.Error() {
+		t.Fatalf("expected ErrBanExempt, got %v", err)
+	}
+	if err := probedefense.ManualBanStore(store, exempt, "203.0.113.100", "test", 3600, 3600); err != nil {
+		t.Fatal(err)
+	}
+}

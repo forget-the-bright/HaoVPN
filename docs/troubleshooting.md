@@ -24,7 +24,8 @@
 |------|----------|------|
 | 探针页点「封禁」控制台 CSP 报错、Network 无请求 | 模板残留 `onclick="banIP()"`，`script-src 'self'` 拦截内联事件 | **升级服务端**（embed 模板+JS）：按钮由 `security_probe.js` 绑定；勿在 HTML 写 `onclick=` |
 | 连接超时 | frp 未通、防火墙拦 8443 | 检查 frp；测 8443 端口 |
-| 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「登录失败次数过多，请稍后再试」——客户端应**停止自动重连**（`IsFatalHandshakeError`）；WebUI 探针页可见 `auth_failed` |
+| 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「登录失败次数过多，请稍后再试」——客户端应**停止自动重连**（`autherr.IsFatalAuth`）；WebUI 探针页可见 `auth_failed` |
+| 提示「您的 IP 已被服务端封禁」 | 探针自动/手动封禁 | 管理台 `/security` 解封或加「封禁豁免」；客户端 `FormatDialError` + fatal 停重试 |
 | 提示「该账号已在其他设备在线」 | `session_policy=reject_second` 且旧会话仍在；异公网 IP 第二端；或底层黑洞导致服务端半死会话未释放 | 同公网 IP：`reconnect_grace_sec` 顶替；半死静默约 8～20s 后亦可顶替（须升级服务端）；**曾连通过**的客户端持续重试；首次登录最多约 40 次。异设备先退旧端或改 `kick_previous`。查服务端日志 `grace 顶替` / `拒绝第二端 … same_host= stale_peer=` |
 | GUI 断线后不再自动重连 | 旧版登录 `failFast` 成功后未关，或 account_online 仅重试 5 次即停 | 升级客户端：鉴权成功后关 failFast；曾连接/重连中 account_online **持续**重试；首次登录最多约 40 次；并升级服务端半死会话顶替 |
 | 日志出现多余 `10.88.0.1/32` 路由 | 旧版始终加网关主机路由 | 新版：AllowedIPs 已含 VPN 子网时跳过网关 `/32` |
@@ -44,7 +45,8 @@
 | 服务刚重启，「待应用」没了但有人还像旧策略 | peer dirty **仅内存**，重启清空；启动 WARN 提示 | 库内已是新策略；对仍在线客户端再「应用生效」或踢线。属预期，不是丢库 |
 | 收窄托管路由访问方后，被踢出的客户端仍能走旧 via | 旧版只 dirty 新成员 | **升级服务端**：成员替换 dirty=旧∪新；对被移除账号也须应用生效踢线 |
 | via 上报 `local_lans` 含 VPN 网段后可伪造成员 VPN 源 | 旧版未禁与 `vpn.subnet` 重叠 | **升级服务端**：握手拒绝与 VPN 池重叠的广告；查 `lan_cidr_reject` |
-| 手动封禁 IP 仍能连上 | 旧版仅在 `probe_defense.enabled=true` 时挂 Probe | 升级服务端：有 Guard 即挂载，封禁表 Accept 始终生效；查 `/security` 与 `ip_blocks` |
+| 客户端 TLS handshake forcibly closed | 源 IP 在 `ip_blocks` 封禁表 | 管理台 `/security` 解封；或加入「封禁豁免」；**升级客户端**后应显示「您的 IP 已被服务端封禁…」 |
+| 手动封禁 IP 仍能连上 | 该 IP 在封禁豁免名单 | 预期：豁免 IP 不受封禁；从豁免列表移除后再封 |
 | 提示「账号密钥须加密存储」 | 库内明文私钥且 `allow_plaintext_private_keys=false` | 重新开户/轮换密钥使私钥加密入库；临时兼容才开 `allow_plaintext_private_keys`（勿用于生产） |
 | 反复断连 | 心跳超时、ZeroTier 等损耗链路抖动 | 客户端 `heartbeat_timeout_sec` 建议 60～90；默认已 90s；**先 `ping` 底层 ZT IP**（如 192.168.196.17），若底层也超时则属 ZeroTier/运营商问题，不是隧道逻辑 |
 | 断线后「好久才连上」 | 旧版每次重连全清路由+重跑 ICS（via 机尤慢）；或 Dial/退避过长 | **升级客户端**：临时断线保留 TUN/路由/ICS，握手后差分（日志 `policy_apply mode=noop` / `dataplane_keep`）；另查 `dial_timeout_sec`/`reconnect.max_sec`。磁盘日志看 `client.live.log` |
@@ -172,7 +174,7 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 | 大量 `http_get` / `tls_*` / `amqp` | 公网扫描撞隧道口 | 正常噪声；可看自动封禁；**勿映射管理口** |
 | `auth_failed` | 错密尝试 | 查账号；默认不计入自动封 |
 | `account_online` | 同账号第二端被拒 | 旧端先登出，或改 `vpn.session_policy: kick_previous` |
-| 合法客户端被封 | 误封 / 扫描同出口 IP | 探针页解封；调大阈值或把特征加入 `ignore_signatures_for_ban` |
+| 合法客户端被封 | 误封 / 扫描同出口 IP | 探针页解封；或加入「封禁豁免」；调大阈值或把特征加入 `ignore_signatures_for_ban` |
 | 写了 `enabled: false` 仍拦已封 IP | 封禁表始终生效 | 预期行为；解封或清 `ip_blocks` |
 | 浏览器页签仍是默认地球图标 | Web 静态资源 `go:embed` 进二进制，改 `web/static` 后未重建 | `.\scripts\build-local.ps1` 后重启 server；源图变更时 `go run scripts/gen-icons.go` 再生 favicon |
 | 手动封禁只能 1 小时 / 无时长选项 | 旧版 UI 固定用 `ban_duration_sec` | 升级服务端；探针页可选 1 小时～5 年 / 永久 / 自定义（默认 1 周）；API 见 `POST /api/v1/security/blocks` 的 `duration_sec` |
@@ -190,5 +192,5 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 
 ---
 
-*最后更新：2026-08-31 · WebUI favicon + 手动封禁时长*
+*最后更新：2026-08-31 · 封禁豁免 + 客户端封禁提示*
 

@@ -69,9 +69,9 @@ func (c *Checker) RunStartupChecks() ([]Result, error) {
 
 
 	dbDir := dirOf(c.cfg.Database.Path)
-	_ = dbDir
 
-	if err := fileutil.EnsureParentDir(c.cfg.Database.Path, 0o755); err != nil {
+	// boot_persist 已 EnsureParentDir；此处仅验证可写，避免与启动阶段重复 mkdir。
+	if err := fileutil.CheckDirWritable(dbDir); err != nil {
 
 		results = append(results, Result{"database_dir", false, err.Error()})
 

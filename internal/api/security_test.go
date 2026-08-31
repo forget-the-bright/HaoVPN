@@ -292,3 +292,105 @@ func TestSecurityBlocksManualBanDuration(t *testing.T) {
 		})
 	}
 }
+
+// postSecurityExempt 带 CSRF 的封禁豁免 POST。
+func postSecurityExempt(t *testing.T, srv *api.Server, authSvc *auth.Service, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	token, _, _ := authSvc.Login("admin", "SecureAdmin123!", "127.0.0.1")
+	csrf := authSvc.GetCSRF(token)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/security/exempts", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", csrf)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	return w
+}
+
+// TestSecurityExemptCRUD 封禁豁免 API：添加、ManualBan 拒绝、删除。
+func TestSecurityExemptCRUD(t *testing.T) {
+	srv, authSvc, store := newTestAPIServerWithProbe(t)
+	defer store.Close()
+
+	const ip = "198.51.100.60"
+	w := postSecurityExempt(t, srv, authSvc, `{"ip":"`+ip+`","note":"office"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("add exempt: %d %s", w.Code, w.Body.String())
+	}
+
+	wBan := postSecurityBlock(t, srv, authSvc, `{"ip":"`+ip+`","reason":"test","duration_sec":3600}`)
+	if wBan.Code != http.StatusBadRequest {
+		t.Fatalf("ban exempt ip should 400, got %d %s", wBan.Code, wBan.Body.String())
+	}
+
+	token, _, _ := authSvc.Login("admin", "SecureAdmin123!", "127.0.0.1")
+	csrf := authSvc.GetCSRF(token)
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/security/exempts/"+ip, nil)
+	delReq.Header.Set("X-CSRF-Token", csrf)
+	delReq.AddCookie(&http.Cookie{Name: "session", Value: token})
+	delW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(delW, delReq)
+	if delW.Code != http.StatusOK {
+		t.Fatalf("delete exempt: %d %s", delW.Code, delW.Body.String())
+	}
+}
+
+// TestSecurityExemptCIDRDelete CIDR 豁免须可 DELETE（URL 编码后 path 含 /）。
+func TestSecurityExemptCIDRDelete(t *testing.T) {
+	srv, authSvc, store := newTestAPIServerWithProbe(t)
+	defer store.Close()
+
+	const cidr = "203.0.113.0/24"
+	w := postSecurityExempt(t, srv, authSvc, `{"ip":"`+cidr+`","note":"office-lan"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("add cidr exempt: %d %s", w.Code, w.Body.String())
+	}
+
+	token, _, _ := authSvc.Login("admin", "SecureAdmin123!", "127.0.0.1")
+	csrf := authSvc.GetCSRF(token)
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/v1/security/exempts/"+cidr, nil)
+	delReq.Header.Set("X-CSRF-Token", csrf)
+	delReq.AddCookie(&http.Cookie{Name: "session", Value: token})
+	delW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(delW, delReq)
+	if delW.Code != http.StatusOK {
+		t.Fatalf("delete cidr exempt: %d %s", delW.Code, delW.Body.String())
+	}
+}
+
+// TestSecurityBlocksWithoutProbeGuard 未注入 Guard 时手动封禁应 503。
+func TestSecurityBlocksWithoutProbeGuard(t *testing.T) {
+	store, _ := persist.Open(filepath.Join(t.TempDir(), "noguard.db"))
+	defer store.Close()
+	authSvc := auth.New(store, 5, 60, 3600)
+	_ = ensureTestAdmin(store, authSvc, "admin", "SecureAdmin123!")
+	cfg := &config.ServerConfig{Server: config.ServerSection{Listen: "127.0.0.1:8443"}, API: config.APISection{Port: 8080}}
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "pk")
+	w := postSecurityBlock(t, srv, authSvc, `{"ip":"198.51.100.70","reason":"test"}`)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 without guard, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHSTSHeaderOnHTTPSRequest 可信反代 HTTPS 或 secure_cookies 时应返回 HSTS。
+func TestHSTSHeaderOnHTTPSRequest(t *testing.T) {
+	store, _ := persist.Open(filepath.Join(t.TempDir(), "hsts.db"))
+	defer store.Close()
+	authSvc := auth.New(store, 5, 60, 3600)
+	cfg := &config.ServerConfig{
+		Server: config.ServerSection{Listen: "127.0.0.1:8443"},
+		API: config.APISection{
+			Port:              8080,
+			SecureCookies:     true,
+			TrustedProxyCIDRs: []string{"127.0.0.0/8"},
+		},
+	}
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "pk")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	if got := w.Header().Get("Strict-Transport-Security"); got == "" {
+		t.Fatal("expected HSTS header when secure_cookies=true")
+	}
+}

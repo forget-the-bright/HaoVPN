@@ -101,6 +101,18 @@ CREATE TABLE IF NOT EXISTS ip_blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_ip_blocks_enabled ON ip_blocks(enabled);
 
+-- 封禁豁免：列表内 IP/CIDR 永不自动/手动封禁，且不受 ip_blocks 生效记录影响
+-- enabled=0 表示已移除；source=yaml_import 为 server.yaml 启动导入
+CREATE TABLE IF NOT EXISTS ip_ban_exempt (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT NOT NULL UNIQUE,
+    note TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'manual',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ip_ban_exempt_enabled ON ip_ban_exempt(enabled);
+
 -- VPN 账号互访白名单：user_id 可访问 peer_user_id 的当前 vpn_ip/32（默认无行=禁止互访）
 CREATE TABLE IF NOT EXISTS peer_access (
     user_id INTEGER NOT NULL REFERENCES users(id),

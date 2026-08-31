@@ -124,7 +124,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	e.vpnIP = hsRes.Policy.VPNIP
 	e.gateway = hsRes.Policy.GatewayIP
 	e.vpnSubnet = strings.TrimSpace(hsRes.Policy.VPNSubnet)
-	e.managedRoutes = append([]tunnel.ManagedRoute{}, hsRes.Policy.ManagedRoutes...)
+	e.managedRoutes = ManagedRoutesFromTunnel(hsRes.Policy.ManagedRoutes)
 	e.allowedIPs = append([]string{}, hsRes.Policy.AllowedIPs...)
 	e.state = StateConnected
 	e.lastError = ""
@@ -186,7 +186,7 @@ func (e *Engine) onDialError(err error) {
 	if err == nil {
 		return
 	}
-	msg := fmt.Sprintf("无法连接服务器: %v", err)
+	msg := FormatDialError(err)
 	logger.Warn("%s", msg)
 	if e.hasAuthOKOnce() {
 		return

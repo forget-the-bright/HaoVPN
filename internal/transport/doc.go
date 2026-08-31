@@ -4,7 +4,8 @@
 //   config.go — Config、DefaultConfig、Effective*、AfterDisconnectPause
 //   transport.go — Conn、Dial、AcceptConn、Send/Close/状态
 //   conn_loops.go — readLoop / writeLoop / heartbeatLoop
-//   server.go — Server、ListenTLS、acceptLoop、Close、Addr
+//   server.go — Server、ListenTLS、acceptLoop（TLS 握手失败上报 Probe）
+//   probe_banner.go — 封禁 IP TLS 前 HAOVPN:IP_BANNED banner
 //   mtu.go — ProbeMTU
 //   frame.go / reconnect.go / config_from.go — 帧编解码、重连客户端、配置映射
 //

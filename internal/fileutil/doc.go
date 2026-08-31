@@ -7,6 +7,10 @@
 //   ExecutableDir — 解析 exe 旁路径；
 //   Exists — 证书/健康检查/自启状态探测；
 //   AbsPair — autostart linux/darwin 共用绝对路径解析；
+//   CheckDirWritable — health 验证 DB 目录可写（不重复 MkdirAll）；
 //   CheckWorldReadable — Unix 权限过宽检测（由 health 打 Warn）。
-// 不变量：EnsureParentDir 对空路径或已存在目录返回 nil；WriteFileAtomic 失败不留下半截目标文件。
+//
+// 目录权限约定：
+//   0o755 — 普通数据目录（logs、data、数据库父目录）；
+//   0o700 — 敏感目录/文件（encryption_key、security 密钥路径 EnsureParentDir）。
 package fileutil

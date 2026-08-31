@@ -33,9 +33,10 @@ type Config struct {
 
 // ProbeObserver 服务端探针防御钩子（由 probedefense.Guard 适配）。
 //
-// AllowAccept 返回 false 时 acceptLoop 立即关闭连接（封禁或源 IP 白名单拒绝）。
+// CheckAccept 在 TCP 接入后、TLS 握手前调用；rejectBanner 非空时须先写入客户端再关闭。
 type ProbeObserver interface {
 	AllowAccept(remoteAddr string) bool
+	CheckAccept(remoteAddr string) (allow bool, rejectBanner string)
 	OnTransportReadError(remoteAddr string, err error)
 	OnFrameDecodeError(remoteAddr string, invalidLen int, err error)
 }
@@ -57,28 +58,28 @@ func DefaultConfig() Config {
 	}
 }
 
-// EffectiveDialTimeout 拨号超时（默认 3s）。
+// EffectiveDialTimeout 拨号超时（默认 netutil.DefaultDialTimeoutSec）。
 func (c Config) EffectiveDialTimeout() time.Duration {
 	if c.DialTimeout > 0 {
 		return c.DialTimeout
 	}
-	return 3 * time.Second
+	return timeutil.Seconds(netutil.DefaultDialTimeoutSec)
 }
 
-// EffectiveReconnectMax 重连退避上限（默认 3s）。
+// EffectiveReconnectMax 重连退避上限（默认 netutil.DefaultReconnectMaxSec）。
 func (c Config) EffectiveReconnectMax() time.Duration {
 	if c.ReconnectMax > 0 {
 		return c.ReconnectMax
 	}
-	return 3 * time.Second
+	return timeutil.Seconds(netutil.DefaultReconnectMaxSec)
 }
 
-// EffectiveReconnectInitial 首次退避（默认 1s）。
+// EffectiveReconnectInitial 首次退避（默认 netutil.DefaultReconnectInitialSec）。
 func (c Config) EffectiveReconnectInitial() time.Duration {
 	if c.ReconnectInitial > 0 {
 		return c.ReconnectInitial
 	}
-	return time.Second
+	return timeutil.Seconds(netutil.DefaultReconnectInitialSec)
 }
 
 // AfterDisconnectPause 曾 Connected 后断开再拨前的短暂停顿（立即重试，避免 tight loop）。

@@ -2,7 +2,6 @@ package clientapp
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"time"
@@ -75,7 +74,12 @@ func (rt *runtime) setupViaExitLocked(vpnSubnet, tunName, tunIP string, localLAN
 		logger.Warn("via_exit skipped vpn_subnet empty（握手未下发）")
 		return false, fmt.Errorf("via 出口需要握手下发 vpn_subnet")
 	}
-	ip := net.ParseIP(strings.TrimSpace(tunIP))
+	ipStr := strings.TrimSpace(tunIP)
+	norm, err := netutil.NormalizeIPv4(ipStr)
+	if err != nil {
+		return false, fmt.Errorf("via 出口 tunIP 无效")
+	}
+	ip := netutil.ParseHostIPOrNil(norm)
 	if ip == nil {
 		return false, fmt.Errorf("via 出口 tunIP 无效")
 	}

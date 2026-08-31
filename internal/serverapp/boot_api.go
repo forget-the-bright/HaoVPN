@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"haovpn/internal/api"
+	"haovpn/internal/audit"
 	"haovpn/internal/crypto"
 	"haovpn/internal/logger"
 	"haovpn/internal/maintenance"
@@ -38,7 +39,17 @@ func bootAPI(bc *bootContext, sd *safeutil.Shutdown, tunDev tun.Device, tunOK, n
 		})
 	}
 
-	listenHosts := netutil.AppendTunListenHost(cfg.API.ListenHosts, tunIPString(tunDev))
+	listenHosts := cfg.API.ListenHosts
+	tunIP := tunIPString(tunDev)
+	if cfg.API.ListenTunEnabled() {
+		listenHosts = netutil.AppendTunListenHost(listenHosts, tunIP)
+		if tunIP != "" {
+			logger.Warn("管理口已绑定 VPN 网关 %s:%d（明文 HTTP）；VPN 内用户可访问登录页。若不需要请设 api.listen_tun: false", tunIP, cfg.API.Port)
+			audit.LogTunAdminListen(bc.auditLog, tunIP, cfg.API.Port)
+		}
+	} else if tunIP != "" {
+		logger.Info("api.listen_tun=false：管理口不绑定 VPN 网关 %s（仅 listen_hosts）", tunIP)
+	}
 	apiSrv := api.NewServer(cfg, bc.store, bc.authSvc, bc.auditLog, bc.sessMgr, bc.vpnSvc, bc.keyEnc, bc.startedAt, serverKP.PublicKey)
 	apiSrv.SetLogStore(bc.logHist)
 	apiSrv.SetDataplaneHealth(tunOK, natOK)

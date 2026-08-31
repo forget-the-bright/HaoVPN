@@ -106,7 +106,7 @@ func (s *Server) Close() error {
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for k, v := range security.SecurityHeaders() {
+		for k, v := range security.SecurityHeadersForRequest(r, s.cfg.API.SecureCookies, s.cfg.API.TrustedProxyCIDRs) {
 			w.Header().Set(k, v)
 		}
 		next.ServeHTTP(w, r)

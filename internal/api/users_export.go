@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -32,8 +31,7 @@ func (s *Server) loadExportAccount(id int64) (*persist.User, error) {
 func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
 	u, err := s.loadExportAccount(id)
 	if err != nil {
-		if errors.Is(err, vpnaccount.ErrAccountNotFound) {
-			writeAPIError(w, http.StatusNotFound, err.Error())
+		if writeAccountNotFound(w, err) {
 			return
 		}
 		writeInternalError(w, err)
@@ -54,8 +52,7 @@ func (s *Server) handleUserExportZip(w http.ResponseWriter, r *http.Request, id 
 func (s *Server) handleUserExportYAML(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
 	u, err := s.loadExportAccount(id)
 	if err != nil {
-		if errors.Is(err, vpnaccount.ErrAccountNotFound) {
-			writeAPIError(w, http.StatusNotFound, err.Error())
+		if writeAccountNotFound(w, err) {
 			return
 		}
 		writeInternalError(w, err)

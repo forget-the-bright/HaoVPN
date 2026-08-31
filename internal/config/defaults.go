@@ -68,8 +68,11 @@ database:
   connection_events_retention_days: 90
 
 api:
-  # 管理 API/WebUI 监听主机。默认仅本机；TUN 起来后会自动追加 VPN 网卡 IP
+  # 管理 API/WebUI 监听主机。默认仅本机；TUN 起来后见 listen_tun
   listen_hosts: ["127.0.0.1"]
+  # true（默认）：TUN 就绪后自动追加 VPN 网关 IP，VPN 内用户可访问明文 HTTP 管理口（见 security-hardening）
+  # false：仅 bind listen_hosts，降低 VPN 内横向攻击管理口风险
+  listen_tun: true
   port: 8080
   # ── 危险选项 · 默认 false ─────────────────────────────────────
   # true 表示已知悉将管理口绑到所有网卡（含公网）的风险并自担后果。
@@ -119,6 +122,8 @@ security:
       - connection_reset
       - unexpected_eof
       - auth_failed
+    # 封禁豁免：列表内 IP 永不封禁（启动时导入 DB；可在 WebUI 动态维护）
+    ban_exempt_ips: []
 
 admin:
   # 库为空时创建的默认 Web 管理员（首次登录通常须改密）

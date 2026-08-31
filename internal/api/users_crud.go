@@ -16,6 +16,9 @@ import (
 
 // handleUsers VPN 账号列表与新建（GET/POST /api/v1/users）。
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		q := r.URL.Query()
@@ -96,8 +99,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		id, vpnIP := res.UserID, res.VPNIP
-		se, _ := s.sessionFromRequest(r)
-		s.audit.Log(&se.UserID, "account_create", "user", &id, s.clientIP(r), map[string]string{"username": username, "vpn_ip": vpnIP})
+		s.audit.Log(s.actorFromRequest(r), "account_create", "user", &id, s.clientIP(r), map[string]string{"username": username, "vpn_ip": vpnIP})
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": id, "username": username, "vpn_ip": vpnIP, "ip_mode": ipMode,
 			"policy_ver": 1, "export_zip_url": fmt.Sprintf("/api/v1/users/%d/export.zip", id),
@@ -115,7 +117,11 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	se, _ := s.sessionFromRequest(r)
+	seID := s.actorFromRequest(r)
+	var se auth.SessionEntry
+	if seID != nil {
+		se.UserID = *seID
+	}
 
 	if len(parts) > 1 && parts[1] == "export.zip" && r.Method == http.MethodPost {
 		s.handleUserExportZip(w, r, id, se)

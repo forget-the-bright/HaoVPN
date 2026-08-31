@@ -1,10 +1,7 @@
 package clientapp
 
 import (
-	"errors"
-	"strings"
-
-	"haovpn/internal/auth"
+	"haovpn/internal/autherr"
 	"haovpn/internal/logger"
 )
 
@@ -21,43 +18,18 @@ func IsFatalHandshakeError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if IsAccountAlreadyOnline(err) {
+	if autherr.IsIPBanned(err) {
+		return true
+	}
+	if autherr.IsAccountAlreadyOnline(err) {
 		return false
 	}
-	for _, target := range fatalAuthSentinels {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	msg := err.Error()
-	for _, target := range fatalAuthSentinels {
-		if t := target.Error(); t != "" && strings.Contains(msg, t) {
-			return true
-		}
-	}
-	for _, s := range fatalAuthLegacySubstrs {
-		if strings.Contains(msg, s) {
-			return true
-		}
-	}
-	return false
+	return autherr.IsFatalAuth(err)
 }
 
 // IsAccountAlreadyOnline 判断是否为「同账号已在其他设备在线」类错误。
-//
-// 优先 errors.Is(auth.ErrAccountAlreadyOnline)，避免依赖 sessionmgr（分层：clientapp 不引会话路由包）。
 func IsAccountAlreadyOnline(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, auth.ErrAccountAlreadyOnline) {
-		return true
-	}
-	msg := err.Error()
-	if strings.Contains(msg, auth.ErrAccountAlreadyOnline.Error()) {
-		return true
-	}
-	return strings.Contains(msg, "已在其他设备在线")
+	return autherr.IsAccountAlreadyOnline(err)
 }
 
 // ShouldFailFastHandshake 结合 Engine 有限重试，决定是否因本次握手失败停止重连。
@@ -86,24 +58,4 @@ func (e *Engine) resetOnlineRejects() {
 	e.mu.Lock()
 	e.onlineRejects = 0
 	e.mu.Unlock()
-}
-
-// fatalAuthSentinels 与 auth 导出哨兵对齐（不含 account_online，见有限重试）。
-var fatalAuthSentinels = []error{
-	auth.ErrBadCredentials,
-	auth.ErrAccountDisabled,
-	auth.ErrLoginLocked,
-	auth.ErrMustChangePassword,
-	auth.ErrNoVPN,
-	auth.ErrPasswordRequired,
-	auth.ErrUsePasswordLogin,
-	auth.ErrInvalidHandshake,
-}
-
-// fatalAuthLegacySubstrs 历史/部分截断文案兜底（不含「已在其他设备在线」）。
-var fatalAuthLegacySubstrs = []string{
-	"须修改密码",
-	"缺少账号密码",
-	"登录已锁定",
-	"IP 已锁定",
 }

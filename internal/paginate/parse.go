@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// ParseOnlyEnabled 解析安全列表 GET 的「仅生效项」过滤（enabled!=0 且 all!=1）。
+func ParseOnlyEnabled(q url.Values) bool {
+	return q.Get("enabled") != "0" && q.Get("all") != "1"
+}
+
 // ParseBoolQuery 解析 HTTP 查询布尔参数（1/true/0/false）。
 //
 // 参数：s — 如 ?online=1、?enabled=true；空串表示未传参。

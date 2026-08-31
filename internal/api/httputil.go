@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -11,7 +12,9 @@ import (
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
+	"haovpn/internal/persist"
 	"haovpn/internal/timeutil"
+	"haovpn/internal/vpnaccount"
 )
 
 // writeJSON 以 JSON 写入 HTTP 响应。
@@ -55,7 +58,7 @@ func requireMethod(w http.ResponseWriter, r *http.Request, methods ...string) bo
 // parseFormOrError 解析表单；失败写 400「invalid form data」并返回 false。
 func parseFormOrError(w http.ResponseWriter, r *http.Request) bool {
 	if err := parseRequestForm(r); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid form data")
+		writeAPIError(w, http.StatusBadRequest, "表单数据无效")
 		return false
 	}
 	return true
@@ -87,7 +90,7 @@ func decodeJSONOrForm(w http.ResponseWriter, r *http.Request, dst any, formFill 
 		return false
 	}
 	if err := parseRequestForm(r); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid form data")
+		writeAPIError(w, http.StatusBadRequest, "表单数据无效")
 		return false
 	}
 	formFill()
@@ -106,7 +109,7 @@ func parsePathID(w http.ResponseWriter, s string) (int64, bool) {
 
 // writeMethodNotAllowed 返回标准 405 JSON 错误。
 func writeMethodNotAllowed(w http.ResponseWriter) {
-	writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+	writeAPIError(w, http.StatusMethodNotAllowed, "方法不允许")
 }
 
 // writeAPIError 返回标准 JSON 错误响应 {"error": msg}。
@@ -226,4 +229,47 @@ func redactLogLines(lines []string) []string {
 		out[i] = logger.RedactSensitive(line)
 	}
 	return out
+}
+
+// writeAccountNotFound 账号不存在时统一 404。
+func writeAccountNotFound(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, vpnaccount.ErrAccountNotFound) {
+		writeAPIError(w, http.StatusNotFound, vpnaccount.ErrAccountNotFound.Error())
+		return true
+	}
+	return false
+}
+
+// writeDomainError 将 persist/vpnaccount 等领域错误映射为 HTTP 状态。
+func writeDomainError(w http.ResponseWriter, err error) {
+	if err == nil {
+		return
+	}
+	if writeAccountNotFound(w, err) {
+		return
+	}
+	switch {
+	case errors.Is(err, persist.ErrInvalidPeerAccessPair),
+		errors.Is(err, persist.ErrPeerAccessNotVPN),
+		errors.Is(err, persist.ErrPeerAccessUserNotFound):
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+	default:
+		writeInternalError(w, err)
+	}
+}
+
+// parsePathSuffixIP 从 URL Path 提取后缀 IP/CIDR 并校验（blocks/exempts DELETE）。
+//
+// allowCIDR true 时允许 CIDR；prefix 如 "/api/v1/security/blocks/"。
+func parsePathSuffixIP(w http.ResponseWriter, r *http.Request, prefix string, allowCIDR bool) (string, bool) {
+	ip := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, prefix))
+	if ip == "" {
+		writeAPIError(w, http.StatusBadRequest, "无效 IP")
+		return "", false
+	}
+	if err := netutil.ValidateIPOrCIDR("ip", ip, allowCIDR); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return "", false
+	}
+	return ip, true
 }

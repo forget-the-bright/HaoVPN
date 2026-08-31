@@ -4,16 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"haovpn/internal/tunnel"
+	"haovpn/internal/clientapp"
 )
 
 // trayRouteLines 托盘「本机路由」子菜单文案（纯函数，便于单测）。
-//
-// 结构：
-//  1. 本机 TUN（vpn_subnet via 网关）
-//  2. 「—— 分流 ——」+ AllowedIPs（排除已展示的 VPN 子网）
-//  3. 「—— 对端托管 ——」+ managed_routes；空则提示无对端托管
-func trayRouteLines(vpnSubnet, vpnIP, gateway string, allowedIPs []string, managed []tunnel.ManagedRoute) []string {
+func trayRouteLines(vpnSubnet, vpnIP, gateway string, allowedIPs []string, managed []clientapp.ManagedRouteView) []string {
 	var lines []string
 
 	tun := formatTUNLine(vpnSubnet, vpnIP, gateway)
@@ -31,7 +26,7 @@ func trayRouteLines(vpnSubnet, vpnIP, gateway string, allowedIPs []string, manag
 			continue
 		}
 		if subnetKey != "" && normalizeCIDRKey(c) == subnetKey {
-			continue // VPN 子网已在本机 TUN 行展示
+			continue
 		}
 		lines = append(lines, formatSplitRouteLine(c, gateway))
 		splitN++
@@ -49,6 +44,26 @@ func trayRouteLines(vpnSubnet, vpnIP, gateway string, allowedIPs []string, manag
 		}
 	}
 	return lines
+}
+
+// formatManagedRouteLine 对端托管路由一行；Stale 标「失效」。
+func formatManagedRouteLine(mr clientapp.ManagedRouteView) string {
+	dest := strings.TrimSpace(mr.Dest)
+	via := strings.TrimSpace(mr.ViaIP)
+	var base string
+	if via != "" {
+		base = fmt.Sprintf("%s via %s", dest, via)
+	} else {
+		name := strings.TrimSpace(mr.ViaUsername)
+		if name == "" {
+			name = "via"
+		}
+		base = fmt.Sprintf("%s via %s(离线)", dest, name)
+	}
+	if mr.Stale {
+		return base + "（失效）"
+	}
+	return base
 }
 
 // formatTUNLine 本机 VPN 子网行；优先握手 vpn_subnet，否则由 VPN IP 推导 /24。
@@ -77,26 +92,6 @@ func formatSplitRouteLine(cidr, gateway string) string {
 		return fmt.Sprintf("%s via %s", strings.TrimSpace(cidr), gw)
 	}
 	return strings.TrimSpace(cidr)
-}
-
-// formatManagedRouteLine 对端托管路由一行；Stale 标「失效」。
-func formatManagedRouteLine(mr tunnel.ManagedRoute) string {
-	dest := strings.TrimSpace(mr.Dest)
-	via := strings.TrimSpace(mr.ViaIP)
-	var base string
-	if via != "" {
-		base = fmt.Sprintf("%s via %s", dest, via)
-	} else {
-		name := strings.TrimSpace(mr.ViaUsername)
-		if name == "" {
-			name = "via"
-		}
-		base = fmt.Sprintf("%s via %s(离线)", dest, name)
-	}
-	if mr.Stale {
-		return base + "（失效）"
-	}
-	return base
 }
 
 // deriveVPNSubnetHint 无 vpn_subnet 时由 IPv4 主机地址粗推 x.y.z.0/24（仅展示回退）。

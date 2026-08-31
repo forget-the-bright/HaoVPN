@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -25,8 +24,7 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 		AllowedIPs: body.AllowedIPs, IPMode: body.IPMode, IPLeaseSec: body.IPLeaseSec, VPNIP: body.VPNIP,
 	})
 	if err != nil {
-		if errors.Is(err, vpnaccount.ErrAccountNotFound) {
-			writeAPIError(w, http.StatusNotFound, err.Error())
+		if writeAccountNotFound(w, err) {
 			return
 		}
 		writeAPIError(w, http.StatusBadRequest, err.Error())
@@ -42,8 +40,7 @@ func (s *Server) handleUserVPNPatch(w http.ResponseWriter, r *http.Request, id i
 
 // handleUserPasswordReset 管理员重置指定账号登录密码。
 func (s *Server) handleUserPasswordReset(w http.ResponseWriter, r *http.Request, id int64, se auth.SessionEntry) {
-	if err := parseRequestForm(r); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid form data")
+	if !parseFormOrError(w, r) {
 		return
 	}
 	u, err := s.store.GetUserByID(id)

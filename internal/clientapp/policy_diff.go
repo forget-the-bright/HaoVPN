@@ -1,7 +1,6 @@
 package clientapp
 
 import (
-	"net"
 	"sort"
 	"strings"
 
@@ -86,10 +85,8 @@ func viaFingerprint(lans []string, vpnSubnet, tunIP string) string {
 	sort.Strings(sorted)
 	subnet := strings.TrimSpace(vpnSubnet)
 	ip := strings.TrimSpace(tunIP)
-	if parsed := net.ParseIP(ip); parsed != nil {
-		if v4 := parsed.To4(); v4 != nil {
-			ip = v4.String()
-		}
+	if norm, err := netutil.NormalizeIPv4(ip); err == nil {
+		ip = norm
 	}
 	return strings.Join(sorted, ",") + "|" + subnet + "|" + ip
 }

@@ -1,6 +1,4 @@
 // Package icons 嵌入 HaoVPN 托盘多状态图标与品牌 Logo。
-//
-// 品牌语义（无文字）：对勾路径 =「好/通路确认」；节点连线 = VPN 组网。
 package icons
 
 import (

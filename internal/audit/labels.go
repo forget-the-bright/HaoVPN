@@ -27,6 +27,8 @@ var actionLabels = map[string]string{
 	"vpn_peers_policy":                "全局互访策略",
 	"probe_ban_manual":                "手动封禁 IP",
 	"probe_unban":                     "解封 IP",
+	"probe_exempt_add":                "添加封禁豁免",
+	"probe_exempt_remove":             "移除封禁豁免",
 }
 
 var targetTypeLabels = map[string]string{

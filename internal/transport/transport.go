@@ -68,6 +68,14 @@ func Dial(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onCl
 		c.setState(StateDisconnected)
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
+	raw, err = readProbeRejectBanner(raw)
+	if err != nil {
+		c.setState(StateDisconnected)
+		if errors.Is(err, ErrIPBanned) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
+	}
 	tlsConn := tls.Client(raw, tlsCfg)
 	if err := tlsConn.Handshake(); err != nil {
 		raw.Close()

@@ -16,3 +16,26 @@ func EnsureParentDir(path string, perm os.FileMode) error {
 	}
 	return os.MkdirAll(dir, perm)
 }
+
+// CheckDirWritable 检测目录存在且当前进程可写（不创建目录）。
+//
+// 用途：health 启动自检；父目录应由 boot_persist EnsureParentDir 预先创建。
+func CheckDirWritable(dir string) error {
+	if dir == "" || dir == "." {
+		return nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return os.ErrInvalid
+	}
+	f, err := os.CreateTemp(dir, ".haovpn-write-test-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	_ = f.Close()
+	return os.Remove(name)
+}

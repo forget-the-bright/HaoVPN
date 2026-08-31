@@ -2,6 +2,7 @@ package persist
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -206,6 +207,95 @@ func (s *Store) PruneExpiredIPBlocks(now time.Time) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// BanExemptFilter 封禁豁免列表筛选。
+type BanExemptFilter struct {
+	OnlyEnabled bool
+	Limit       int
+	Offset      int
+}
+
+// UpsertBanExempt 插入或更新封禁豁免（同 IP 合并为一行并重新启用）。
+func (s *Store) UpsertBanExempt(ip, note, source string) error {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return fmt.Errorf("ip 不能为空")
+	}
+	if strings.TrimSpace(source) == "" {
+		source = "manual"
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO ip_ban_exempt(ip, note, source, enabled, created_at)
+		VALUES(?,?,?,1,datetime('now'))
+		ON CONFLICT(ip) DO UPDATE SET
+			note=CASE WHEN excluded.note<>'' THEN excluded.note ELSE ip_ban_exempt.note END,
+			source=excluded.source,
+			enabled=1`,
+		ip, strings.TrimSpace(note), source,
+	)
+	return err
+}
+
+// DisableBanExempt 移除封禁豁免（enabled=0，保留行）。
+func (s *Store) DisableBanExempt(ip string) error {
+	_, err := s.db.Exec(
+		`UPDATE ip_ban_exempt SET enabled=0 WHERE ip=?`,
+		strings.TrimSpace(ip),
+	)
+	return err
+}
+
+// ListBanExempt 分页列出封禁豁免。
+func (s *Store) ListBanExempt(f BanExemptFilter) ([]IPBanExempt, int, error) {
+	f.Limit = paginate.ClampLimit(f.Limit, 50, 500)
+	where := []string{"1=1"}
+	args := []any{}
+	if f.OnlyEnabled {
+		where = append(where, "enabled=1")
+	}
+	wsql := strings.Join(where, " AND ")
+	var out []IPBanExempt
+	total, err := s.queryPageTotal(
+		`SELECT COUNT(*) FROM ip_ban_exempt WHERE `+wsql,
+		`SELECT id, ip, note, source, enabled, created_at
+		FROM ip_ban_exempt WHERE `+wsql+` ORDER BY id DESC LIMIT ? OFFSET ?`,
+		args, f.Limit, f.Offset,
+		func(rows *sql.Rows) error {
+			var e IPBanExempt
+			var created string
+			var enabled int
+			if err := rows.Scan(&e.ID, &e.IP, &e.Note, &e.Source, &enabled, &created); err != nil {
+				return err
+			}
+			e.Enabled = enabled != 0
+			e.CreatedAt = timeutil.ParseUTC(created)
+			out = append(out, e)
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
+}
+
+// ListEnabledBanExemptIPs 返回所有生效豁免 IP/CIDR 字符串（Guard 热加载用）。
+func (s *Store) ListEnabledBanExemptIPs() ([]string, error) {
+	rows, err := s.db.Query(`SELECT ip FROM ip_ban_exempt WHERE enabled=1 ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var ip string
+		if err := rows.Scan(&ip); err != nil {
+			return nil, err
+		}
+		out = append(out, ip)
+	}
+	return out, rows.Err()
 }
 
 // ipBlockScanner 统一 *sql.Row / *sql.Rows 的 Scan 接口，避免两套填充逻辑漂移。

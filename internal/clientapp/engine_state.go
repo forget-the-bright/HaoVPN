@@ -10,7 +10,6 @@ import (
 	"haovpn/internal/crypto"
 	"haovpn/internal/netstack"
 	"haovpn/internal/transport"
-	"haovpn/internal/tunnel"
 )
 
 // State 客户端 VPN 连接状态，供 GUI/CLI 轮询展示。
@@ -76,7 +75,7 @@ type Engine struct {
 	lastError string
 	ksOK      bool
 	// 以下字段供托盘「本机路由」只读展示（与 runtime 装路由同源，握手成功时写入）。
-	managedRoutes []tunnel.ManagedRoute // peer_routes 下发的托管路由
+	managedRoutes []ManagedRouteView // peer_routes 下发的托管路由（展示 DTO）
 	allowedIPs    []string              // 会话 AllowedIPs（含 NAT 工控段）
 	vpnSubnet     string                // 握手 vpn_subnet；缺省时托盘可回退推导
 	rt            *runtime
@@ -230,10 +229,10 @@ func (e *Engine) Gateway() string {
 }
 
 // ManagedRoutes 返回最近一次握手下发的托管路由副本（托盘只读展示）。
-func (e *Engine) ManagedRoutes() []tunnel.ManagedRoute {
+func (e *Engine) ManagedRoutes() []ManagedRouteView {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]tunnel.ManagedRoute{}, e.managedRoutes...)
+	return append([]ManagedRouteView{}, e.managedRoutes...)
 }
 
 // AllowedIPs 返回最近一次握手的会话分流前缀副本（含 nat.allowed_lan_cidrs 等）。

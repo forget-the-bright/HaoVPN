@@ -15,7 +15,7 @@ import (
 // 校验存在性与 HasVPN，避免孤儿策略行与误导 UI；错误文案稳定中文。
 func (s *Store) AddPeerAccess(userID, peerUserID int64) error {
 	if userID <= 0 || peerUserID <= 0 || userID == peerUserID {
-		return fmt.Errorf("无效的互访账号对")
+		return ErrInvalidPeerAccessPair
 	}
 	if err := s.requireVPNUser(userID, "访问方"); err != nil {
 		return err
@@ -37,15 +37,15 @@ func (s *Store) requireVPNUser(userID int64, role string) error {
 	u, err := s.GetUserByID(userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%s账号不存在", role)
+			return fmt.Errorf("%s账号不存在: %w", role, ErrPeerAccessUserNotFound)
 		}
 		return fmt.Errorf("查询%s失败", role)
 	}
 	if u == nil {
-		return fmt.Errorf("%s账号不存在", role)
+		return fmt.Errorf("%s账号不存在: %w", role, ErrPeerAccessUserNotFound)
 	}
 	if !u.HasVPN() {
-		return fmt.Errorf("%s须为 VPN 账号", role)
+		return fmt.Errorf("%s须为 VPN 账号: %w", role, ErrPeerAccessNotVPN)
 	}
 	return nil
 }

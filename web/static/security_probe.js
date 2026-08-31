@@ -155,6 +155,70 @@
       }
     }
 
+    async function loadExempts() {
+      try {
+        await HaoVPN.ensureDisplayTZ();
+        await HaoVPN.refreshCSRF();
+        var data = await HaoVPN.api('/api/v1/security/exempts?limit=100');
+        var rows = data.items || [];
+        var tb = document.getElementById('exempts');
+        tb.innerHTML = '';
+        if (!rows.length) {
+          tb.innerHTML = '<tr><td colspan="5" class="text-muted">无豁免条目</td></tr>';
+          return;
+        }
+        rows.forEach(function (e) {
+          var tr = document.createElement('tr');
+          tr.innerHTML =
+            '<td class="text-mono">' + (e.ip || '') + '</td>' +
+            '<td>' + (e.note || '') + '</td>' +
+            '<td>' + (e.source || '') + '</td>' +
+            '<td class="text-mono">' + (e.created_at ? HaoVPN.formatTime(e.created_at) : '—') + '</td>' +
+            '<td><button type="button" class="btn btn-ghost btn-sm" data-action="remove-exempt" data-ip="' + (e.ip || '') + '">移除</button></td>';
+          tb.appendChild(tr);
+        });
+      } catch (e) {
+        HaoVPN.toast(e.message || String(e), 'error');
+      }
+    }
+
+    async function addExempt() {
+      var ip = document.getElementById('exemptIP').value.trim();
+      if (!ip) {
+        HaoVPN.toast('请填写 IP 或 CIDR', 'error');
+        return;
+      }
+      try {
+        await HaoVPN.refreshCSRF();
+        await HaoVPN.api('/api/v1/security/exempts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ip: ip,
+            note: document.getElementById('exemptNote').value.trim()
+          })
+        });
+        document.getElementById('exemptIP').value = '';
+        HaoVPN.toast('已添加豁免 ' + ip, 'ok');
+        loadExempts();
+        loadBlocks();
+      } catch (e) {
+        HaoVPN.toast(e.message || String(e), 'error');
+      }
+    }
+
+    async function removeExempt(ip) {
+      if (!confirm('移除豁免 ' + ip + '？')) return;
+      try {
+        await HaoVPN.refreshCSRF();
+        await HaoVPN.api('/api/v1/security/exempts/' + encodeURIComponent(ip), { method: 'DELETE' });
+        HaoVPN.toast('已移除豁免 ' + ip, 'ok');
+        loadExempts();
+      } catch (e) {
+        HaoVPN.toast(e.message || String(e), 'error');
+      }
+    }
+
     async function loadEvents(off) {
       if (off !== undefined) offset = off;
       try {
@@ -211,11 +275,21 @@
       if (ip) scrollToBanForm(ip);
     });
 
+    document.getElementById('exempts').addEventListener('click', function (ev) {
+      var btn = ev.target.closest('[data-action="remove-exempt"]');
+      if (!btn) return;
+      var ip = btn.getAttribute('data-ip');
+      if (ip) removeExempt(ip);
+    });
+
     document.getElementById('btnBanIP').addEventListener('click', function () { banIP(); });
     document.getElementById('btnRefreshBlocks').addEventListener('click', function () { loadBlocks(); });
+    document.getElementById('btnAddExempt').addEventListener('click', function () { addExempt(); });
+    document.getElementById('btnRefreshExempts').addEventListener('click', function () { loadExempts(); });
     document.getElementById('btnQueryEvents').addEventListener('click', function () { loadEvents(0); });
     document.getElementById('banDurationPreset').addEventListener('change', toggleBanCustomFields);
 
     toggleBanCustomFields();
     loadBlocks();
+    loadExempts();
     loadEvents(0);

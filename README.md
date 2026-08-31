@@ -98,6 +98,7 @@ Windows 也可用 CLI：`haovpn-client.exe --service install`。
 | [记忆.md](记忆.md) | **接手入口**（阅读顺序 + 当前阶段） |
 | [docs/README.md](docs/README.md) | 文档总索引 |
 | [docs/architecture.md](docs/architecture.md) | 包边界 / CODEMAP |
+| [docs/codebase-guide.md](docs/codebase-guide.md) | 代码库分层导读 |
 | [internal/README.md](internal/README.md) | 改功能找哪个包 |
 | [docs/deploy.md](docs/deploy.md) | 部署、自启、验收 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | 排障 |

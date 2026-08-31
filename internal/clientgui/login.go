@@ -49,6 +49,19 @@ func (u *uiApp) showLogin(elevHint string) {
 	}
 	u.rememberPass = widget.NewCheck("记住密码", nil)
 	u.rememberPass.SetChecked(u.cfg.Auth.RememberPassword)
+	u.rememberPassWarn = widget.NewLabel("安全提示：密码将以明文写入 client.yaml（0600 权限仍无法防止同用户读取或备份泄露）")
+	u.rememberPassWarn.Wrapping = fyne.TextWrapWord
+	u.rememberPassWarn.Hide()
+	u.rememberPass.OnChanged = func(checked bool) {
+		if checked {
+			u.rememberPassWarn.Show()
+		} else {
+			u.rememberPassWarn.Hide()
+		}
+	}
+	if u.cfg.Auth.RememberPassword {
+		u.rememberPassWarn.Show()
+	}
 	u.errLbl = widget.NewLabel("")
 	u.errLbl.Wrapping = fyne.TextWrapWord
 	if elevHint != "" {
@@ -70,6 +83,7 @@ func (u *uiApp) showLogin(elevHint string) {
 		widget.NewLabel("密码"), u.passEntry,
 		widget.NewLabel("本地网段"), u.localLansEntry,
 		widget.NewLabel(""), u.rememberPass,
+		widget.NewLabel(""), u.rememberPassWarn,
 	)
 	content := container.NewVBox(
 		layout.NewSpacer(),

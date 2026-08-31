@@ -7,7 +7,8 @@
 //   runtime_routes.go — 路由安装/差分/清理
 //   runtime_tun.go — TUN 读循环与上送过滤
 //   policy_diff.go / via_exit.go — 策略差分、via/ICS 指纹
-//   credentials.go / fatal_auth.go — 凭据解析、致命鉴权
+//   credentials.go / fatal_auth.go / dial_errors.go — 凭据、致命鉴权（委托 autherr）、封禁友好提示
+//   route_view.go — ManagedRouteView（GUI 托盘 DTO）
 //   service_windows.go / service_other.go — SCM 薄封装（写路径在 autostart）
 //
 // 上游：cmd/client、clientgui。

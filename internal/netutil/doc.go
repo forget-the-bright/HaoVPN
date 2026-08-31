@@ -5,10 +5,10 @@
 //   - 不依赖 config、api、tun、netstack（避免循环引用）
 //
 // 关键文件：
+//   validate_ip.go — ValidateIPOrCIDR（单 IP 或 CIDR 校验，API/配置/guard 共用）
 //   cidr.go — ValidateCIDRList、SplitCIDR、ParseCIDRToV4Mask、ValidateIPInSubnet、ValidateNoFullTunnel
-//   addr.go — HostFromAddr、NormalizeRemoteHost、IsLimitedBroadcast、ValidateAdvertisedLAN、
-//             ValidateAdvertisedLANNotForbidden、CIDRsOverlap、NormalizeLANCIDR、ValidLANCIDRs、
-//             ValidLANCIDRsNotForbidden、DedupTrimNonEmpty
+//   addr.go — HostFromAddr、NormalizeIPv4、MergeDedupTrimNonEmpty、DedupTrimNonEmpty…
+//   source_ip.go — CheckSourceIPAllowed（tunnel/probedefense 源白名单共用）
 //   hostport.go — SplitHostPortLoose、SplitRemoteAddr（探针/握手共用远端拆分）
 //   gateway.go — InferGatewayFromVPNIP、ResolveGateway、IsLoopbackHost
 //   listen.go — 管理口监听地址合并与校验

@@ -32,6 +32,8 @@ database:
 
 api:
   listen_hosts: ["127.0.0.1"]
+  # TUN 就绪后是否追加 VPN 网关 IP 到管理口（明文 HTTP）；false 则仅 listen_hosts
+  listen_tun: true
   port: 8080
   allow_public_bind: false
   login_max_attempts: 5
@@ -61,6 +63,7 @@ security:
       - connection_reset
       - unexpected_eof
       - auth_failed
+    ban_exempt_ips: []
 
 admin:
   username: "admin"

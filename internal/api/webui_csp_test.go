@@ -312,6 +312,9 @@ func TestSecurityPageExternalScript(t *testing.T) {
 	if !strings.Contains(body, `id="banDurationPreset"`) {
 		t.Fatal("探针页应有 banDurationPreset 封禁时长选择")
 	}
+	if !strings.Contains(body, `id="btnAddExempt"`) {
+		t.Fatal("探针页应有 btnAddExempt 封禁豁免")
+	}
 }
 
 // loginTestAdmin 以测试管理员登录，返回 Session Cookie。

@@ -39,6 +39,7 @@ type uiApp struct {
 	passEntry    *widget.Entry
 	localLansEntry *widget.Entry // 可选本地网段，逗号/换行分隔；空=关闭 via
 	rememberPass *widget.Check
+	rememberPassWarn *widget.Label // 勾选「记住密码」时的安全提示
 	errLbl       *widget.Label
 	cfgPathLbl   *widget.Label
 

@@ -21,6 +21,7 @@
 
 | 文档 | 说明 |
 |------|------|
+| [codebase-guide.md](codebase-guide.md) | **代码库导读**（分层、横切关注点、新人全景） |
 | [development-principles.md](development-principles.md) | 开发原则与验收底线 |
 | [architecture.md](architecture.md) | **CODEMAP**（包边界、依赖、HTTP 路由） |
 | [../internal/README.md](../internal/README.md) | 改 X 功能来哪 |

@@ -22,6 +22,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/security/events", s.requireAuth(s.handleSecurityEvents))
 	s.mux.HandleFunc("/api/v1/security/blocks", s.requireAuth(s.handleSecurityBlocks))
 	s.mux.HandleFunc("/api/v1/security/blocks/", s.requireAuth(s.handleSecurityBlockByIP))
+	s.mux.HandleFunc("/api/v1/security/exempts", s.requireAuth(s.handleSecurityExempts))
+	s.mux.HandleFunc("/api/v1/security/exempts/", s.requireAuth(s.handleSecurityExemptByIP))
 	s.mux.HandleFunc("/api/v1/peer-routes", s.requireAuth(s.handlePeerRoutes))
 	s.mux.HandleFunc("/api/v1/peer-routes/", s.requireAuth(s.handlePeerRouteByID))
 	s.mux.HandleFunc("/api/v1/peer-access", s.requireAuth(s.handlePeerAccess))

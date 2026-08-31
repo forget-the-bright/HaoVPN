@@ -616,6 +616,12 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
 .inline-fields input { width: 5rem; min-width: 4rem; }
 .inline-fields select { min-width: 7rem; }
 
+.card-hint {
+  margin: -0.25rem 0 0.75rem;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
 .pager {
   display: flex;
   flex-wrap: wrap;

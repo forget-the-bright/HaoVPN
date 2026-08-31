@@ -73,60 +73,6 @@ func (h *ServerHandler) Attach(conn *transport.Conn) {
 	})
 }
 
-// rejectHandshake 向客户端发送 handshake_err 并关闭连接。
-//
-// 参数：err — 失败原因；优先用 errors.Is 映射探针 signature，Error() 写入 JSON 与日志。
-// 副作用：打 Warn 日志；可选记探针事件；SendRawSync 握手失败帧；conn.Close。
-// 并发：仅在 doHandshake 所在 goroutine 调用。
-func (h *ServerHandler) rejectHandshake(conn *transport.Conn, err error) {
-	if err == nil {
-		err = errors.New("握手失败")
-	}
-	msg := err.Error()
-	remote := conn.RemoteAddr()
-	logger.Warn("握手拒绝: remote=%s %s", remote, msg)
-	if h.Probe != nil {
-		ip, port := netutil.SplitRemoteAddr(remote)
-		sig := classifyHandshakeReject(err)
-		// 密码失败不参与自动封禁计数（由 Guard ignore auth_failed）；仍记流水便于排查
-		h.Probe.RecordReject(ip, port, "handshake", sig, msg)
-	}
-	errBytes, encErr := EncodeHandshakeErr(msg)
-	if encErr != nil {
-		logger.Warn("编码握手错误帧失败: %v", encErr)
-	} else if sendErr := conn.SendRawSync(transport.FrameTypeHandshake, errBytes); sendErr != nil {
-		logger.Warn("发送握手错误帧失败 remote=%s: %v", remote, sendErr)
-	}
-	conn.Close()
-}
-
-// classifyHandshakeReject 将握手失败映射为探针 signature（errors.Is 优先，避免中文子串漂移）。
-func classifyHandshakeReject(err error) string {
-	switch {
-	case errors.Is(err, auth.ErrAccountAlreadyOnline):
-		return "account_online"
-	case errors.Is(err, auth.ErrBadCredentials):
-		return "auth_failed"
-	case errors.Is(err, ErrSourceDenied):
-		return "source_deny"
-	case errors.Is(err, auth.ErrLoginLocked):
-		return "auth_failed" // 锁定不参与自动封（与 auth_failed 同 ignore）
-	default:
-		// 兼容包装文案「注册会话失败: …已在其他设备在线」
-		msg := err.Error()
-		if strings.Contains(msg, "已在其他设备在线") {
-			return "account_online"
-		}
-		if strings.Contains(msg, "用户名或密码") {
-			return "auth_failed"
-		}
-		if strings.Contains(msg, "白名单") || strings.Contains(msg, "tunnel_allowed") {
-			return "source_deny"
-		}
-		return "handshake_reject"
-	}
-}
-
 // doHandshake 校验身份、分配 IP、下发策略与（密码登录时）客户端私钥。
 //
 // 参数：conn — 当前 TLS 连接；data — 首帧握手 JSON 载荷。

@@ -17,5 +17,6 @@ func ConfigFromServer(sec config.SecuritySection) Config {
 		EventRetentionDays:     pd.EventRetentionDays,
 		IgnoreSignaturesForBan: pd.IgnoreSignaturesForBan,
 		AllowedSourceIPs:       sec.TunnelAllowedSourceIPs,
+		BanExemptIPs:           pd.BanExemptIPs,
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"haovpn/internal/api"
 	"haovpn/internal/audit"
 	"haovpn/internal/auth"
 	"haovpn/internal/fileutil"
@@ -87,7 +86,7 @@ func (e *Engine) bootPersist() (*bootContext, error) {
 	})
 	auditLog := audit.New(store)
 	if cfg.API.AllowPublicBind {
-		api.LogPublicBindAudit(auditLog)
+		audit.LogPublicBindEnabled(auditLog)
 	}
 
 	return &bootContext{

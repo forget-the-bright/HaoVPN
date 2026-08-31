@@ -11,6 +11,7 @@
 | `api.allow_public_bind` | 必须为 `false` | 查看 `server.yaml` |
 | `api.listen_hosts` | 不含 `0.0.0.0` / `::`（除非有充分理由且已评估） | 查看 `server.yaml` |
 | frp / 防火墙 | **未**映射管理端口 8080 | 检查 frpc 配置 |
+| `api.listen_tun` | 若不需要 VPN 内访问管理口，设 `false` | 默认 true 会 bind VPN 网关 IP（**明文 HTTP**） |
 | 外网探测 | 公网 IP:8080 不可达 | `curl` 从外网测试 |
 
 ### 公开健康探针（有意设计）
@@ -37,9 +38,11 @@
 | 登录锁定 | `login_max_attempts` / `login_lockout_sec` 已配置；**Web 与隧道分表**，互不影响 |
 | `api.trusted_proxy_cidrs` | 生产默认**留空**；仅反代后且 RemoteAddr 命中信任 CIDR 时才解析 X-Forwarded-For（防锁定绕过） |
 | `api.secure_cookies` | HTTPS 终止或全站 TLS 时设为 `true`；与 `setSessionCookie`/`clearSessionCookie` 的 Secure/SameSite **必须一致**，否则 logout 删不掉 Cookie |
+| 反代 HTTPS | 配置 `trusted_proxy_cidrs` 且反代送 `X-Forwarded-Proto: https` 时自动 Secure + HSTS | nginx 示例见 deploy |
 | 会话滑动 | 鉴权 Touch 成功时**重发**同一 session Cookie（滑动续期）；清除须走 `clearSessionCookie` |
 | 须改密 | `must_change_password` 时仍可 GET `/api/v1/csrf`（改密页需要）；其它写 API 仍拦 |
 | 注销 | **仅 POST** `/api/v1/logout`（须 CSRF）；GET → 405；响应须带与登录时相同属性的过期 Cookie |
+| GUI「记住密码」 | 密码**明文**写入 `client.yaml`（0600）；勾选时 GUI 显示警告；备份/同用户可读，生产慎用 |
 
 ---
 
@@ -72,22 +75,35 @@
 
 ### 4.2 探针防御与安全事件
 
-**行为**：`serverapp` 在存在 Guard 时**始终**挂到 `transport.Config.Probe`。Accept 时查封禁（**封禁表始终生效**，不依赖 `enabled`）与 **`tunnel_allowed_source_ips`（同样不依赖 `enabled`，与握手源白名单对齐）** → TLS/非法帧分类落库 → 窗口内计数自动封（**仅计 `action=rejected`**）。`enabled` 只管自动记录与自动封；手动封禁/解封不依赖 `enabled`。心跳读超时**不记**探针。
+**行为**：`serverapp` 在存在 Guard 时**始终**挂到 `transport.Config.Probe`。Accept 时查封禁 → **TLS 握手失败亦记事件**（HTTPS 扫描）→ 非法帧/握手拒绝分类 → 窗口内计数自动封。
+
+**`enabled` / `record_events` / `auto_ban` 真值表**（第十八轮对齐代码）：
+
+| 开关 | 控制范围 |
+|------|----------|
+| `record_events` | 是否写 `security_events`（含 ban hit、manual ban 审计事件、TLS/帧/握手 rejected） |
+| `enabled` | 探针**自动**路径：`RecordReject` 是否参与 **maybeAutoBan** 计数（TLS/帧/Accept 拒绝） |
+| `auto_ban` | 窗口达阈值是否写 `ip_blocks`（`maybeAutoBan` 内，还须 `enabled=true`） |
+
+示例：`enabled=false` + `record_events=true` → TLS 拒绝**仍落库**，但**不**触发自动封禁计数。
 
 **配置**（`security.probe_defense` + 相关）：
 
 | 字段 | 含义 |
 |------|------|
-| `enabled` | 自动记录/自动封总开关；YAML 显式 `false` 永不被默认改回 |
-| `record_events` | 是否写 `security_events` |
+| `enabled` | 探针自动路径是否参与 **auto-ban 计数**（`RecordReject` → `maybeAutoBan`）；YAML 显式 `false` 永不被默认改回 |
+| `record_events` | 是否写 `security_events`（所有探针相关落库的总开关） |
 | `auto_ban` | 是否自动写 `ip_blocks` |
 | `ban_after_events` / `ban_window_sec` | 阈值与窗口 |
 | `ban_duration_sec` | 封禁秒；`0`=永久 |
 | `event_retention_days` | 事件保留天（过期 `ip_blocks` 清理**不依赖**本项，由 retention 独立执行） |
 | `ignore_signatures_for_ban` | 不计入自动封的特征（默认含 `auth_failed`、`connection_reset`、`unexpected_eof`） |
+| `ban_exempt_ips` | **封禁豁免** IP/CIDR；启动导入 DB，与 WebUI 动态条目合并；列表内 IP **永不**自动/手动封禁，且不受 `ip_blocks` 影响 |
 | `allow_plaintext_private_keys` | （`security` 段）`true` 时兼容库内明文私钥；**生产必须 false** |
 
-与审计日志的区别：`audit_logs` 记管理员操作；`security_events` 记隧道口扫描/握手拒绝。管理端：`/security`；API：`/api/v1/security/events|blocks`（含 `*_zh` 中文字段）。
+与 **`tunnel_allowed_source_ips` 的区别**：后者为**隧道接入白名单**（非空时仅允许列表内 IP 连隧道）；`ban_exempt_ips` 仅豁免封禁，不限制其它 IP 接入。
+
+与审计日志的区别：`audit_logs` 记管理员操作；`security_events` 记隧道口扫描/握手拒绝。管理端：`/security`；API：`/api/v1/security/events|blocks|exempts`（含 `*_zh` 中文字段）。
 
 **手动封禁 `POST /api/v1/security/blocks`**（须 CSRF）：
 
@@ -102,6 +118,19 @@
 | **> 0** | 指定秒数；须 ≥ 60，上限 10 年（315360000 秒） |
 
 WebUI 探针页预设：1 小时～5 年、永久、自定义（月按 30 天、年按 365 天）；**默认选中 1 周**。审计 `probe_ban_manual` metadata 含 `duration_sec`（或 `default` / `permanent=true`）。
+
+**封禁豁免**（`GET/POST/DELETE /api/v1/security/exempts`，须 CSRF）：
+
+```json
+{ "ip": "203.0.113.10", "note": "办公室出口" }
+```
+
+- 支持单 IP 或 CIDR；添加后自动 `ReloadBanExempt`；若该 IP 已在封禁表则**自动解封**。
+- **DELETE** 路径参数支持 CIDR（如 `203.0.113.0/24`，URL 编码后含 `/`）；服务端用 `ValidateIPOrCIDR` 校验，**勿**以 `/` 误判非法。
+- 审计：`probe_exempt_add` / `probe_exempt_remove`。
+- WebUI「探针」页「封禁豁免」卡片可动态维护；`server.yaml` 的 `ban_exempt_ips` 启动时幂等导入（`source=yaml_import`）。
+
+**客户端封禁提示**：服务端对封禁 IP 在 TLS 握手前写入 `HAOVPN:IP_BANNED`；客户端识别后展示「您的 IP 已被服务端封禁…」并停止无意义重试（`transport.ErrIPBanned`）。
 
 #### 特征 signature（英文码 ↔ 中文）
 
@@ -185,6 +214,7 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 | `peer_access_add` / `remove` | 互访白名单 |
 | `vpn_peers_policy` | 全局互访策略 |
 | `probe_ban_manual` / `probe_unban` | 手动封禁/解封 |
+| `probe_exempt_add` / `probe_exempt_remove` | 添加/移除封禁豁免 |
 
 #### 目标 target_type
 

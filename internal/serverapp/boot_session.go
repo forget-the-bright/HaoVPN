@@ -50,6 +50,12 @@ func bootSession(bc *bootContext) error {
 	bc.sessMgr = sessMgr
 	bc.vpnSvc = vpnSvc
 	bc.probeGuard = probedefense.New(bc.store, probedefense.ConfigFromServer(bc.cfg.Security))
+	if err := probedefense.ImportBanExemptFromYAML(bc.store, bc.cfg.Security.ProbeDefense.BanExemptIPs); err != nil {
+		return err
+	}
+	if err := bc.probeGuard.ReloadBanExempt(); err != nil {
+		return err
+	}
 	if bc.probeGuard.Enabled() {
 		logger.Info("探针防御已启用 auto_ban=%v ban_after=%d window=%ds",
 			bc.cfg.Security.ProbeDefense.IsAutoBan(),
