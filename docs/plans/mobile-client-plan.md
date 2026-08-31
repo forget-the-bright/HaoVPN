@@ -1,9 +1,9 @@
 # HaoVPN 手机客户端 · 实施计划（权威）
 
 > **文档性质**：实施蓝图。按本文即可开工；**当前仓库尚未实现手机客户端代码**。  
-> **状态**：仅文档落盘（2026-08-30）。开工后每完成一步在 [dev-log.md](dev-log.md) 记验收，并回写本文「进度勾选」。  
-> **关联**：桌面 CODEMAP 仍以 [architecture.md](architecture.md) 为准；本文是移动线补充，不替代桌面文档。  
-> **原则**：遵守 [development-principles.md](development-principles.md) — 安全 > 简单 > 快；一步一验；禁止「下次再说」。
+> **状态**：仅文档落盘（2026-08-30）。开工后每完成一步在 [dev-log.md](../dev-log.md) 记验收，并回写本文「进度勾选」。  
+> **关联**：桌面 CODEMAP 仍以 [architecture.md](../architecture.md) 为准；本文是移动线补充，不替代桌面文档。  
+> **原则**：遵守 [development-principles.md](../development-principles.md) — 安全 > 简单 > 快；一步一验；禁止「下次再说」。
 
 ---
 
@@ -38,7 +38,7 @@
 6. **禁止** release 构建启用 `insecure_skip_verify` 或 Trace 级明文包内容。
 7. **禁止**「先能跑、安全以后再说」；临时方案必须同交付内偿还并记入 `dev-log`。
 8. **桌面不回归**：移动改动用 build tag / 适配器；每步后 `go test ./...`（至少受影响包）须绿。
-9. **AI 不得修改根目录 `VERSION`**；手机版本规则另见 §11，由开发者确认后写入 [versioning.md](versioning.md)。
+9. **AI 不得修改根目录 `VERSION`**；手机版本规则另见 §11，由开发者确认后写入 [versioning.md](../versioning.md)。
 10. **一步一验**：不过验收门禁不得进入下一步。
 
 ### 1.3 环境前提（硬依赖）
@@ -155,12 +155,13 @@ go-vpn/
 │   └── ...
 ├── cmd/client · cmd/client-gui   # 桌面入口，保持
 └── docs/
-    ├── mobile-client-plan.md     # 本文
-    ├── mobile-audit.md           # 开工 Step A 产出
-    ├── mobile.md                 # 架构速查（开工后）
-    ├── mobile-faq.md
-    ├── mobile-store-compliance.md
-    └── deploy-mobile.md
+    └── plans/
+        ├── mobile-client-plan.md     # 本文
+        ├── mobile-audit.md           # 开工 Step A 产出
+        ├── mobile.md                 # 架构速查（开工后）
+        ├── mobile-faq.md
+        ├── mobile-store-compliance.md
+        └── deploy-mobile.md
 ```
 
 ### 3.3 包职责与「改 X 找哪」（实施后须同步进 architecture）
@@ -258,7 +259,7 @@ CI：`go list -deps` + allowlist 测试；`GOOS=android` / `ios` 编译门禁。
 
 | 步骤 | 内容 | 验收门禁 | 状态 |
 |:----:|------|----------|:----:|
-| **A** | 产出 `docs/mobile-audit.md`，§6 每条含位置/修复/验收 | 与本文编号一致、无遗漏 | ⬜ |
+| **A** | 产出 `docs/plans/mobile-audit.md`，§6 每条含位置/修复/验收 | 与本文编号一致、无遗漏 | ⬜ |
 | **B** | P0：Dial protect、PacketIO、策略回调、公共 `vpncore`、TLS 内存 CA+pin | 单测绿；桌面行为不变；移动路径无 `tun.Open` | ⬜ |
 | **C** | P1：凭据接口、host_id、logger 注入、crypto 瘦身、拒 via、MTU clamp、IPv6 策略 | 单测 + `GOOS=android/ios` 编译 vpncore | ⬜ |
 | **D** | 桌面全量回归 `go test ./...` | 全绿 | ⬜ |
@@ -269,7 +270,7 @@ CI：`go list -deps` + allowlist 测试；`GOOS=android` / `ios` 编译门禁。
 
 ### Step A — 审计落盘
 
-- 将 §6 全文写入 `docs/mobile-audit.md`（可增补实测细节）。
+- 将 §6 全文写入 `docs/plans/mobile-audit.md`（可增补实测细节）。
 - 每条字段：`ID`、`Severity`、`Location`、`Defect`、`Fix`、`Acceptance`。
 
 ### Step B — P0 Go 内核
@@ -326,7 +327,7 @@ go test ./...
 
 ## 6. 缺陷清单（实施必须全部关闭）
 
-开工 Step A 时复制到 `docs/mobile-audit.md` 并逐项勾选。
+开工 Step A 时复制到 `docs/plans/mobile-audit.md` 并逐项勾选。
 
 ### 6.1 P0 阻断
 
@@ -477,16 +478,16 @@ go build -o NUL ./vpncore/   # 可再加 GOOS=android 交叉检查
 
 | 文档 | 动作 |
 |------|------|
-| [architecture.md](architecture.md) | 增加 Mobile CODEMAP 分层与依赖规则 |
-| [../记忆.md](../记忆.md) | 阅读顺序 / 当前阶段 / 平台范围含手机 |
-| [../internal/README.md](../internal/README.md) | FAQ 增加移动行 |
+| [architecture.md](../architecture.md) | 增加 Mobile CODEMAP 分层与依赖规则 |
+| [记忆.md](../../记忆.md) | 阅读顺序 / 当前阶段 / 平台范围含手机 |
+| [internal/README.md](../../internal/README.md) | FAQ 增加移动行 |
 | `vpncore/README.md`、关键 `internal/*/README.md` | 包职责与文件索引 |
-| [security-hardening.md](security-hardening.md) | pin、Keystore、NE、日志 |
-| `mobile.md` / `mobile-faq.md` / `mobile-store-compliance.md` / `deploy-mobile.md` | 新建 |
-| [troubleshooting.md](troubleshooting.md) | protect 缺失=环路；NE OOM 等 |
-| [dev-log.md](dev-log.md) | 每步验收 |
-| [versioning.md](versioning.md) | 手机产物版本规则（开发者确认后） |
-| [README.md](README.md)（本目录索引） | 已链到本文；实施后链到 mobile.md |
+| [security-hardening.md](../security-hardening.md) | pin、Keystore、NE、日志 |
+| `plans/mobile.md` 等（同目录新建） | 新建 |
+| [troubleshooting.md](../troubleshooting.md) | protect 缺失=环路；NE OOM 等 |
+| [dev-log.md](../dev-log.md) | 每步验收 |
+| [versioning.md](../versioning.md) | 手机产物版本规则（开发者确认后） |
+| [docs/README.md](../README.md) | 已链到本文；实施后链到 mobile.md |
 
 FAQ 必须能答：「连接 / protect / 策略 / 凭据 / Flutter 通道 → 哪个目录哪个文件」。
 
@@ -502,9 +503,9 @@ FAQ 必须能答：「连接 / protect / 策略 / 凭据 / Flutter 通道 → �
 
 ## 12. 与当前桌面进度的关系
 
-- 现网 v1.0 桌面 + step11 field 门禁见 [记忆.md](../记忆.md)。
+- 现网 v1.0 桌面 + step11 field 门禁见 [记忆.md](../../记忆.md)。
 - 手机线可并行开发，但 **合并前** 桌面与移动测试都要绿；冲突时优先保现场桌面稳定。
-- [meta-plan.md](meta-plan.md) 写明「移动端仍不做」为 **v1.0 历史范围**；本文是后续产品线蓝图，不篡改 meta-plan 假装 v1.0 已含手机。
+- [meta-plan.md](../archive/meta-plan.md) 写明「移动端仍不做」为 **v1.0 历史范围**；本文是后续产品线蓝图，不篡改 meta-plan 假装 v1.0 已含手机。
 
 ---
 

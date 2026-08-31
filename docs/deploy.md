@@ -285,7 +285,7 @@ launchd 配置历史见 `docs/dev-log.md`。
 
 Web 自改密：`POST /api/v1/password` 须带 `old_password` 与 `new_password`；成功后吊销全部 Web 会话并重新登录。Web 与隧道登录锁定分表，互不影响。
 
-完整示例见 [meta-plan.md](meta-plan.md) YAML 章节。
+完整示例见 [meta-plan.md](archive/meta-plan.md) YAML 章节。
 
 ### 4.5 frp 配置（现场无公网 IP）
 
@@ -436,7 +436,7 @@ api:
 
 ### 7.3 安全验收（必做）
 
-见 [meta-plan.md](meta-plan.md)「安全测试」9 项，或 [security-hardening.md](security-hardening.md)。
+见 [meta-plan.md](archive/meta-plan.md)「安全测试」9 项，或 [security-hardening.md](security-hardening.md)。
 
 **meta-plan #3 网络隔离**（无 CI 自动化，须现场手工）：
 
@@ -529,7 +529,7 @@ cp /opt/HaoVPN/data/haovpn.db /backup/HaoVPN-$(date +%F).db
 
 - [security-hardening.md](security-hardening.md) — 生产加固
 - [troubleshooting.md](troubleshooting.md) — 故障排障
-- [meta-plan.md](meta-plan.md) — 功能与验收演示脚本
+- [meta-plan.md](archive/meta-plan.md) — 功能与验收演示脚本
 
 ---
 

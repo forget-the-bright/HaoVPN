@@ -2,7 +2,7 @@
 
 > **【规划存档 · 勿当现行手册】**  
 > - 本文保留 v1.0 **功能意图与 step 顺序**，便于对照「当初要交付什么」。  
-> - **当前进度、目录树、包名、配置键以** [dev-log.md](dev-log.md)、[architecture.md](architecture.md)、[deploy.md](deploy.md) **为准**。  
+> - **当前进度、目录树、包名、配置键以** [dev-log.md](../dev-log.md)、[architecture.md](../architecture.md)、[deploy.md](../deploy.md) **为准**。  
 > - 文中部分目录树 / `peers` 表术语 / docs 文件名是历史快照；发现冲突时**改代码侧文档，不要默默改规划正文冒充现行**。  
 > 产品名：**HaoVPN**（模块 `haovpn`）。
 
@@ -204,13 +204,12 @@ HaoVPN/
 ├── docs
 │   ├── README.md                  # 文档索引（现行导航）
 │   ├── development-principles.md  # 开发原则
-│   ├── comment-style.md           # 注释规范
-│   ├── versioning.md / licensing.md
+│   ├── comment-style.md / versioning.md / licensing.md
 │   ├── architecture.md            # CODEMAP（现行包结构）
-│   ├── meta-plan.md               # 本文件：v1.0 规划存档
 │   ├── deploy.md / troubleshooting.md / security-hardening.md
-│   ├── dev-log.md                 # 唯一进度日志
-│   └── release-notes-*-DRAFT.md   # 发版说明草稿
+│   ├── traffic-routing.md / dev-log.md
+│   ├── plans/                     # 未开工蓝图（如手机）
+│   └── archive/                   # 存档：本文件 meta-plan、code-audit 等
 └── config                     # 参考示例；运行时配置由首次启动自动生成
     ├── server_example.yaml
     └── client_example.yaml
@@ -503,7 +502,7 @@ HaoVPN/
 
 > **以 [`internal/persist/schema.sql`](../internal/persist/schema.sql) 为准**；下表为历史草稿，已过时处勿再照抄。
 >
-> 现状要点：`users` 合一（无独立 `peers` 表）；另有 `peer_routes` / `peer_route_members` / `peer_access` / `client_lan_registry`、`security_events` / `ip_blocks`、日志历史库等。详见 [architecture.md](architecture.md) 与 `persist` 包。
+> 现状要点：`users` 合一（无独立 `peers` 表）；另有 `peer_routes` / `peer_route_members` / `peer_access` / `client_lan_registry`、`security_events` / `ip_blocks`、日志历史库等。详见 [architecture.md](../architecture.md) 与 `persist` 包。
 
 | 表名（现行） | 用途 |
 |------|------|
@@ -657,7 +656,7 @@ listen_hosts 含 0.0.0.0 → 按配置监听；风险由配置者承担，启动
 
 ## 目录变更（2026-08 架构重构）
 
-> **存档说明**：v1.0 规划正文中的目录树与「peer」术语为历史快照（账号已物理合并进 `users`；client.yaml 无 peer 段）。**当前结构以 [architecture.md](architecture.md) 为准。**
+> **存档说明**：v1.0 规划正文中的目录树与「peer」术语为历史快照（账号已物理合并进 `users`；client.yaml 无 peer 段）。**当前结构以 [architecture.md](../architecture.md) 为准。**
 
 重构后新增/调整的模块主要包括：
 

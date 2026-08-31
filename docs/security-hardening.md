@@ -89,6 +89,20 @@
 
 与审计日志的区别：`audit_logs` 记管理员操作；`security_events` 记隧道口扫描/握手拒绝。管理端：`/security`；API：`/api/v1/security/events|blocks`（含 `*_zh` 中文字段）。
 
+**手动封禁 `POST /api/v1/security/blocks`**（须 CSRF）：
+
+```json
+{ "ip": "1.2.3.4", "reason": "端口探测", "duration_sec": 604800 }
+```
+
+| `duration_sec` | 含义 |
+|----------------|------|
+| **省略** | 使用 `probe_defense.ban_duration_sec`（自动封禁同源默认） |
+| **0** | 永久（`expires_at = NULL`） |
+| **> 0** | 指定秒数；须 ≥ 60，上限 10 年（315360000 秒） |
+
+WebUI 探针页预设：1 小时～5 年、永久、自定义（月按 30 天、年按 365 天）；**默认选中 1 周**。审计 `probe_ban_manual` metadata 含 `duration_sec`（或 `default` / `permanent=true`）。
+
 #### 特征 signature（英文码 ↔ 中文）
 
 | 英文码 | 中文含义 |
@@ -216,9 +230,10 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 
 | 检查项 | 说明 |
 |--------|------|
-| CSP `script-src` | **`'self'` only**（第十七轮）：管理页脚本已外置到 `web/static/*.js`（含 `login.js`、`index.js`、`user_list.js`、`peer_routes.js` 等）。定义见 `security/tls_policy.go`。 |
+| CSP `script-src` | **`'self'` only**（第十七轮）：管理页脚本已外置到 `web/static/*.js`（含 `login.js`、`index.js`、`user_list.js`、`peer_routes.js`、`security_probe.js` 等）。定义见 `security/tls_policy.go`。 |
+| 禁止 HTML `onclick=` / `on*=` | **内联事件处理器同样被 CSP 拦截**（控制台：`Executing inline event handler…`）。按钮须在外置 JS 用 `addEventListener` / `.onclick=`；退出登录用 `data-action="logout"`（`app.js`）。回归：`TestEmbeddedTemplatesNoInlineEventHandlers`、`TestEmbeddedStaticJSNoOnclickHTMLLiteral`、`TestWebUIButtonIDsBoundInPageScript`、`TestWebUIAuthPagesExternalScripts`。 |
 | CSP `style-src` | 仍允许 `'unsafe-inline'`（模板内联样式未迁完）；**勿**误把 style 的 unsafe-inline 当成可恢复内联脚本。 |
-| 新页面 | 禁止在 HTML 内写 `<script>` 业务逻辑；新增 `static/<page>.js` 并用 `<script src="/static/...">` 引用。 |
+| 新页面 | 禁止在 HTML 内写 `<script>` 业务逻辑与 `onclick=`；新增 `static/<page>.js` 并用 `<script src="/static/...">` 引用。 |
 
 ---
 

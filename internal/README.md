@@ -19,7 +19,7 @@
 | AbsPair / EnsureDir / ACL / 世界可读 | `fileutil/fs.go`、`mkdir.go`、`perm_*.go`（`RestrictToAdminsOnly`、`CheckWorldReadable`） |
 | 广告 LAN 禁 VPN 池重叠 | `netutil.ValidateAdvertisedLANNotForbidden`；握手 `tunnel/server_handler.go` |
 | GUI 开机自启（计划任务/服务） | `autostart/`（Win SCM+计划任务；Linux XDG/systemd；macOS LaunchAgent/Daemon；`gen.go`；`paths_unix.go` AbsPair） |
-| 探针事件 / 封禁 API / WebUI | `api/handler_security.go`；逻辑 `probedefense/guard.go`；页 `web/templates/security_probe.html` + `static/security_probe.js` |
+| 探针事件 / 封禁 API / WebUI | `api/handler_security.go`（POST `duration_sec`）；逻辑 `probedefense/guard.go` `ManualBan(ip, reason, durationSec)`；页 `web/templates/security_probe.html` + `static/security_probe.js` |
 | 握手策略合并 | `vpnaccount/peer_policy.go` → `ResolveClientPolicy`；会话 `sessionmgr` ViaRoutes/PeerAccess |
 | 客户端 local_lans / via 出口 | `config/client.go`；握手 `tunnel/`；出口 `clientapp/via_exit.go`；GUI `clientgui/login.go` |
 | 服务端 NAT（工控） | `serverapp/boot_tun.go` + `netstack.Stack`；配置 `nat.allowed_lan_cidrs` |

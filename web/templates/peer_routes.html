@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>托管路由 · HaoVPN</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/static/favicon-32.png" sizes="32x32">
 </head>
 <body>
   <div class="app-shell">
@@ -23,7 +25,7 @@
         <a class="nav-item" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
       </nav>
       <div class="sidebar-footer">
-        <button type="button" class="btn btn-ghost btn-block btn-sm" onclick="HaoVPN.logout()">退出登录</button>
+        <button type="button" class="btn btn-ghost btn-block btn-sm" data-action="logout">退出登录</button>
       </div>
     </aside>
 
@@ -35,7 +37,7 @@
       <main class="content">
         <div id="pendingBanner" class="card" style="display:none;margin-bottom:1rem;border-color:#c9a227;background:rgba(201,162,39,.08)">
           <p style="margin:0 0 .5rem"><strong>有未生效的变更</strong> — 增删已写入数据库，须点击「应用生效」踢线受影响客户端以刷新策略。</p>
-          <button type="button" class="btn btn-primary btn-sm btn-apply" onclick="applyPeers()">
+          <button type="button" class="btn btn-primary btn-sm btn-apply" id="btnApplyPeersBanner">
             <span class="btn-label">应用生效</span>
           </button>
         </div>
@@ -46,21 +48,21 @@
               <h2 class="card-title" style="margin:0">全局互访</h2>
               <p class="text-muted" style="margin:.35rem 0 0">默认禁止 VPN 客户端互访对方虚拟 IP。开启后任意账号可互 ping（即时生效，无需应用）。</p>
             </div>
-            <button type="button" class="btn btn-primary btn-sm btn-apply" onclick="applyPeers()" title="踢线待应用账号">
+            <button type="button" class="btn btn-primary btn-sm btn-apply" id="btnApplyPeers" title="踢线待应用账号">
               <span class="btn-label">应用生效</span>
             </button>
           </div>
           <label class="check-row" style="margin-top:.75rem">
             <input type="checkbox" id="allowAllPeers"> 允许全部 VPN 互访
           </label>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="savePeersPolicy()">保存开关</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnSavePeersPolicy">保存开关</button>
         </div>
 
         <div class="card" style="margin-top:1rem">
           <h2 class="card-title">在线本地网段注册表</h2>
           <p class="text-muted">客户端配置 <code>local_lans</code> 后登录上报；断线清空。仅广告，不自动建托管路由。可从下行「从注册表创建」。</p>
           <div class="toolbar">
-            <button type="button" class="btn btn-ghost btn-sm" onclick="loadRegistry()">刷新注册表</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshRegistry">刷新注册表</button>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -95,8 +97,8 @@
               <label>访问方账号</label>
               <select id="accessorUser"></select>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" id="btnAddRoute" onclick="addRoute()">新增</button>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="loadRoutes()">刷新</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAddRoute">新增</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshRoutes">刷新</button>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -127,8 +129,8 @@
               <label>账号 B</label>
               <select id="peerUser"></select>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" id="btnAddAccess" onclick="addAccess()">添加互访</button>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="loadAccess()">刷新</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAddAccess">添加互访</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshAccess">刷新</button>
           </div>
           <div class="table-wrap">
             <table class="data-table">

@@ -32,7 +32,12 @@ const (
 	ActionManualBanned = "manual_banned"
 )
 
-// Config 探针防御运行时配置（来自 security.probe_defense）。
+// BanDurationUseDefault 手动封禁未指定 duration_sec 时使用服务端 probe_defense.ban_duration_sec。
+const BanDurationUseDefault = -1
+
+// MaxBanDurationSec 手动封禁时长上限（10 年），防止误填过大数值。
+const MaxBanDurationSec = 315360000
+
 type Config struct {
 	Enabled                bool
 	RecordEvents           bool
@@ -190,7 +195,8 @@ func (g *Guard) RecordReject(ip, port, phase, signature, detail string) {
 // ManualBan 管理员手动封禁（不依赖 Enabled；封禁表始终可写）。
 //
 // ip 须为可解析的 IP 地址（非空主机名）。
-func (g *Guard) ManualBan(ip, reason string) error {
+// durationSec：BanDurationUseDefault(-1) 使用 cfg.BanDurationSec；0 永久；>0 指定秒数。
+func (g *Guard) ManualBan(ip, reason string, durationSec int) error {
 	if g == nil || g.store == nil {
 		return nil
 	}
@@ -201,15 +207,42 @@ func (g *Guard) ManualBan(ip, reason string) error {
 	b := persist.IPBlock{
 		IP: ip, Reason: reason, Source: "manual", Enabled: true,
 	}
-	if g.cfg.BanDurationSec > 0 {
-		exp := time.Now().Add(timeutil.Seconds(g.cfg.BanDurationSec))
-		b.ExpiresAt = &exp
-	}
+	b.ExpiresAt = g.resolveBanExpiry(durationSec)
 	if err := g.store.UpsertIPBlock(b); err != nil {
 		return err
 	}
 	g.record(ip, "", PhaseTCPAccept, "manual", ActionManualBanned, reason)
 	return nil
+}
+
+// ValidateManualBanDuration 校验手动封禁时长；仅用于 API 显式传入的 duration_sec（非 UseDefault）。
+func ValidateManualBanDuration(durationSec int) error {
+	if durationSec == BanDurationUseDefault {
+		return nil
+	}
+	if durationSec < 0 {
+		return fmt.Errorf("duration_sec 不能为负数")
+	}
+	if durationSec > 0 && durationSec < 60 {
+		return fmt.Errorf("duration_sec 须至少 60 秒或设为 0（永久）")
+	}
+	if durationSec > MaxBanDurationSec {
+		return fmt.Errorf("duration_sec 不能超过 %d 秒（10 年）", MaxBanDurationSec)
+	}
+	return nil
+}
+
+// resolveBanExpiry 根据 durationSec 计算封禁过期时间；nil 表示永久。
+func (g *Guard) resolveBanExpiry(durationSec int) *time.Time {
+	sec := durationSec
+	if sec == BanDurationUseDefault {
+		sec = g.cfg.BanDurationSec
+	}
+	if sec <= 0 {
+		return nil
+	}
+	exp := time.Now().Add(timeutil.Seconds(sec))
+	return &exp
 }
 
 // Unban 解封。
@@ -265,10 +298,7 @@ func (g *Guard) maybeAutoBan(ip, signature string) {
 	b := persist.IPBlock{
 		IP: ip, Reason: reason, Source: "auto", Signature: signature, Enabled: true,
 	}
-	if g.cfg.BanDurationSec > 0 {
-		exp := time.Now().Add(timeutil.Seconds(g.cfg.BanDurationSec))
-		b.ExpiresAt = &exp
-	}
+	b.ExpiresAt = g.resolveBanExpiry(BanDurationUseDefault)
 	if err := g.store.UpsertIPBlock(b); err != nil {
 		logger.Warn("自动封禁失败 ip=%s: %v", ip, err)
 		return

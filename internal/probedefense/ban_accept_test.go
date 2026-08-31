@@ -19,7 +19,7 @@ func TestAllowAcceptHonorsBanWhenDisabled(t *testing.T) {
 	cfg := probedefense.DefaultConfig()
 	cfg.Enabled = false
 	g := probedefense.New(store, cfg)
-	if err := g.ManualBan("203.0.113.9", "test manual"); err != nil {
+	if err := g.ManualBan("203.0.113.9", "test manual", probedefense.BanDurationUseDefault); err != nil {
 		t.Fatal(err)
 	}
 	if g.AllowAccept("203.0.113.9:4444") {

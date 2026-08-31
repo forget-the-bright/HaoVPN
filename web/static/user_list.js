@@ -42,17 +42,18 @@
         var tr = document.createElement('tr');
         var ops = '';
         if (u.has_vpn) {
+          // 动态行用 data-* + 表格委托，禁止 innerHTML 写 onclick=（CSP 会拦）
           ops +=
-            '<button type="button" class="btn btn-ghost btn-sm" onclick="exportZip(' + u.id + ',\'' + u.username + '\')">ZIP</button>' +
-            '<button type="button" class="btn btn-ghost btn-sm" onclick="exportYaml(' + u.id + ',\'' + u.username + '\')">YAML</button>' +
-            '<button class="btn btn-ghost btn-sm" onclick="openPolicy(' + u.id + ')">策略</button>' +
-            '<button class="btn btn-ghost btn-sm" onclick="kick(' + u.id + ')">踢线</button>';
+            '<button type="button" class="btn btn-ghost btn-sm" data-act="exportZip" data-id="' + u.id + '" data-user="' + escAttr(u.username) + '">ZIP</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-act="exportYaml" data-id="' + u.id + '" data-user="' + escAttr(u.username) + '">YAML</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-act="openPolicy" data-id="' + u.id + '">策略</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-act="kick" data-id="' + u.id + '">踢线</button>';
         }
         ops +=
-          '<button class="btn btn-ghost btn-sm" onclick="openPassword(' + u.id + ')">改密</button>' +
-          '<button class="btn btn-ghost btn-sm" onclick="toggle(' + u.id + ',' + (u.enabled ? 'true' : 'false') + ')">' +
+          '<button type="button" class="btn btn-ghost btn-sm" data-act="openPassword" data-id="' + u.id + '">改密</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm" data-act="toggle" data-id="' + u.id + '" data-en="' + (u.enabled ? '1' : '0') + '">' +
           (u.enabled ? '禁用' : '启用') + '</button>' +
-          '<button class="btn btn-danger btn-sm" onclick="delUser(' + u.id + ')">删除</button>';
+          '<button type="button" class="btn btn-danger btn-sm" data-act="delUser" data-id="' + u.id + '">删除</button>';
         tr.innerHTML =
           '<td class="text-mono">' + u.id + '</td>' +
           '<td>' + u.username + '</td>' +
@@ -66,6 +67,30 @@
       });
       HaoVPN.renderPager(document.getElementById('pager'), resp.total, limit, listOffset, load);
     }
+
+    /** 属性转义，避免用户名破坏 data-user */
+    function escAttr(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;');
+    }
+
+    // 操作列事件委托（替代 HTML onclick=）
+    document.getElementById('list').addEventListener('click', function (ev) {
+      var btn = ev.target.closest('button[data-act]');
+      if (!btn || !document.getElementById('list').contains(btn)) return;
+      var act = btn.getAttribute('data-act');
+      var id = parseInt(btn.getAttribute('data-id'), 10);
+      var user = btn.getAttribute('data-user') || '';
+      if (act === 'exportZip') exportZip(id, user);
+      else if (act === 'exportYaml') exportYaml(id, user);
+      else if (act === 'openPolicy') openPolicy(id);
+      else if (act === 'kick') kick(id);
+      else if (act === 'openPassword') openPassword(id);
+      else if (act === 'toggle') toggle(id, btn.getAttribute('data-en') === '1');
+      else if (act === 'delUser') delUser(id);
+    });
 
     document.getElementById('fQ').oninput = HaoVPN.debounce(function () { load(0); }, 400);
     document.getElementById('fEnabled').onchange = function () { load(0); };
@@ -206,5 +231,7 @@
     }
 
     syncCreateModeUI();
+    document.getElementById('btnClosePolicy').addEventListener('click', closePolicy);
+    document.getElementById('btnClosePassword').addEventListener('click', closePassword);
     load(0);
   

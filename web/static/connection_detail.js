@@ -89,6 +89,8 @@
     document.getElementById('fQ').oninput = HaoVPN.debounce(loadAccounts, 400);
     document.getElementById('fOnline').onchange = loadAccounts;
     document.getElementById('fEvent').oninput = HaoVPN.debounce(function () { loadEvents(0); }, 400);
+    document.getElementById('btnRefreshAccounts').addEventListener('click', function () { loadAccounts(); });
+    document.getElementById('btnRefreshConnEvents').addEventListener('click', function () { loadEvents(0); });
 
     load();
     setInterval(loadAccounts, 10000);

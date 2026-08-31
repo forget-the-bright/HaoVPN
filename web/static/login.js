@@ -1,7 +1,7 @@
 /**
  * 登录页逻辑：登录、首次强制改密。
- * 从 templates/login.html 抽出，减少内联脚本对 CSP 'unsafe-inline' 的依赖面
- * （当前 CSP 仍允许 unsafe-inline，因其它管理页仍有内联；见 security tls_policy）。
+ * 从 templates/login.html 抽出；须外置脚本以符合 CSP script-src 'self'
+ *（禁止内联 <script> 与 onclick=；见 security/tls_policy.go）。
  */
 (function () {
   'use strict';

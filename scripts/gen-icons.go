@@ -5,6 +5,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"image"
 	"image/color"
 	"image/png"
@@ -14,7 +16,13 @@ import (
 )
 
 func main() {
-	root := `d:\project\private\go\go-vpn`
+	root, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	if filepath.Base(root) == "scripts" {
+		root = filepath.Dir(root)
+	}
 	srcPath := filepath.Join(root, "assets", "haovpn-logo-source.png")
 	f, err := os.Open(srcPath)
 	if err != nil {
@@ -50,6 +58,12 @@ func main() {
 		hi := drawVPNMark(128, v.bg, v.mark)
 		mustWritePNG(filepath.Join(iconsDir, v.name), resizeBilinear(hi, 64))
 	}
+
+	// Web 管理端页签 favicon（从品牌源图缩放，嵌入 web/static 供 embed 打包）
+	webStatic := filepath.Join(root, "web", "static")
+	mustWritePNG(filepath.Join(webStatic, "favicon-32.png"), resizeBilinear(src, 32))
+	mustWritePNG(filepath.Join(webStatic, "favicon-16.png"), resizeBilinear(src, 16))
+	mustWriteICO(filepath.Join(webStatic, "favicon.ico"), []int{16, 32}, src)
 }
 
 // drawVPNMark 绘制「对勾路径 + 卫星节点」：表达「好/通路确认」与 VPN 组网。
@@ -230,5 +244,54 @@ func mustWritePNG(path string, img image.Image) {
 	defer f.Close()
 	if err := png.Encode(f, img); err != nil {
 		panic(err)
+	}
+}
+
+// mustWriteICO 写入含多尺寸 PNG 的 favicon.ico（Vista+ PNG-in-ICO，现代浏览器均支持）。
+func mustWriteICO(path string, sizes []int, src image.Image) {
+	var pngs [][]byte
+	for _, sz := range sizes {
+		img := resizeBilinear(src, sz)
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			panic(err)
+		}
+		pngs = append(pngs, buf.Bytes())
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		panic(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	// ICONDIR
+	_ = binary.Write(f, binary.LittleEndian, uint16(0))
+	_ = binary.Write(f, binary.LittleEndian, uint16(1))
+	_ = binary.Write(f, binary.LittleEndian, uint16(len(pngs)))
+	headerSize := 6 + len(pngs)*16
+	offset := headerSize
+	for i, sz := range sizes {
+		w := byte(sz)
+		if sz >= 256 {
+			w = 0
+		}
+		entry := [16]byte{}
+		entry[0] = w
+		entry[1] = w
+		entry[4] = 1  // planes
+		entry[6] = 32 // bitCount（PNG 压缩时忽略）
+		binary.LittleEndian.PutUint32(entry[8:12], uint32(len(pngs[i])))
+		binary.LittleEndian.PutUint32(entry[12:16], uint32(offset))
+		if _, err := f.Write(entry[:]); err != nil {
+			panic(err)
+		}
+		offset += len(pngs[i])
+	}
+	for _, p := range pngs {
+		if _, err := f.Write(p); err != nil {
+			panic(err)
+		}
 	}
 }

@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>探针防御 · HaoVPN</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/static/favicon-32.png" sizes="32x32">
 </head>
 <body>
   <div class="app-shell">
@@ -23,7 +25,7 @@
         <a class="nav-item" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
       </nav>
       <div class="sidebar-footer">
-        <button type="button" class="btn btn-ghost btn-block btn-sm" onclick="HaoVPN.logout()">退出登录</button>
+        <button type="button" class="btn btn-ghost btn-block btn-sm" data-action="logout">退出登录</button>
       </div>
     </aside>
 
@@ -33,7 +35,7 @@
         <span class="text-muted">公网扫描事件与 IP 封禁</span>
       </header>
       <main class="content">
-        <div class="card">
+        <div class="card" id="banFormSection">
           <h2>当前封禁</h2>
           <div class="toolbar">
             <div class="form-group">
@@ -42,15 +44,48 @@
             </div>
             <div class="form-group">
               <label>原因</label>
-              <input id="banReason" placeholder="可选">
+              <input id="banReason" value="端口探测" placeholder="封禁原因">
             </div>
-            <button type="button" class="btn btn-primary btn-sm" onclick="banIP()">封禁</button>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="loadBlocks()">刷新</button>
+            <div class="form-group">
+              <label>封禁时长</label>
+              <select id="banDurationPreset">
+                <option value="3600">1 小时</option>
+                <option value="21600">6 小时</option>
+                <option value="86400">1 天</option>
+                <option value="259200">3 天</option>
+                <option value="604800" selected>1 周</option>
+                <option value="1209600">2 周</option>
+                <option value="2592000">1 个月</option>
+                <option value="7776000">3 个月</option>
+                <option value="15552000">6 个月</option>
+                <option value="31536000">1 年</option>
+                <option value="63072000">2 年</option>
+                <option value="157680000">5 年</option>
+                <option value="0">永久</option>
+                <option value="custom">自定义</option>
+              </select>
+            </div>
+            <div class="form-group hidden" id="banCustomWrap">
+              <label>自定义时长</label>
+              <div class="inline-fields">
+                <input id="banCustomValue" type="number" min="1" value="7" placeholder="数量">
+                <select id="banCustomUnit">
+                  <option value="60">分钟</option>
+                  <option value="3600">小时</option>
+                  <option value="86400" selected>天</option>
+                  <option value="604800">周</option>
+                  <option value="2592000">月（30 天）</option>
+                  <option value="31536000">年（365 天）</option>
+                </select>
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="btnBanIP">封禁</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshBlocks">刷新</button>
           </div>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
-                <tr><th>IP</th><th>来源</th><th>原因</th><th>特征</th><th>命中</th><th>过期</th><th></th></tr>
+                <tr><th>IP</th><th>来源</th><th>原因</th><th>特征</th><th>命中</th><th>封禁时间</th><th>过期</th><th></th></tr>
               </thead>
               <tbody id="blocks"></tbody>
             </table>
@@ -68,12 +103,12 @@
               <label>特征</label>
               <input id="fSig" placeholder="如 http_get">
             </div>
-            <button type="button" class="btn btn-primary btn-sm" onclick="loadEvents(0)">查询</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btnQueryEvents">查询</button>
           </div>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
-                <tr><th>时间</th><th>IP</th><th>端口</th><th>阶段</th><th>特征</th><th>动作</th></tr>
+                <tr><th>时间</th><th>IP</th><th>端口</th><th>阶段</th><th>特征</th><th>动作</th><th></th></tr>
               </thead>
               <tbody id="events"></tbody>
             </table>

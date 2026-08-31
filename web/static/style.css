@@ -607,6 +607,15 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
 
 .toolbar .form-group { margin: 0; min-width: 140px; }
 
+/* 探针页自定义封禁时长：数字 + 单位并排 */
+.inline-fields {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.inline-fields input { width: 5rem; min-width: 4rem; }
+.inline-fields select { min-width: 7rem; }
+
 .pager {
   display: flex;
   flex-wrap: wrap;

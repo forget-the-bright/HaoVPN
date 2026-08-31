@@ -1,6 +1,6 @@
 # 故障排障
 
-> 按现象查找。更多背景见 [deploy.md](deploy.md)、[meta-plan.md](meta-plan.md)。
+> 按现象查找。更多背景见 [deploy.md](deploy.md)、[meta-plan.md](archive/meta-plan.md)。
 
 ---
 
@@ -22,7 +22,7 @@
 
 | 现象 | 可能原因 | 处理 |
 |------|----------|------|
-| TLS 握手失败 | 地址/端口错、证书不信任 | 见 [deploy.md § TLS 证书](deploy.md) |
+| 探针页点「封禁」控制台 CSP 报错、Network 无请求 | 模板残留 `onclick="banIP()"`，`script-src 'self'` 拦截内联事件 | **升级服务端**（embed 模板+JS）：按钮由 `security_probe.js` 绑定；勿在 HTML 写 `onclick=` |
 | 连接超时 | frp 未通、防火墙拦 8443 | 检查 frp；测 8443 端口 |
 | 认证失败 | 账号/密码错、账号禁用、IP 锁定、**须先改密** | 核对账号；须改密时先在 Web 改密再连隧道；锁定提示「登录失败次数过多，请稍后再试」——客户端应**停止自动重连**（`IsFatalHandshakeError`）；WebUI 探针页可见 `auth_failed` |
 | 提示「该账号已在其他设备在线」 | `session_policy=reject_second` 且旧会话仍在；异公网 IP 第二端；或底层黑洞导致服务端半死会话未释放 | 同公网 IP：`reconnect_grace_sec` 顶替；半死静默约 8～20s 后亦可顶替（须升级服务端）；**曾连通过**的客户端持续重试；首次登录最多约 40 次。异设备先退旧端或改 `kick_previous`。查服务端日志 `grace 顶替` / `拒绝第二端 … same_host= stale_peer=` |
@@ -174,6 +174,9 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 | `account_online` | 同账号第二端被拒 | 旧端先登出，或改 `vpn.session_policy: kick_previous` |
 | 合法客户端被封 | 误封 / 扫描同出口 IP | 探针页解封；调大阈值或把特征加入 `ignore_signatures_for_ban` |
 | 写了 `enabled: false` 仍拦已封 IP | 封禁表始终生效 | 预期行为；解封或清 `ip_blocks` |
+| 浏览器页签仍是默认地球图标 | Web 静态资源 `go:embed` 进二进制，改 `web/static` 后未重建 | `.\scripts\build-local.ps1` 后重启 server；源图变更时 `go run scripts/gen-icons.go` 再生 favicon |
+| 手动封禁只能 1 小时 / 无时长选项 | 旧版 UI 固定用 `ban_duration_sec` | 升级服务端；探针页可选 1 小时～5 年 / 永久 / 自定义（默认 1 周）；API 见 `POST /api/v1/security/blocks` 的 `duration_sec` |
+| 封禁返回 400「duration_sec…」 | 时长 &lt; 60 秒或超过 10 年 | 选预设或自定义 ≥ 1 分钟；永久选「永久」（`duration_sec: 0`） |
 
 ---
 
@@ -187,5 +190,5 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 
 ---
 
-*最后更新：2026-08-29 · 探针事件排障*
+*最后更新：2026-08-31 · WebUI favicon + 手动封禁时长*
 

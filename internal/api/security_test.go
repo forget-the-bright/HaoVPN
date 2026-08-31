@@ -14,6 +14,7 @@ import (
 	"haovpn/internal/auth"
 	"haovpn/internal/config"
 	"haovpn/internal/persist"
+	"haovpn/internal/probedefense"
 	"haovpn/internal/readmodel"
 	"haovpn/internal/sessionmgr"
 )
@@ -208,5 +209,86 @@ func TestLogsAPIRedactsSensitive(t *testing.T) {
 	}
 	if !strings.Contains(body, "[REDACTED]") {
 		t.Fatalf("logs API 应含 [REDACTED]: %s", body)
+	}
+}
+
+// newTestAPIServerWithProbe 构造带探针 Guard 的测试 API 服务。
+func newTestAPIServerWithProbe(t *testing.T) (*api.Server, *auth.Service, *persist.Store) {
+	t.Helper()
+	store, err := persist.Open(filepath.Join(t.TempDir(), "secblocks.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authSvc := auth.New(store, 5, 60, 3600)
+	if err := ensureTestAdmin(store, authSvc, "admin", "SecureAdmin123!"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.ServerConfig{Server: config.ServerSection{Listen: "127.0.0.1:8443"}, API: config.APISection{Port: 8080}}
+	srv := api.NewServer(cfg, store, authSvc, audit.New(store), sessionmgr.New(store), testVPNService(store, nil, cfg), nil, time.Now(), "pk")
+	srv.SetProbeGuard(probedefense.New(store, probedefense.DefaultConfig()))
+	return srv, authSvc, store
+}
+
+// postSecurityBlock 带 CSRF 的手动封禁 POST。
+func postSecurityBlock(t *testing.T, srv *api.Server, authSvc *auth.Service, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	token, _, _ := authSvc.Login("admin", "SecureAdmin123!", "127.0.0.1")
+	csrf := authSvc.GetCSRF(token)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/security/blocks", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", csrf)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	return w
+}
+
+// TestSecurityBlocksManualBanDuration POST 手动封禁支持 duration_sec：永久、1 周、非法值。
+func TestSecurityBlocksManualBanDuration(t *testing.T) {
+	srv, authSvc, store := newTestAPIServerWithProbe(t)
+	defer store.Close()
+
+	const week = 7 * 24 * 3600
+	cases := []struct {
+		name       string
+		body       string
+		ip         string
+		status     int
+		wantPerm   bool
+		wantExpiry bool
+	}{
+		{"permanent", `{"ip":"198.51.100.50","reason":"test","duration_sec":0}`, "198.51.100.50", http.StatusOK, true, false},
+		{"one_week", `{"ip":"198.51.100.51","reason":"test","duration_sec":604800}`, "198.51.100.51", http.StatusOK, false, true},
+		{"negative", `{"ip":"198.51.100.52","reason":"test","duration_sec":-2}`, "", http.StatusBadRequest, false, false},
+		{"too_short", `{"ip":"198.51.100.53","reason":"test","duration_sec":30}`, "", http.StatusBadRequest, false, false},
+		{"over_max", `{"ip":"198.51.100.54","reason":"test","duration_sec":999999999}`, "", http.StatusBadRequest, false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := postSecurityBlock(t, srv, authSvc, tc.body)
+			if w.Code != tc.status {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if tc.status != http.StatusOK {
+				return
+			}
+			b, err := store.GetActiveIPBlock(tc.ip)
+			if err != nil || b == nil {
+				t.Fatalf("expected block for %s", tc.ip)
+			}
+			if tc.wantPerm && b.ExpiresAt != nil {
+				t.Fatal("permanent ban should have nil expires_at")
+			}
+			if tc.wantExpiry && b.ExpiresAt == nil {
+				t.Fatal("timed ban should have expires_at")
+			}
+			if tc.name == "one_week" {
+				remain := time.Until(*b.ExpiresAt)
+				if remain < time.Duration(week-10)*time.Second || remain > time.Duration(week+10)*time.Second {
+					t.Fatalf("expires_at ~1 week, got remain %v", remain)
+				}
+			}
+		})
 	}
 }

@@ -54,5 +54,7 @@
       }
     }, 400);
 
+    document.getElementById('btnRefreshLogs').addEventListener('click', function () { loadLogs(); });
+
     loadLogs();
   

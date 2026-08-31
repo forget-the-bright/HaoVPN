@@ -205,7 +205,7 @@ netutil, winnet, paginate, security, config, fileutil, timeutil, readmodel  # �
 - **跨平台自启**：Linux XDG desktop + systemd；macOS LaunchAgent/Daemon；生成物 `gen.go` 可测；Disable/Stop 不再伪成功。
 - **叶子边界**：`tun.parseCIDR` 不导出；删 persist LAN 薄包装；`security.Redact` 保留为防循环委托。
 - **API**：拆 `handler_peers.go`；`writeOKWith`/`writePendingApply`。
-- **安全**：公开 health 仅 `ok`+`uptime_sec`；默认口令测试对齐 `changeme12`；登录脚本外置 `web/static/login.js`（CSP 仍含 unsafe-inline，其它页未迁完）。
+- **安全**：公开 health 仅 `ok`+`uptime_sec`；默认口令测试对齐 `changeme12`；登录与管理页脚本外置 `web/static/*.js`；CSP `script-src 'self'`（**禁止** HTML `onclick=`；仅 style 仍可 `unsafe-inline`，见 [security-hardening.md](security-hardening.md) §7）。
 
 ## 第十六轮要点（2026-08-30）
 

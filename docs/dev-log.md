@@ -6,7 +6,65 @@
 
 ---
 
-*最后更新：2026-08-30 · 文档治理*
+*最后更新：2026-08-31 · WebUI favicon + 手动封禁时长*
+
+---
+
+## 2026-08-31 · WebUI：favicon + 手动封禁可选时长
+
+### 动机
+
+管理端浏览器页签无 icon；探针页手动封禁只能填 IP/原因，时长固定为服务端 `ban_duration_sec`（默认 1 小时），无法选永久或自定义。
+
+### 改动
+
+- **Favicon**：`scripts/gen-icons.go` 生成 `web/static/favicon.ico` / `favicon-32.png`；9 个模板 `<head>` 增加 `rel="icon"`；`webui_csp_test` 回归。
+- **后端**：`ManualBan(ip, reason, durationSec)` — `-1` 用配置默认、`0` 永久、`>0` 指定秒；`POST /api/v1/security/blocks` 可选 `duration_sec`；审计 metadata 记录时长。
+- **探针 UI**：预设 1 小时～5 年 / 永久 / 自定义（默认 **1 周**）；封禁列表增「封禁时间」列；事件行「封禁」预填 IP；Toast 反馈。
+- **测试**：`probedefense/manual_ban_test.go`、`api/security_test.go` `TestSecurityBlocksManualBanDuration`。
+
+### 验证
+
+- `go test ./internal/probedefense/... ./internal/api/... -count=1` 通过。
+- 改 static 后须 `.\scripts\build-local.ps1` 重建 server 后浏览器验收 favicon 与封禁表单。
+
+---
+
+## 2026-08-31 · 文档治理：去冗、纠偏、浅分层
+
+### 动机
+
+`docs/` 平铺堆发版草稿与存档/蓝图，入口与路径易乱；`release-notes-*-DRAFT` 与 `VERSION`/`dev-log` 双源；architecture 第十五轮仍写 CSP 含 script unsafe-inline（已不符）。
+
+### 改动
+
+- **删除** `release-notes-0.1.1-DRAFT.md`、`release-notes-0.1.2-DRAFT.md`；[versioning.md](versioning.md) 规定发版只写 VERSION + dev-log +（可选）GitHub Release。
+- **浅分层**：活文档仍在 `docs/` 根；`meta-plan` → [archive/meta-plan.md](archive/meta-plan.md)；`mobile-client-plan` → [plans/mobile-client-plan.md](plans/mobile-client-plan.md)。
+- **索引**：重写 [README.md](README.md) 放置规则；更新记忆 / 根 README / development-principles / deploy / troubleshooting / `.cursor/rules`。
+- **纠偏**：[architecture.md](architecture.md) 第十五轮 CSP 改为 `script-src 'self'` + 禁 HTML `onclick=`。
+
+### 验证
+
+全仓无 `docs/meta-plan.md` / `docs/mobile-client-plan.md` / `release-notes-0.1.*` 现行死链（历史 dev-log 条目内旧路径保留为当时记录）。
+
+---
+
+## 2026-08-31 · WebUI：CSP 拦截 onclick= 导致封禁等按钮失效
+
+### 动机
+
+第十七轮收紧 `script-src 'self'` 后，模板仍残留 `onclick="banIP()"` 等内联事件；浏览器直接拦截，探针页「封禁」无 Network 请求。同类问题波及退出登录与多页按钮。
+
+### 改动
+
+- 全部 `templates/*.html` 去掉 `onclick=`；侧栏退出用 `data-action="logout"`（`app.js` 绑定）。
+- 各页 `static/*.js` 用 `addEventListener` 绑定；账号列表改为 `data-act` 委托。
+- 回归：`TestEmbeddedTemplatesNoInlineEventHandlers`、`TestEmbeddedStaticJSNoOnclickHTMLLiteral`、`TestWebUIButtonIDsBoundInPageScript`、`TestWebUIAuthPagesExternalScripts`、`TestSecurityPageExternalScript`；hardening / troubleshooting / web README 注明。
+- 加宽 CSP 回归：模板扫全部 `on*=`、static 禁 `onclick=` 字面量（注释除外）、`type=button` 的 id 须在页脚本出现、登录后多页 HTTP 烟测。
+
+### 验证
+
+`go test ./internal/api/ -run "CSP|Onclick|SecurityPage|Inline|WebUI|EventHandler|ButtonID|AuthPages|StaticJS" -count=1` 通过。须**重编并部署服务端**（embed）。
 
 ---
 

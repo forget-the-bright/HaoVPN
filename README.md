@@ -102,4 +102,3 @@ Windows 也可用 CLI：`haovpn-client.exe --service install`。
 | [docs/deploy.md](docs/deploy.md) | 部署、自启、验收 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | 排障 |
 | [docs/dev-log.md](docs/dev-log.md) | 开发进度（唯一） |
-

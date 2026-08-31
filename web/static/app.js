@@ -178,6 +178,19 @@
     URL.revokeObjectURL(a.href);
   }
 
+  /**
+   * 绑定 data-action 声明式控件（禁止 HTML onclick=：CSP script-src 'self' 会拦截内联事件）。
+   * 当前支持：data-action="logout"。
+   */
+  function bindDataActions() {
+    document.querySelectorAll('[data-action="logout"]').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        e.preventDefault();
+        logout();
+      });
+    });
+  }
+
   window.HaoVPN = {
     api: api,
     toast: toast,
@@ -219,6 +232,7 @@
         b.className = 'btn btn-ghost btn-sm';
         b.textContent = label;
         b.disabled = !!disabled;
+        // 用属性赋值而非 HTML onclick=，兼容 CSP
         b.onclick = function () { onChange(nextOffset); };
         el.appendChild(b);
       }
@@ -236,4 +250,7 @@
       };
     }
   };
+
+  // app.js 置于 </body> 前加载，此时侧栏等 DOM 已就绪
+  bindDataActions();
 })();

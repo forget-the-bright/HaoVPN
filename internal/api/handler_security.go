@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -116,8 +117,9 @@ func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			IP     string `json:"ip"`
-			Reason string `json:"reason"`
+			IP          string `json:"ip"`
+			Reason      string `json:"reason"`
+			DurationSec *int   `json:"duration_sec"`
 		}
 		if !decodeJSONBody(w, r, &body) {
 			return
@@ -135,18 +137,39 @@ func (s *Server) handleSecurityBlocks(w http.ResponseWriter, r *http.Request) {
 		if reason == "" {
 			reason = "管理员手动封禁"
 		}
+		durationSec := probedefense.BanDurationUseDefault
+		if body.DurationSec != nil {
+			durationSec = *body.DurationSec
+			if err := probedefense.ValidateManualBanDuration(durationSec); err != nil {
+				writeAPIError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
 		if s.probeGuard == nil {
 			writeAPIError(w, http.StatusServiceUnavailable, "探针防御未启用")
 			return
 		}
-		if err := s.probeGuard.ManualBan(ip, reason); err != nil {
+		if err := s.probeGuard.ManualBan(ip, reason, durationSec); err != nil {
 			writeInternalError(w, err)
 			return
 		}
-		s.audit.Log(&se.UserID, "probe_ban_manual", "ip", nil, s.clientIP(r), map[string]string{
+		auditMeta := map[string]string{
 			"ip": ip, "reason": reason,
-		})
-		writeOKWith(w, map[string]any{"ip": ip})
+		}
+		if body.DurationSec != nil {
+			auditMeta["duration_sec"] = fmt.Sprintf("%d", durationSec)
+			if durationSec == 0 {
+				auditMeta["permanent"] = "true"
+			}
+		} else {
+			auditMeta["duration_sec"] = "default"
+		}
+		s.audit.Log(&se.UserID, "probe_ban_manual", "ip", nil, s.clientIP(r), auditMeta)
+		resp := map[string]any{"ip": ip}
+		if body.DurationSec != nil {
+			resp["duration_sec"] = durationSec
+		}
+		writeOKWith(w, resp)
 	}
 }
 

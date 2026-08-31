@@ -408,6 +408,20 @@
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
+    // 应用生效：btnApplyPeersBanner / btnApplyPeers（须在源码出现 id，供 CSP 回归测绑定）
+    ['btnApplyPeersBanner', 'btnApplyPeers'].forEach(function (id) {
+      var btn = document.getElementById(id);
+      if (btn) {
+        btn.addEventListener('click', function () { applyPeers(); });
+      }
+    });
+    document.getElementById('btnSavePeersPolicy').addEventListener('click', function () { savePeersPolicy(); });
+    document.getElementById('btnRefreshRegistry').addEventListener('click', function () { loadRegistry(); });
+    document.getElementById('btnAddRoute').addEventListener('click', function () { addRoute(); });
+    document.getElementById('btnRefreshRoutes').addEventListener('click', function () { loadRoutes(); });
+    document.getElementById('btnAddAccess').addEventListener('click', function () { addAccess(); });
+    document.getElementById('btnRefreshAccess').addEventListener('click', function () { loadAccess(); });
+
     (async function() {
       try {
         await HaoVPN.refreshCSRF();

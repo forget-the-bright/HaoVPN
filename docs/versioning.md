@@ -23,12 +23,15 @@
 | **开发者（仓库所有者）** | ✅ 唯一有权修改 |
 | **AI / 自动化助手** | ❌ **禁止修改** |
 
-发版流程（仅开发者手动执行）：
+## 发版流程（仅开发者手动执行）
 
 1. 编辑根目录 `VERSION`（如 `0.1.0-dev` → `0.1.0`）
 2. 运行 `.\scripts\build-release.ps1` 生成 `dist/`
-3. 自行 `git commit`（见 [development-principles.md](development-principles.md) Git 规则）
-4. 在 [dev-log.md](dev-log.md) 记录发版说明
+3. 自行 `git commit` / tag（见 [development-principles.md](development-principles.md) Git 规则）
+4. 在 [dev-log.md](dev-log.md) **追加一条**发版要点（进度唯一来源）
+5. （可选）把同一段说明粘贴到 **GitHub Release** 正文
+
+**禁止**在 `docs/` 下再新增 `release-notes-*-DRAFT.md`（已废止；避免与 VERSION / dev-log 双源）。
 
 ## 构建时如何注入版本
 
@@ -43,8 +46,9 @@ go build -ldflags "-X main.version=<VERSION文件内容> -X main.commit=<git短h
 - **不得**修改、提交、建议覆盖 `VERSION` 文件内容。
 - **不得**在代码中将版本写死为常量（须读构建注入或运行时读 `VERSION`）。
 - **不得**把 `FyneApp.toml` / `winres.json` 当作版本权威来源；改版本只改根目录 `VERSION`，再跑构建脚本同步。
+- **不得**在 docs 新建发版说明草稿文件。
 - 若用户要求「发版」，AI 只应提示开发者**亲自**改 `VERSION` 并执行构建脚本。
 
 ---
 
-*最后更新：2026-08-30 · 文档治理（与 docs/README 约定对齐）*
+*最后更新：2026-08-31 · 废止 docs release-notes DRAFT*

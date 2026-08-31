@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>审计日志 · HaoVPN</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/static/favicon-32.png" sizes="32x32">
 </head>
 <body>
   <div class="app-shell">
@@ -23,7 +25,7 @@
         <a class="nav-item" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
       </nav>
       <div class="sidebar-footer">
-        <button type="button" class="btn btn-ghost btn-block btn-sm" onclick="HaoVPN.logout()">退出登录</button>
+        <button type="button" class="btn btn-ghost btn-block btn-sm" data-action="logout">退出登录</button>
       </div>
     </aside>
 
@@ -47,7 +49,7 @@
                 <option value="200">200</option>
               </select>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" onclick="load(0)">查询</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btnQueryAudit">查询</button>
           </div>
           <div class="table-wrap">
             <table class="data-table">

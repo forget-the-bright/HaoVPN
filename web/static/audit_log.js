@@ -64,5 +64,6 @@
     }
 
     document.getElementById('fAction').oninput = HaoVPN.debounce(function () { load(0); }, 400);
+    document.getElementById('btnQueryAudit').addEventListener('click', function () { load(0); });
     load(0);
   
