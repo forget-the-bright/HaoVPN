@@ -224,16 +224,6 @@ func addrsContainIPv4(addrs []net.Addr, want net.IP) bool {
 	return false
 }
 
-// FindAdapterIfIndex 按 TUN 配置名解析 ifIndex（与 InterfaceIndex 同义）。
-//
-// CODEMAP 推荐此名表达「找网卡」；实现委托 InterfaceIndex（LUID→ByName→PS）。
-func FindAdapterIfIndex(name string) (int, error) {
-	return InterfaceIndex(name)
-}
-
-// findAdapterIfIndexPS 通过 PowerShell 按 Name 或 Wintun/品牌池描述查找网卡 ifIndex。
-//
-// 找网卡模板唯一源：PSSnippetAssignAdapterIf。
 func findAdapterIfIndexPS(name string) (int, error) {
 	ps := PSSnippetAssignAdapterIf(name) + `
 if (-not $if) { throw 'adapter not found' }

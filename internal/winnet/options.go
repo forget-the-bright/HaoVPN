@@ -32,9 +32,3 @@ func currentOptions() Options {
 func UseIPHelperEnabled() bool {
 	return currentOptions().UseIPHelper
 }
-
-// Shutdown 进程退出前挂点（历史曾关闭常驻 PowerShell；该加速面已删除）。
-//
-// 为何保留：Engine.Stop / GUI 退出路径已调用；未来若需进程级清理（缓存、子进程）可挂此函数。
-// 当前：空操作，无副作用；禁止再引入常驻 powershell 主机。
-func Shutdown() {}

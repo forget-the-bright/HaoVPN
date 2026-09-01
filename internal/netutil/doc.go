@@ -7,18 +7,26 @@
 // 关键文件：
 //   validate_ip.go — ValidateIPOrCIDR（单 IP 或 CIDR 校验，API/配置/guard 共用）
 //   cidr.go — ValidateCIDRList、SplitCIDR、ParseCIDRToV4Mask、ValidateIPInSubnet、ValidateNoFullTunnel
-//   addr.go — HostFromAddr、NormalizeIPv4、MergeDedupTrimNonEmpty、DedupTrimNonEmpty…
+//   addr.go — HostFromAddr、NormalizeIPv4、MergeDedupTrimNonEmpty、DedupTrimNonEmpty、
+//             IsLimitedBroadcast、IsTUNNoiseDst、IsTUNNoiseForLog、IsTUNNoiseSource
 //   source_ip.go — CheckSourceIPAllowed（wrap dialerr.ErrSourceDenied；tunnel 握手与 probedefense 直接调用，无薄包装）
 //   hostport.go — SplitHostPortLoose、SplitRemoteAddr（探针/握手共用远端拆分）
 //   gateway.go — InferGatewayFromVPNIP、InferVPNSubnetHint、ResolveGateway、IsLoopbackHost
 //   strings.go — TrimLower（单串 Trim+小写；列表见 DedupTrimNonEmpty）
 //   listen.go — 管理口监听地址合并与校验
 //   ipmatch.go — IPMatchesRules、ParseCIDROrHost、NormalizeCIDROrHost、NormalizeCIDRList、
-//                AppendCIDRUnique、ForbidDefaultRoute、CIDRListContainsIP
+//                AppendCIDRUnique、ForbidDefaultRoute、CIDRListContainsIP、
+//                IPInAnyNet、VPNIPOrInNets、MergeDNSIntoAllowedIPs、ParseCIDRListToNets
 //   constants.go — MTU/心跳/重连等传输默认值（保留天数在 config.DefaultRetentionDays）
+//   probe_cidr.go — ProbeIPForCIDR（ICS 出站 PS 探测 IP）
+//   ipv4_ics.go — IPv4IsICSPrivate、IPv4AddrsToRemove*、ICSPrivateIPv4Wildcard、PreferSkipAsSourceNeedsUpdate
+//   dns_poison.go — FilterDNSServersPoison、DNSServersPoisoned
+//   iface_name.go — IsVirtualInterfaceName、InterfaceNameLooksLikeTUN、VirtualInterfaceSkipPattern
+//   parse_lans.go — ParseLocalLANsField、ValidateLocalLANsList
 //
-// 上游：config、security、tunnel、netstack、vpnaccount、clientapp、serverapp、api、paginate（via api）。
+// 上游：config、security、tunnel、netstack、vpnaccount、clientapp、serverapp、api、paginate（via api）、sessionmgr。
 // 下游：标准库 net；dialerr（源拒哨兵）；不依赖 config/tun/netstack/persist。
 // 并发：纯函数无状态，可并行调用。
-// 不变量：CIDR/地址纯函数仅在本包；广告 LAN 校验不经 persist。
+// 不变量：CIDR/地址纯函数仅在本包；广告 LAN 校验不经 persist；
+// 分流目的过滤公式 VPNIPOrInNets 供客户端上送与服务端 dstAllowed 共用，禁止双包各写一套。
 package netutil

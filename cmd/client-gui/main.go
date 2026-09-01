@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"haovpn/internal/autostart"
 	"haovpn/internal/clientapp"
 	"haovpn/internal/clientgui"
 	"haovpn/internal/config"
@@ -100,7 +99,7 @@ func main() {
 //
 // 返回 true：已停止服务并应继续 Acquire；false：已向用户说明并应结束 main。
 func handleOccupiedInstance() bool {
-	_, running, _, err := autostart.ServiceStatus()
+	_, running, _, err := clientapp.ServiceAutostartStatus()
 	if err == nil && running {
 		act := clientgui.AskServiceTakeover()
 		if act == clientgui.ServiceTakeoverKeep {
@@ -117,6 +116,6 @@ func handleOccupiedInstance() bool {
 		}
 		return true
 	}
-	clientgui.ShowAlreadyRunning(singleinstance.AlreadyRunningMessage())
+	clientgui.ShowAlreadyRunning(clientapp.SingleInstanceUserMessage(false))
 	return false
 }

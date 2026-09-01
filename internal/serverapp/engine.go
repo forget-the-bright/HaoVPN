@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"context"
 	"time"
 
 	"haovpn/internal/config"
@@ -77,7 +78,7 @@ func (e *Engine) Run() error {
 		logger.Fatal("TUN/netstack 启动失败: %v", err)
 	}
 	if tns.ns != nil {
-		defer func() { _ = tns.ns.Teardown() }()
+		defer func() { _ = tns.ns.Teardown(context.Background()) }()
 	}
 	if tns.tunDev != nil {
 		defer func() { _ = tns.tunDev.Close() }()

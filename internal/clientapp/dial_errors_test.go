@@ -40,20 +40,20 @@ func TestFormatDialErrorClosedBeforeTLS(t *testing.T) {
 	}
 }
 
-func TestIsFatalDialErrorKinds(t *testing.T) {
+func TestShouldStopReconnectOnDialKinds(t *testing.T) {
 	if !autherr.IsIPBanned(dialerr.ErrIPBanned) {
 		t.Fatal("expected banned dial error")
 	}
 	if !clientapp.IsFatalHandshakeError(dialerr.ErrIPBanned) {
 		t.Fatal("IP banned should be fatal handshake")
 	}
-	if !clientapp.IsFatalDialError(dialerr.ErrPlaintextBeforeTLS) {
+	if !clientapp.ShouldStopReconnectOnDial(dialerr.ErrPlaintextBeforeTLS) {
 		t.Fatal("plaintext before tls should be fatal dial")
 	}
-	if !clientapp.IsFatalDialError(dialerr.ErrSourceDenied) {
+	if !clientapp.ShouldStopReconnectOnDial(dialerr.ErrSourceDenied) {
 		t.Fatal("source denied should be fatal dial")
 	}
-	if clientapp.IsFatalDialError(dialerr.ErrClosedBeforeTLS) {
+	if clientapp.ShouldStopReconnectOnDial(dialerr.ErrClosedBeforeTLS) {
 		t.Fatal("closed-before-tls should allow reconnect")
 	}
 	if autherr.IsIPBanned(errors.New("other")) {

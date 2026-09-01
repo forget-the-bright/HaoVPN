@@ -6,7 +6,6 @@ import (
 
 	"fyne.io/fyne/v2"
 
-	"haovpn/internal/autostart"
 	"haovpn/internal/clientapp"
 	"haovpn/internal/config"
 	"haovpn/internal/logger"
@@ -23,11 +22,11 @@ func (u *uiApp) configMenuItem() *fyne.MenuItem {
 	minItem := fyne.NewMenuItem("无窗口模式（仅托盘）", func() { u.toggleStartMinimized() })
 	minItem.Checked = u.cfg.GUI.StartMinimized
 
-	logonOn, _, _ := autostart.LogonStatus()
+	logonOn, _, _ := clientapp.LogonAutostartStatus()
 	logonItem := fyne.NewMenuItem("开机自启（登录后起本程序）", func() { u.toggleLogonAutostart() })
 	logonItem.Checked = logonOn
 
-	inst, _, _, _ := autostart.ServiceStatus()
+	inst, _, _, _ := clientapp.ServiceAutostartStatus()
 	svcItem := fyne.NewMenuItem("开机自启（服务，无托盘）", func() { u.toggleServiceAutostart() })
 	svcItem.Checked = inst
 
@@ -92,9 +91,9 @@ func (u *uiApp) toggleLogonAutostart() {
 	if !u.requireAdmin("开机自启（登录后）须以管理员运行", u.appendLog) {
 		return
 	}
-	on, _, _ := autostart.LogonStatus()
+	on, _, _ := clientapp.LogonAutostartStatus()
 	if on {
-		if err := autostart.LogonDisable(); err != nil {
+		if err := clientapp.LogonAutostartDisable(); err != nil {
 			u.appendLog("取消登录自启失败: " + err.Error())
 			return
 		}
@@ -102,7 +101,7 @@ func (u *uiApp) toggleLogonAutostart() {
 		u.refreshTrayMenu()
 		return
 	}
-	exe, err := resolveGUIExe()
+	exe, err := clientapp.ResolveClientExecutable()
 	if err != nil {
 		u.appendLog("解析程序路径失败: " + err.Error())
 		return
@@ -111,7 +110,7 @@ func (u *uiApp) toggleLogonAutostart() {
 	if err != nil {
 		cfgPath = u.configPath
 	}
-	if err := autostart.LogonEnable(exe, cfgPath); err != nil {
+	if err := clientapp.LogonAutostartEnable(exe, cfgPath); err != nil {
 		u.appendLog("启用登录自启失败: " + err.Error())
 		return
 	}
@@ -123,9 +122,9 @@ func (u *uiApp) toggleServiceAutostart() {
 	if !u.requireAdmin("服务开机自启须以管理员运行", u.appendLog) {
 		return
 	}
-	inst, _, _, _ := autostart.ServiceStatus()
+	inst, _, _, _ := clientapp.ServiceAutostartStatus()
 	if inst {
-		if err := autostart.ServiceDisable(); err != nil {
+		if err := clientapp.ServiceAutostartDisable(); err != nil {
 			u.appendLog("卸载服务失败: " + err.Error())
 			return
 		}
@@ -142,7 +141,7 @@ func (u *uiApp) toggleServiceAutostart() {
 		u.appendLog("保存服务凭据失败: " + err.Error())
 		return
 	}
-	exe, err := resolveGUIExe()
+	exe, err := clientapp.ResolveClientExecutable()
 	if err != nil {
 		u.appendLog("解析程序路径失败: " + err.Error())
 		return
@@ -151,7 +150,7 @@ func (u *uiApp) toggleServiceAutostart() {
 	if !startNow {
 		u.appendLog("当前界面已连接：已安装服务为开机自启，未立即启动（避免抢锁）。重启后由服务接管。")
 	}
-	if err := autostart.ServiceEnable(exe, startNow); err != nil {
+	if err := clientapp.ServiceAutostartEnable(exe, startNow); err != nil {
 		u.appendLog("启用服务失败: " + err.Error())
 		return
 	}

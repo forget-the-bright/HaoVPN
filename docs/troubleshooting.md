@@ -36,12 +36,17 @@
 | 能 ping 网关 / AllowedIPs LAN，不能 ping 其他客户端 VPN IP | **默认设计**：横向隔离；或未点「应用生效」；或服务端未直转对端会话 | 控制台 `/peers`：开「全部互访」、加**双向**白名单，或配托管路由（via 下一跳在服务端放行）；改完后点 **应用生效** 踢线刷新；升级含 hub 直转的服务端 |
 | 托盘「本机路由」只有 VPN 子网 /「无对端托管」但日志已加 `192.168.x.0/24` | 旧版菜单只列 peer 托管，不列 NAT AllowedIPs；或未升级客户端 | **升级 GUI**：托盘「分流」栏应显示工控段；「无对端托管」仅表示无 `peer_routes`，不等于没装工控路由 |
 | 托管路由不生效 / ping LAN 得「来自 via：无法访问目标网」 | hub 已送到 via，但 via 未开出口或 SNAT 失败；或未配 `local_lans`；或托管路由「失效」 | 家里客户端配 `local_lans` 并以管理员连接；日志 `via_exit_setup ok` / `ICS 已启用` / `SkipAsSource`；控制台注册表有行；点「应用生效」；勿写 ICS 网段进 `local_lans` |
+| 多 `local_lans` 只有部分通 / 后配的网段不通 | Windows ICS **同一时间只能共享一块出站网卡**；旧版 per-LAN 反复 Enable 会覆盖；异网卡网段本就不会生效 | **升级**：ICS 整表只 Enable 一次；同首网卡多段一并出口；异网卡跳过。连接后主窗状态/日志 `ics_multi_nic` + `icsHint`/`skipped_lans`（握手已上报全部 `local_lans`，**新客户端不再** ICS 后 sync）。处理：网段接到同一网卡/路由，或 Pro+WinNAT，或配 `windows.outbound_interface` / `nat.outbound_interface`（仅 ICS） |
+| `local_lans` 瞎写仍能点连接 / 非法项被静默丢掉 | 旧版 `ValidLANCIDRs` 丢弃无效行且 Validate 不查 | **升级**：`ValidateLocalLANsList` + `ClientConfig.Validate` 硬挡；登录页红字 |
+| 无本机地址的网段走哪块网卡 | ICS 自动：同网段 IP → 专用路由 → **默认网关** | 日志 `lan_egress default_route if=… cidr=…`；要固定网卡则配 `outbound_interface`（仅 ICS） |
+| 注册表有异网卡网段 / 可建托管但不通 | 握手上报全部 `local_lans`（对齐 2cdc5e6，新客户端**不再** ICS 后 sync）；异网卡段可能无法作 via 出口 | 看客户端 `skipped_lans` / `icsHint`；收窄 `local_lans` 为确有本机 IP 的网段；旧客户端若仍发 sync 则服务端 `lan_registry_sync applied` + prune/Kick（勿 Kick via 自己） |
 | 托管路由一直「失效」 | via 离线，或注册表无匹配 dest（未上报 / 已下线清空） | via 保持在线且 `local_lans` 含该 dest；换机后须重登上报 |
 | 未配 local_lans 却想共享 LAN | 能力默认关闭 | 在 `client.yaml` 或 GUI「本地网段」填写 CIDR |
 | 服务端狂刷 `丢弃伪造源 IP`（`192.168.137.1` / 家用 LAN） | via/ICS 把非 VPN 源灌进隧道；旧服务端只认 VPN IP | **升级服务端+客户端**：ExitLANs 放行已上报 `local_lans` 回程；客户端过滤非 VPN/非 local_lans 源；广播改 DEBUG。勿把 ICS `192.168.137.0/24` 写进 `local_lans` |
+| 重连后服务端狂刷 `丢弃越权目的 IP`（公网 DNS/CDN/`192.168.31.1`）；客户端仍正常 | 分流下 OS 经 TUN 注入噪声；旧客户端只验源不验目的；越权 WARN 无限流 | **升级双方**：客户端 `shouldUploadTUN` 滤 dst∈AllowedIPs；服务端越权 WARN 10s 限频+`drops=`；`vpn.dns_servers` 以 /32 并入 AllowedIPs。勿当鉴权失败 |
 | ExitLAN 回程不能到对端 VPN IP / 被横向隔离挡住 | 本机不是任何托管路由的 via，或未点「应用生效」 | 仅 **via** 会话才允许 ExitLAN→对端 VPN 旁路；在 `/peers` 配托管路由并以本账号为 via，再「应用生效」；`local_lans` 须 RFC1918 且 ≥/16 |
 | `lan_cidr_reject` / 注册表无行 | local_lans 过宽（如 `/8`）或非私网 | 改为如 `192.168.x.0/24`；查服务端 Warn 日志 |
-| 家/本机能连 VPN，ping 对端 VPN IP 通，但不通服务端 NAT（如 `192.168.3.1`），且开了 local_lans/ICS | ICS 在 TUN 挂 `192.168.137.1` 后 **Windows 错选发包源** | **升级客户端**：ICS 后对非 VPN 地址 `SkipAsSource`，并重装 AllowedIPs；日志 `本机发包源优先 10.88.x.x`。`Get-NetIPAddress` 看 137 地址应为 SkipAsSource |
+| 家/本机能连 VPN，开了 local_lans/ICS 后不通服务端 NAT（如 `192.168.3.1`），服务端狂刷 `replay attack detected` | **已确认根因**：ICS 后客户端 post-auth `lan_registry_sync` → 服务端 Replace/Prune/Kick 与刚打开的数据面交织（`2cdc5e6` 本无此帧；去掉 sync 后现场恢复）。旁路误判曾堆 `defer_dns` / peer_silent / PreferVPN#2 等，**不是**本因 | **升级客户端**：不发 post-auth sync（仅握手 `lan_registry_reported`）。**纵深保留**（独立正确性）：Conn 绑定、Close+Done、Decrypt 成功后 commit、Connected 前 TUN 静默上送；服务端旧 sync 兼容勿 Kick via 自己。对照可清空 `local_lans` |
 | Windows 路由表「在链路上」且接口是本机 VPN IP | **预期**：进 haovpn0，不是把 via 配成自己 | 控制台 `via 10.88.x.x` 只在服务端选路；本机不必出现「下一跳=via」。原理见 [traffic-routing.md](traffic-routing.md) |
 | 托盘同分段既有 via `.1`（分流）又有 via `.2`（托管） | **预期**：两层 via；非冲突 | 分流=本机进 TUN；托管=服务端转 peer。见 [traffic-routing.md](traffic-routing.md) |
 | `/peers` 增删很卡 | 旧版保存时同步踢线抢 SQLite | 新版保存只写库；点「应用生效」再踢受影响账号 |
@@ -55,18 +60,33 @@
 | 断线后「好久才连上」 | 旧版每次重连全清路由+重跑 ICS（via 机尤慢）；或 Dial/退避过长 | **升级客户端**：临时断线保留 TUN/路由/ICS，握手后差分（日志 `policy_apply mode=noop` / `dataplane_keep`）；另查 `dial_timeout_sec`/`reconnect.max_sec`。磁盘日志看 `client.live.log` |
 | 重连仍每次 `via_exit_setup` / ICS | 旧客户端；或 `local_lans`/`vpn_subnet`/VPN IP 真变了；或走了 Stop/手动重连 | 确认已更新客户端；改配置后首次会重建属正常；GUI「手动重新连接」会全清 |
 | 退出登录 / 手动重连时界面卡住数秒 | 旧版在 UI 线程同步 `Stop`（ICS PowerShell COM 很慢） | **升级客户端**：清理改后台；界面显示「正在断开…」；日志 `gui_engine_stop` / `DisableAllICS elapsed=` |
-| 未配 `local_lans` 仍见 `DisableAllICS` 十余秒 | 旧版空 local_lans 仍无条件关全机 ICS | **升级客户端**：先 `HasICSResidue`；无 `192.168.137.*` 则跳过（日志 Debug `no ICS residue`）；有残留才 `CleanupICSResidue` |
+| 退出登录后托盘仍「正在断开…」 | `finishLogoutUI`/`applyTray` 时 `engOpBusy` 仍 true，tip 锁死；`endEngineOp` 未刷 tip | **升级**：先 `endEngineOp` 再回登录；`endEngineOp` 必 `refreshTrayTooltip` |
+| 登录连不上服务端：界面卡「正在连接」、托盘已红 | 旧版先同步 `eng.Stop` 再改 UI，ICS 清理挡死按钮/文案 | **升级**：`finishLoginFailure` 立刻红字+sticky tip；串行 Stop；清理中 tip 仍显示错误（非「正在断开」）；日志 `gui_login_fail` |
+| 手动重连 Start 失败后引擎挂着 / tip 不对 | HardRestart 失败仍返回 eng，旧 GUI 误 `setEngine` | **升级**：失败路径 `stopEngineAsync` 再 `endEngineOp`；勿挂僵尸 |
+| 连接中再点重连停不掉 / 清理与拨号像同时 | busy 拒操作；Stop 后 cancel；ICS 空跑 + soft 重连 | **已现场确认**：`before_via` abort 或 `ICS 启用已取消`；HardRestart ~3～4s |
+| ICS 取消后仍 `via_exit_setup ok snat=false` + ERROR 堆栈 | `Setup` 把 `context.Canceled` 当 SNAT 失败，`forward_only` 吞成成功 | **升级**：abort 立即返回；日志 `netstack setup aborted` / `via_exit_setup aborted` |
+| HardRestart 中无法退出登录/退出程序 | `beginEngineOp` 直接拒绝 | **升级**：排队 `intentLogout`/`intentQuit`，abort 拨号后执行；日志 `gui_logout deferred` / `gui_quit deferred` |
+| `session_abandoned … disconnected_during_policy` 后立刻 HardRestart teardown | 旧版 Stop 关 Conn 后 policy 仍跑完，误判 soft 重连 | **升级**：见上；现场应见 `policy_apply aborted` 或 `stop_during_policy`，不应再 `dataplane_keep` 叠在 Stop 上 |
+| 未配 `local_lans` 仍见 `DisableAllICS` 十余秒 | 旧版空 local_lans 仍无条件关全机 ICS | **升级客户端**：先 `HasICSResidue`；无 `192.168.137.*` 则跳过；有残留才 `CleanupICSResidueContext`（Stop 可取消 Kill PS） |
 | 手动重连死循环：`lookup … i/o timeout` 或 `invalid character '\x00'` | Stop 未等旧重连 loop；握手把 Data 当 JSON；先删路由再 RestoreDNS | **升级客户端**：`ReconnectClient.Stop` 等 loop；Handshake/Data 回调分离；Stop 时先 RestoreDNS；手动重连勿 FailFast + DNS settle |
 | 手动重连一次失败就卡住，再点才好 | Stop 后 DNS 窗口 + 误用 `SetFailFast(true)` 首败停 loop | **升级客户端**：手动重连走 `HardRestart`（不 FailFast；登录页仍 FailFast）；日志 `reconnect_dns_settle` / `hard_restart` |
 | 已连接但工控网不通；日志 `route_install fail=` | 部分分流路由安装失败 | 查 `partial_routes=true` / GUI LastError；管理员权限与网卡；零成功会拒绝进入已连接 |
-| 手动重连后仍 lookup timeout | DNS 未先 Restore 或 settle 不够 | 确认 Stop 先 RestoreDNS；`WaitDNSReady` 约 3s；仍失败看传输层退避 |
+| 手动重连后仍 lookup timeout | DNS 未先 Restore 或 settle 不够 | 确认 Stop 先 RestoreDNS；HardRestart DNS settle（约 3s，`safeutil.PollUntil`，logout 可 abort）；仍失败看传输层退避 |
+| Stop/重连卡在 ICS 十余秒 | 旧版探测/Disable 不可 Kill | 确认 `RunPS*Context` / `Setup(ctx)`；日志检索 `ps_kill`、`ics_abort`、`policy_apply aborted` |
+| CLI 冷连比 GUI 慢 ~1s；日志 `adapter=create` 无 `tun_warmup` | 旧版 CLI 未预热 Wintun | **升级**：`client_bootstrap warmup=done` + `reuse from_warmup`；TUN stage 应 ~50ms 级 |
+| CLI 错密码一直重试无退出 | 旧版 RunCLI 无 FailFast/WaitConnected | **升级**：45s 内 `first_auth=fail` 退出 stderr 中文原因 |
+| CLI ICS 多网卡只见日志不见提示 | 旧版未读 LastError | **升级**：stderr 输出 `client_user_warn` 全文 |
 | 公司机首次登录 ~2 分钟（`created` + `HasICSResidue` 慢） | 冷 CreateAdapter；旧版探测起 PowerShell；预热误 `Adapter.Close` 卸适配器 | 看 `tun_warmup held=true` → 登录 `reuse from_warmup`；`HasICSResidue method=native`；`assign_ip_*` 子阶段。单条 route 数秒属子进程 |
 | 已 `reuse from_warmup` / `已复用` 但 `assign_ip` 仍数十秒 | 旧版 `InterfaceHasIPv4` 用 `net.Interfaces()`/`Addrs` → 每次全表 GAA（公司机单次数秒） | **升级客户端**：`GetUnicastIpAddressTable`（`method=iphlp`）；`assign_ip_probe`/`HasICSResidue … method=iphlp` 应亚秒；`assign_ip_wait` 尊重截止（勿十余秒） |
-| 仍见 `assign_ip method=netsh` / `route_add method=route_exe` 数秒 | IP Helper 写失败回退，或 `windows.use_ip_helper: false`；旧版路由未填 LUID | 查 Warn `method=iphlp fail`；默认真值优先 iphlp；期望 `route_add method=iphlp`、`dns_set method=iphlp` |
+| 仍见 `assign_ip method=netsh` / `route_add method=route_exe` / `route_del method=route_exe` / `dns_snapshot method=netsh` 数秒 | IP Helper 写/读失败回退，或 `windows.use_ip_helper: false` | 查 Warn `method=iphlp fail`；新 TUN 期望 `dns_snapshot method=skip_empty`；否则可读 `method=iphlp`；`route_add/del`/`dns_set` 期望 iphlp |
 | Fyne 警告「not migrated to fyne.Do」 | 纯 `go build` **不读** `FyneApp.toml`；未带 `-tags migrated_fynedo` / 未 SetMetadata | **重建 GUI**（`build-local`/`build-release` 已加 tag）+ 代码 `fyne_meta.go`；仅改 toml 无效 |
 | 开应用后 UI 空等数秒才自动连 | 旧版 `waitTunWarmup` 串行挡住 `gui_auto_connect` | **升级**：日志应先见 `gui_auto_connect begin warmup_overlap=true`，**不应**先 `tun_warmup wait done` 再 begin |
 | `tun_open stage=create` 出现在 `tun_warmup` 同时 | 预热冷 Create 正常（同路径日志） | 若随后鉴权 `reuse from_warmup` 则 handoff 正常；勿当二次建卡失败 |
-| 家庭版 via 仍十余～数十秒 | WinNAT 不可用 → ICS COM；旧版每次先试 New-NetNat | **升级**：首次判不可用后同进程跳过重复 NetNat；ICS 本身压不掉；Pro+Hyper-V 才走 WinNAT |
+| 家庭版 via 仍十余～数十秒 / `policy_elapsed` 偏大 | **已优化**：出站快照、PreferVPN 嵌同 PS、skip_empty DNS、already_paired ICS、iphlp scrub 快路径。**COM EnableSharing** 首次仍 ~14s；**勿**因两次 `tun_default_route_scrub method=ps count=0` 各 4–5s 误判（旧版纵深 bug，已修） | 冷连：`method=skip\|iphlp`；软换：`prefer_vpn_light`；HardRestart 全清 ICS ~15s 属预期 |
+| 冷连 ~25s 且日志两次 `tun_default_route_scrub method=ps count=0` | ICS 修复 Step2 无条件 PS 纵深，即使无默认路由也冷启 PowerShell ~4–5s/次 | **升级**：iphlp 查表 skip / 删成功不 PS；装路由后不再重复 scrub |
+| 软换 IP 仍 ~6s（无 DisableICSPair） | 旧版 `prefer_vpn_light method=skip_only` 仍冷启 PS ~6s | **升级**：`ApplyPreferVPNSkipAsSource` iphlp；日志 `prefer_vpn_light method=noop\|iphlp`；目标 &lt;500ms |
+| 软换 IP 仍 ~11s（无 DisableICSPair 但慢） | 更旧版跑完整 PreferVPN PS + 重复 scrub | 见上行；另需 scrub 快路径 |
+| 手动 HardRestart / GUI 重连很慢 | HardRestart **全清**数据面 → `DisableICSPair` ~15s + 再 `ics_enable` ~14s | **设计如此**；临时断线自动重连走 `dataplane_keep` 才快。勿与 Soft 重连混淆 |
 | 日志 `wintun:` 前缀包着 Fyne 警告文案 | logger sink / 控制台归类，非 Wintun DLL 故障 | 以文案内容为准；修 Fyne 迁移后该警告应消失 |
 | 托盘悬停无气泡（OpenVPN 有「已连接至/连接自/分配 IP」） | Fyne 无 SetSystemTrayTooltip；未调底层 systray | **升级**：悬停见 HaoVPN 多行 tip；实现 `tray_tooltip.go` + `systray.SetTooltip` |
 | tip 末行只剩「分配」、或「连接自: 20」 | 旧按 127 拼装；fyne systray 未 SETVERSION → Windows **只显示 ~64** UTF-16，日期被砍成残片 | **升级**：tip 预算 **63**；行序 IP→连接自→主机；短日期；整行原子 |
@@ -82,7 +102,10 @@
 | 要开机即连、不要托盘 | Windows 服务；或 Linux systemd / macOS LaunchDaemon | Win：托盘「服务」或 `--service install`。Linux/macOS：托盘「服务」或手工 unit（deploy §5.3）；ExecStart 须带 `service` |
 | 服务在跑再开 GUI 提示已在运行 | 旧版不区分服务 | 新版弹出接管对话框：停止服务并接管 / 保持服务 |
 | ping 网关间歇丢包 | 同上：底层 ZT 丢包会连带 `10.88.0.1` 丢 | 对比双 ping；ZT 稳后再看 VPN |
-| 日志大量 `send queue full` WARN | 发送队列（默认 256）被打满，属背压；大文件/看电影更易出现 | 加大易满一侧：`vpn.send_queue_size`（服务端）或 `server.send_queue_size`（客户端），如 `1024`；两端可不同。过大增延迟 |
+| 管理台改账号 VPN IP 后 soft/Hard/退出登录都修不好，须杀进程；`ics_src_diag` 见新旧 IP 并存；Connected 后狂刷 `send queue full` | Wintun Close 保留适配器；旧版 `assignIPv4` 只加不删 → 双地址；DNS 可能把旧 VPN IP 当 DNS 写回 | **升级客户端**：在线改 IP 走 `vpn_ip_replace_inplace`（`ReplaceTUNIPv4KeepICS`，保留 137）；冷开仍 `ReplaceInterfaceIPv4`；PreferVPN 删非 vpn 非 137；看 `vpn_ip_inplace`、`tun_addrs_after` 仅新 IP±137；`dns_restore poisoned→dhcp`。queue full 为后果（已限频 WARN），勿只加大 `send_queue_size` |
+| 改 VPN IP 后本机上网全进隧道；`route print` 有 `0.0.0.0/0` 经 TUN（如 `10.88.x.x`）**跃点 5**；`ics_src_diag` vpn **prefix=24** | ICS EnableSharing 把 TUN **主机地址**从握手 `/32` 扩成 `/24`，并在 TUN 私网侧注入默认路由；旧 PreferVPN 只改 SkipAsSource | **升级客户端**：PreferVPN 恢复主机 `/32` + 清 TUN 默认路由；Go 纵深 `ScrubTUNDefaultRoute`；日志 `ics_prefix_fix` / `ics_default_route_scrubbed` / `tun_default_route_scrub`。分流 AllowedIPs **仍只跟握手**。物理默认网关（如 `192.168.31.1`）应仍在 |
+| 仅改 VPN IP 仍见 `DisableICSPair` / `ics_enable` 十余秒 | 旧版 `viaFingerprint` 含 tunIP → 清 viaFP → 全拆全装 ICS | **升级**：指纹仅 `lans\|subnet`；软换不拆 ICS；日志 `vpn_ip_replace_inplace` / `dataplane_keep=true`，**无** `DisableICSPair` |
+| 日志大量 `send queue full` WARN（正常大流量） | 发送队列（默认 256）被打满，属背压；大文件/看电影更易出现 | 先排除「改 VPN IP 双地址」行；再加大易满一侧：`vpn.send_queue_size` / `server.send_queue_size`（如 1024）。过大增延迟 |
 | WebUI 时间比本地差约 8 小时 | 存库/API 为 UTC；页面默认按 `api.display_timezone=UTC` 展示 | `server.yaml` 设 `api.display_timezone: Asia/Shanghai`（或 `GMT+8`）后重启；**不改**审计存库与 API JSON |
 
 **日志位置**：`./logs/client.log`、`./logs/client.live.log`（每次启动覆盖、逐行 Sync）。GUI 主窗口日志区默认只展示最近 **300** 行（不影响磁盘文件）。
@@ -131,6 +154,17 @@
 | DNS / 服务凭据 | 见 [deploy.md](deploy.md) 对应章节 |
 
 CLI 等效：`auth.username` + yaml 内 `auth.password` 或 `HAOVPN_PASSWORD` 或 GUI 输入密码。
+
+---
+
+## 2.2 客户端 CLI（haovpn-client）
+
+| 现象 | 可能原因 | 处理 |
+|------|----------|------|
+| TUN/路由失败 | 未管理员运行 | stderr 有警告；以管理员运行 PowerShell |
+| 单实例冲突且服务在跑 | Windows 服务占用锁 | stderr `SingleInstanceHint`；`--service stop` 或 GUI 接管 |
+| 首连失败立即退出 | FailFast + 错密码/封禁 | 查 stderr 与 `first_auth=fail` 日志 |
+| 手动 Hard 重连 | CLI 无托盘入口 | 停止进程再启 = Hard；临时断线仍 Soft 自动重连 |
 
 ---
 
@@ -188,7 +222,7 @@ tail -f ./logs/server.log
 | `Removed orphaned adapter "haovpn0 1"` | Windows 因重名给旧网卡加后缀；启动时会清理并 Create | 连续重启后应减少；可跑 `.\scripts\test-wintun-restart.ps1`（管理员） |
 | `windows wintun haovpn0 已复用` / `tun_open stage=reuse from_warmup` | 正常：预热移交或 OpenAdapter 复用 | 无需处理 |
 | `windows wintun … created`（登录时）且曾有 `tun_warmup` | 旧缺陷：预热 `Adapter.Close` 卸掉 Create 的适配器 → Element not found 再 Create | **升级客户端**：预热 held 句柄、禁止 Close；应见 `held=true` 与 `from_warmup` |
-| `session_abandoned … disconnected_during_policy` | 配网过长触发心跳超时 | **升级客户端**：applyPolicy 期间暂停心跳超时判定；同时看 `assign_ip_*` 子阶段压时 |
+| `session_abandoned … disconnected_during_policy` | 配网过长触发心跳超时；**或** 旧版 Stop/HardRestart 关 Conn 后 policy 仍跑完误走 soft 重连 | **升级**：applyPolicy 期间暂停心跳；Stop **先** cancel runCtx，via 前 abort；`stop_during_policy` 不 soft 重连。同时看 `assign_ip_*` / `policy_apply aborted` |
 | `HasICSResidue … method=ps_fallback` | native/iphlp 未找到网卡才回退 PS（公司机可十余秒） | 确认 TUN 名与登记；正常应为 `method=native stage=cache` 且 `by_index method=iphlp` |
 | `InterfaceHasIPv4 method=iphlp` / `assign_ip method=iphlp` | IP Helper 读/写热路径 | 正常；若仍 `net_fallback`/`netsh` 且很慢，查权限与 `use_ip_helper` |
 | WinNAT / ICS 失败 + `forward_only` | Win11 家庭版常见；服务仍可隧道/ping 网关 | 见 [deploy.md § NAT](deploy.md)；工控跨网段需 Pro/Hyper-V 或手工 ICS；日志可见「本进程已确认不可用，跳过 New-NetNat」 |
@@ -223,5 +257,5 @@ WebUI「探针」`/security`；特征中英文对照见 [security-hardening.md �
 
 ---
 
-*最后更新：2026-08-31 · 架构解耦第 24 轮 / VERSION 0.1.3*
+*最后更新：2026-09-01 · replay/lan_registry 修复 / VERSION 0.1.3*
 

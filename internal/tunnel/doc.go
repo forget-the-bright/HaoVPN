@@ -14,6 +14,7 @@
 // 并发：每条 TLS 连接独立 Attach；ServerHandler 字段 Attach 后只读。
 // 不变量：
 //   - 策略以服务端为准；密码登录成功才下发 client_private_key；
+//   - EncodeHandshakeRequest 已废弃，新代码用 EncodeHandshakeRequestV2；仍保留供旧路径兼容；
 //   - 默认拒绝库内明文私钥（AllowPlaintextPrivateKeys 仅兼容旧库）；
 //   - handshake_err 带稳定 code；客户端 FromHandshakeCode 还原哨兵；
 //   - 源 IP 白名单直接调 netutil.CheckSourceIPAllowed（无本包薄包装）。

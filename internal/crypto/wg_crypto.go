@@ -151,6 +151,11 @@ func (s *Session) Encrypt(plaintext []byte) ([]byte, error) {
 }
 
 // Decrypt 解密对端载荷并校验防重放窗口。
+//
+// 为何「Open 成功后才提交」序号：WireGuard Filter.ValidateCounter 会立即置位；
+// 若先 Mark 再 Open，篡改/破损包也会烧掉该 counter，同序号合法包随后变 replay
+//（现场常与 soft reconnect 同钥迟到包交织，表现为先 decrypt failed 再 ascending replay）。
+// 持锁贯穿试探→Open→提交/回滚，避免并发 Decrypt 交错破坏窗口快照。
 func (s *Session) Decrypt(ciphertext []byte) ([]byte, error) {
 	ns := s.aead.NonceSize()
 	if len(ciphertext) < ns+s.aead.Overhead() {
@@ -161,8 +166,11 @@ func (s *Session) Decrypt(ciphertext []byte) ([]byte, error) {
 	counter := nonceToCounter(nonce)
 
 	s.replayMu.Lock()
+	defer s.replayMu.Unlock()
+
+	// 快照当前窗口；ValidateCounter 会置位，Open 失败则回滚快照。
+	saved := s.replay
 	ok := s.replay.ValidateCounter(counter, replayCounterLimit)
-	s.replayMu.Unlock()
 	if !ok {
 		logger.Warn("replay attack detected: counter=%d rejected", counter)
 		return nil, fmt.Errorf("replay detected: counter=%d", counter)
@@ -170,7 +178,9 @@ func (s *Session) Decrypt(ciphertext []byte) ([]byte, error) {
 
 	out, err := s.aead.Open(nil, nonce, sealed, nil)
 	if err != nil {
-		logger.Warn("decrypt failed (possible tamper or key mismatch): %v", err)
+		s.replay = saved
+		logger.Warn("decrypt failed counter=%d len=%d (possible tamper or key mismatch): %v",
+			counter, len(ciphertext), err)
 		return nil, fmt.Errorf("decrypt: %w", err)
 	}
 	logger.Trace("decrypted packet len=%d counter=%d", len(out), counter)

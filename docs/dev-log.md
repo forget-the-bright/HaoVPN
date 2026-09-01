@@ -6,6 +6,752 @@
 
 ---
 
+## 2026-09-01 · 架构审计第 29 轮（PS 集中 / cmd 门面 / 死代码 / 文档）
+
+### 结论
+
+第 28 轮剩余项全部闭环：ICS EnableSharing 与 egress PS 迁入 `ps_snippets.go`；`cmd/client*` 读服务状态经 `clientapp.ServiceAutostartStatus`；PreferVPN 组装收口；删除未用导出符号；文档/CODEMAP 治理。**User DPAPI 未做**。
+
+### 改动
+
+| Phase | 做法 |
+|-------|------|
+| P1 cmd 门面 | `cmd/client` / `cmd/client-gui` 禁 direct `autostart.ServiceStatus`；`cmd/README` 单实例文案 |
+| P2 PS | `PSSnippetICSEnableSharing`、`PSSnippetFindInterfaceInCIDR/ByRoute` + 单测 |
+| P3 组装 | `ps_assemble_windows.go`：`PSAssignAdapterAndPreferVPN`、`PSAssignAdapterAndSkipAsSourceOnly` |
+| P4 死代码 | 删 `teardownViaExit`、`removeFiltersLocked`、`Stack.ICSPlan`、`SetInterfaceDNSStatic`、`ReconnectClient.Conn`；删非 Context ICS/PreferVPN 薄包装 |
+| P5 文档 | 符号修正（HardRestart DNS settle）；internal/README 补包；薄 doc.go；CODEMAP 去重 |
+| P6 注释 | `route_policy.go` ExitLAN 旁路条件注释 |
+
+### 验收
+
+```text
+go test ./internal/clientapp/... ./internal/clientgui/... ./internal/netutil/... ./internal/netstack/... ./internal/winnet/... ./internal/tun/... ./internal/transport/... ./internal/sessionmgr/... -count=1 -skip TestWaitDNSReady
+go build ./...
+```
+
+---
+
+## 2026-09-01 · 架构审计第 28 轮（门面补全 / 死代码 / PS / 文档）
+
+### 结论
+
+审计闭环：补齐 `clientgui→autostart` 违规、删除 DNS 查询死链与重复单测、netutil/PS 小步集中、GUI 单实例/错误/退出文案对齐。**User DPAPI 未做**。
+
+### 改动
+
+| Phase | 做法 |
+|-------|------|
+| P1 门面 | `ServiceStopAndWait` / `DefaultServiceStopTimeout`；`service_takeover` 禁 direct autostart |
+| P2 死代码 | 删 `QueryInterfaceDNS` 链、`ShowFatalError`、`bumpOpGenLocked`；unexport `waitDNSReadyAbort`/`hasDefaultRouteOnInterface`；`ServiceAutostartDisable` 清理 cred |
+| P3 netutil | `ICSPrivateIPv4Wildcard`、`InterfaceNameLooksLikeTUN`、`PreferSkipAsSourceNeedsUpdate` |
+| P4 PS | `PSSnippetAssignIPv4`、`RemoveNonVPNKeepVPN`、`ProbeICSResidue`、`VerifyInterfaceExists`、`ScrubDefaultRoute` |
+| P5 GUI | `SingleInstanceUserMessage`、`prepareGUIEngine`、`finishQuitApp`、`FormatConnectFailure` 统一 |
+| P6 文档 | doc.go 补全、architecture 入口示例、dev-log/记忆 |
+
+### 验收
+
+```text
+go test ./internal/clientapp/... ./internal/clientgui/... ./internal/netutil/... ./internal/netstack/... ./internal/winnet/... ./internal/tun/... ./internal/sessionmgr/... -count=1 -skip TestWaitDNSReady
+go build ./...
+```
+
+---
+
+## 2026-09-01 · 架构解耦第 27 轮（引擎契约 / netutil / GUI 去重 / 文档）
+
+### 结论
+
+入口层与叶子算法第二轮收口：GUI 登录复用 `PrepareEngine`/`StartAndWaitFirstAuth`；纯 IP/CIDR/DNS 逻辑进 `netutil`；GUI 网络操作前奏统一；PS 模板集中；文档 CODEMAP 单一权威。**User DPAPI / 记住密码未做**。
+
+### 改动
+
+| Phase | 做法 |
+|-------|------|
+| P1 引擎契约 | `engine_bootstrap.go`：`PrepareEngine`、`StartAndWaitFirstAuth`、`DefaultGUIRunOptions`；`login.go` 删除 magic 45s；删 `loginFailUserMessage` 重复 |
+| P2 死代码 | 删 `readDNS`、重复 PS 转义测试；unexport `warmupTun`/`waitDNSReady`/`managedRouteFromTunnel`/`setOnDataplaneFailed`；修 `decideHardRestartFinish`；瘦 `winnet_facade` |
+| P3 netutil | `ProbeIPForCIDR`、`IPv4IsICSPrivate`、`FilterDNSServersPoison`、`IsVirtualInterfaceName`、`ParseLocalLANsField` + 单测 |
+| P4 自启 | `autostart_facade.go`；`tray_config`/`service_takeover` 薄化 |
+| P5 GUI | `beginNetworkOp`；`tray_state.go`/`trayPresentationFromEngine` |
+| P6 PS | `PSSnippetEnableIPv4Forwarding`、`PSSnippetGetNetNatMatch` |
+| P7 UX | `ShouldStopReconnectOnDial`（消歧 `dialerr.IsFatalDialError`）；`MergeConnectWarns` 导出 + 文案分工注释 |
+| P8 文档 | architecture 唯一 CODEMAP；codebase-guide/internal/README/cmd/deploy/dev-log/记忆 同步 |
+
+### 验收
+
+```text
+go test ./internal/clientapp/... ./internal/clientgui/... ./internal/netutil/... ./internal/netstack/... ./internal/winnet/... ./internal/tun/... -count=1 -skip TestWaitDNSReady
+go build ./...
+```
+
+---
+
+## 2026-09-01 · CLI/GUI 启动契约对齐（bootstrap 下沉）
+
+### 结论
+
+数据面（`Engine` / `runtime_policy` / `via_exit`）本就共用；差异在**入口编排**。CLI 缺 TUN 预热、首连 FailFast、用户告警 stderr，导致冷连慢 ~1s、错密码空转重连。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| bootstrap | `RunOptions` + `runClient`；`RunCLI`（交互）vs `RunServiceLoop`（服务） |
+| 预热 | `StartWarmupAsync`；CLI/服务/GUI 均经 `clientapp`；日志 `client_bootstrap warmup=` |
+| 首连 | CLI `FailFastFirst` + `WaitConnected(45s)`；`FormatConnectFailure` 与 GUI 共用 |
+| 告警 | `SetUserWarnSink` → CLI `client_user_warn` + stderr；GUI 仍 `ics_hint_shown_to_user` |
+| IPv6 | warmup Create 后 `tun_warmup stage=disable_v6`（避免 reuse 跳过） |
+| cmd/client | 非 admin stderr；单实例冲突 `SingleInstanceHint`（含服务占用提示） |
+| GUI | `StartWarmupAsync` + `AttachDataplaneHook` 薄封装 |
+
+### 验收
+
+```text
+go test ./internal/clientapp/... ./internal/clientgui/... ./internal/tun/... -count=1 -skip TestWaitDNSReady
+go build -o bin/haovpn-client.exe ./cmd/client
+```
+
+| 场景 | 期望 |
+|------|------|
+| CLI 冷连 | `client_bootstrap warmup=done` + `reuse from_warmup` + `adapter=reuse` |
+| CLI 错密码 | 45s 内 `first_auth=fail` 退出 |
+| CLI ICS 多网卡 | stderr `client_user_warn` 全文 |
+| 软换 IP | 仍 &lt;500ms（不变） |
+
+---
+
+## 2026-09-01 · 软换 IP iphlp SkipAsSource（消除 ~6s PS）
+
+### 现场（scrub 快路径已验证）
+
+| 场景 | 实测 policy_elapsed | 关键日志 |
+|------|---------------------|----------|
+| 冷连 Home+ICS | **12.65s** | `tun_default_route_scrub method=skip elapsed=0s`（两次） |
+| 软换 IP（仍慢） | **6.38s** | `prefer_vpn_light method=skip_only elapsed=6.05s`（PS 冷启） |
+| 功能 | OK | `prefix=32`；`did_setup=false`；DNS `changed=false` |
+
+根因：软换轻量路径仍 `RunPSOneShot`（含 AssignAdapterIf），SkipAsSource 本可用 IP Helper `SetUnicastIpAddressEntry` 亚秒完成。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| iphlp | `iphlp_skipas_windows.go`：`ApplyPreferVPNSkipAsSource`（noop/iphlp）；`UnicastIPv4Entry.SkipAsSource` |
+| prefer_vpn_light | 主路径 iphlp/noop；PS 仅 fallback 且去掉 AssignAdapterIf |
+| 路由 | 软换 gw/allowed 未变 → `vpn_ip_inplace routes=keep`（`routeListsEqual`） |
+
+### 验收
+
+| 场景 | 目标 |
+|------|------|
+| 冷连 | 保持 ~12–13s |
+| 软换 IP | **&lt;500ms**；`prefer_vpn_light method=noop\|iphlp`；**无** `method=skip_only`/`method=ps` 6s |
+
+```text
+go test ./internal/winnet/... ./internal/netstack/... ./internal/clientapp/... -count=1 -skip TestWaitDNSReady
+```
+
+---
+
+## 2026-09-01 · ICS 默认路由修复后性能回归（冗余 PS scrub）
+
+### 现场（功能已通过，变慢有证据）
+
+| 场景 | 修复前 policy_elapsed | 慢点 |
+|------|----------------------|------|
+| 冷连（Home + ICS 首次） | ~25.6s | ICS COM ~14s（平台）+ **两次** `tun_default_route_scrub method=ps count=0` 各 ~4–5s |
+| 软换 VPN IP | ~11.5s | 完整 `PreferVPNSourceAfterICS` PS ~6s + 重复 scrub PS ~3s |
+| 自动重连 noop | 已快 | `dataplane_keep`；无 ICS |
+
+根因：`DeleteDefaultRouteOnInterface` 在 iphlp 之后**无条件** `RunPSOneShot`；装路由后再 scrub 与嵌入 PreferVPN 重复。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| 快路径 | `HasDefaultRouteOnInterface`（GetIpForwardTable2）；无路由 `method=skip`；iphlp 删成功不 PS |
+| 模式 | `ScrubDefaultRouteFast`（软换/装路由后） vs `ScrubDefaultRouteLate`（ICS 后，iphlp 失败才 PS） |
+| 去重 | `ics_enable` Late 一次；`runtime_policy` 仅 `viaDidSetup` 时 Fast scrub |
+| 软换 | `PreferVPNAfterSoftIPReplace` + `PSSnippetSkipAsSourceOnly`（Replace 已 /32） |
+| DNS | 软换 poison 后 servers 未变则跳过重装 |
+
+### 验收指标
+
+| 场景 | 目标 |
+|------|------|
+| 冷连首次 ICS | **&lt;18s**（~14s COM + 其它 &lt;3s）；日志 `method=skip\|iphlp`，无两次 `method=ps count=0` |
+| 软换 IP | **&lt;2s**；`prefer_vpn_light method=skip_only` |
+| HardRestart | ~15s stop + ~14s 再连（预期，非 bug） |
+
+### 验证
+
+```text
+go test ./internal/winnet/... ./internal/netstack/... ./internal/clientapp/... -count=1 -skip TestWaitDNSReady
+```
+
+---
+
+## 2026-09-01 · 修复 ICS 注入默认路由（在线改 VPN IP）
+
+### 根因（现场日志，非猜测）
+
+- `route print`：`0.0.0.0/0` 经 TUN（如 `10.88.0.4`）跃点 **5** → ICS 在 TUN 私网侧注入；HaoVPN `route_ops` **从不**装默认路由。
+- `ics_src_diag … prefix=24`：EnableSharing 把 TUN **主机地址**从握手 `/32` 扩成 `/24`（与 AllowedIPs 分流表无关）。
+- 仅改 IP ~20～26s：旧 `viaFingerprint` 含 tunIP → `dataplane_clear` 拆 ICS 再装。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| PreferVPN | `PSSnippetPreferVPNAfterICS` + 独立路径复用：Prefix≠32 → Remove+New `/32`；清本 ifIndex 的 `0.0.0.0/0`；日志 `ics_prefix_fix` / `ics_default_route_scrubbed` |
+| Go 纵深 | `winnet.DeleteDefaultRouteOnInterface`；ICS 后与 `applyPolicy` 装路由后 `ScrubTUNDefaultRoute` |
+| 软换 IP | `ReplaceTUNIPv4KeepICS`；`viaFingerprint` 仅 `lans\|subnet`；`vpn_ip_replace_inplace` **不**清 viaFP、不拆 ICS |
+| 门面 | `ScrubTUNDefaultRoute` / `PreferVPNSourceAfterICS` / `ReplaceTUNIPv4KeepICS` |
+| 文档 | troubleshooting / traffic-routing / architecture / 记忆 / internal README |
+
+### 验证
+
+```text
+go test ./internal/winnet/... ./internal/netstack/... ./internal/clientapp/... -count=1 -skip TestWaitDNSReady
+```
+
+现场（管理员）：改 VPN IP 后 `route print` 不得再有经 TUN 的 `0.0.0.0` 跃点 5；`ics_src_diag` vpn **prefix=32**；仅改 IP 无 `DisableICSPair`/`ics_enable` 长耗时。
+
+---
+
+## 2026-09-01 · 架构收口第 26 轮（抽取 / 去死 / 文档）
+
+### 动机
+
+第 1～25 轮叶子包已成型；审计仍有：噪声源/截止判定/NetNat 模板散落、门面死导出、via 清理不可取消、`register`/`ics_nat` 过胖、architecture 轮次长文与 §8/§10 交叉冲突。本轮一次性收口，**不新建工具包**，**不做** User DPAPI。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| netutil | `IsTUNNoiseSource`；`ResolveGateway(handshakeGW, vpnIP)` 去掉 yamlGW |
+| safeutil | `IsDeadline`；`clientgui/login_fail` 去字符串比对；`sessionmgr/stats` 节流改 `AllowEvery` |
+| winnet | `PSSnippetNewNetNat`/`PSSnippetRemoveNetNat`；删死 `IsWintunOrphanName` |
+| netstack 门面 | 仅 Configure/Has/Cleanup(Context)/Remove；删 PreferVPN/Disable* 死导出 |
+| clientapp | `CleanupICSResidueContext` + ctx；`WaitDNSReady` 薄包装注明生产用 Abort |
+| sessionmgr | 删 `ErrAccountAlreadyOnline` 别名；`register_grace.go` / `register_lan.go` |
+| netstack ICS | `ics_egress_windows.go` + `ics_enable_windows.go`（原 `ics_nat_windows.go`） |
+| 文档 | architecture 删第 12～25 轮长段；FAQ/CODEMAP/internal README/记忆/traffic-routing/hardening 对齐 |
+
+### 未做
+
+- GUI 记住密码 User DPAPI（仍 yaml 明文 + ACL）
+- 家庭版 ICS EnableSharing 抖链路（平台残留，仅文档标明）
+- field gate / 重启自连（现场验收，非本轮代码）
+
+### 验证
+
+```text
+go test ./internal/netutil/... ./internal/safeutil/... ./internal/winnet/... ./internal/netstack/... ./internal/sessionmgr/... ./internal/clientapp/... ./internal/clientgui/... -count=1 -skip TestWaitDNSReady
+go test ./... -count=1 -skip TestWaitDNSReady
+```
+
+---
+
+## 2026-09-01 · 分流过滤抽公共（netutil / safeutil）
+
+### 动机
+
+越权目的双层过滤落地后，客户端 `dstAllowedForUpload` 与服务端 `dstAllowed`、噪声判定、WARN CAS 限频在多包重复；另有死 `224–239` 分支与冗余 `IsLimitedBroadcast` OR。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| netutil | `IPInAnyNet` / `VPNIPOrInNets` / `IsTUNNoiseDst` / `IsTUNNoiseForLog`；修 `IsLimitedBroadcast` godoc |
+| safeutil | `AllowEvery`；sessionmgr 双 WARN、transport queue full、tun quiesce 改用 |
+| 清理 | 删死组播尾支、冗余 OR、本地 `dstAllowedForUpload` |
+| 行为 | 不变：LL-unicast 仍仅服务端日志降 DEBUG，客户端不上送早丢不加 |
+
+### 验证
+
+```text
+go test ./internal/netutil/... ./internal/safeutil/... ./internal/clientapp/... ./internal/sessionmgr/... ./internal/transport/... -count=1 -skip TestWaitDNSReady
+```
+
+---
+
+## 2026-09-01 · 重连后「丢弃越权目的 IP」刷屏
+
+### 现场
+
+握手完成后约十余秒（`StateConnected` 放开上送）服务端狂刷 WARN：`丢弃越权目的 IP … dst=223.5.5.5/CDN/192.168.31.1`；客户端业务正常。
+
+### 根因
+
+服务端 `dstAllowed` **正确**丢弃 AllowedIPs 外目的（非漏洞）。缺口：客户端 `shouldUploadTUN` 只验源不验目的 → OS 经 TUN 注入的 DNS/公网噪声上送；越权 WARN **无限流**（伪造源已有 10s 限流）。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| 客户端 | `allowedNets` + `shouldUploadTUN` 要求 dst∈AllowedIPs（或本机 VPN IP） |
+| 服务端 | `shouldWarnDstOverreach` 10s 限频 + `drops=` |
+| DNS | `MergeDNSIntoAllowedIPs`：策略 DNS /32 并入下发 AllowedIPs（会话+客户端） |
+
+### 验证
+
+```text
+go test ./internal/clientapp/... ./internal/sessionmgr/... ./internal/tunnel/... ./internal/vpnaccount/... ./internal/netutil/... -count=1 -skip TestWaitDNSReady
+```
+
+---
+
+## 2026-09-01 · 在线改 VPN IP 卡死（双路径：同 IP 保 / 变 IP 换）
+
+### 现场
+
+管理台改账号 VPN IP（如 `10.88.0.2`→`10.88.0.4`）后 soft/Hard/退出登录都修不好，须杀进程；`ics_src_diag` 新旧 IP 并存；`RestoreDNS servers=[旧 VPN]`；Connected 后刷 `send queue full`。同 IP 重连已快——**不是缺判断**，是变 IP 分支落地不全。
+
+### 根因
+
+Wintun `Close` 保留适配器（同 IP 要快，合理）；`assignIPv4` 只 Create / 「已有则跳过」、不删其它 IPv4 → 双地址。PreferVPN 仅 SkipAsSource 掩盖；DNS 快照可把旧 VPN IP 写回。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| 配 IP | `winnet.ReplaceInterfaceIPv4`：删 ≠ want，前缀不对重建；`assignIPv4` 一律 Replace；日志 `assign_ip replace removed=` / `tun_addrs_before/after` |
+| PreferVPN / ICS | 非 vpn 非 137 → Remove；`RemoveICSAddressesKeepVPN` / `CleanupICSResidue` 删全部 ≠ vpn |
+| DNS | `RestoreDNS(..., poisonIPs)`：相交则 `dns_restore poisoned→dhcp`；`clearRoutesLockedWithDNSPoison` |
+| 队列 | `noteSendQueueFull` 限频 5s + drops（不加大队列当修） |
+
+### 验证
+
+```text
+go test ./internal/winnet/... ./internal/tun/... ./internal/netstack/... ./internal/clientapp/... ./internal/transport/... -count=1 -skip TestWaitDNSReady
+```
+
+现场：改 VPN IP → `dataplane_clear reason=vpn_ip_change`；`removed` 含旧 IP；`ics_src_diag` 仅新 IP±137；无持续 queue full；Hard/logout 无需杀进程。
+
+---
+
+## 2026-09-01 · 启动耗时二轮（15.6s 后剩余：孤儿/空 DNS/already_paired）
+
+### 现场（一轮后）
+
+双 LAN `policy_elapsed≈15.6s`（已&lt;30s）。仍见：`prepare_orphan≈4.3s`（无孤儿仍 PS）、`dns_snapshot iphlp≈0.84s`（空列表）、`ics_enable≈11s`（可能重复 Enable）。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| 孤儿 | `HasWintunOrphanAdapters`；无孤儿 `prepare_orphan skipped reason=no_orphan` |
+| DNS | 新 TUN 首次快照 `method=skip_empty`（dhcp 还原），免 GAA |
+| ICS | 已 public/private 配对则 `ics_enable action=already_paired`，跳过 Disable/Enable |
+| 日志 | PreferVPN 只用脚本 `wait_ms`；汇总 `open=session adapter=` |
+
+### 验证
+
+```text
+go test ./internal/winnet/... ./internal/netstack/... ./internal/clientapp/... ./internal/tun/... -count=1 -skip TestWaitDNSReady
+```
+
+对照：冷启无孤儿应 skipped；`dns_snapshot method=skip_empty`；二次连期望 `already_paired`。
+
+---
+
+## 2026-09-01 · 启动耗时全量治理（DNS/egress/PreferVPN/route_del）
+
+### 现场慢点（治理前）
+
+单 LAN `policy_elapsed≈25s`、双 LAN≈39s；Stop 时 RestoreDNS→关 wintun 间隙≈7s。主因：N×PS 出站、PreferVPN 第二次冷启、DNS 快照 netsh、route DELETE 子进程；ICS COM 本体仍可能数秒。
+
+### 改动
+
+| 项 | 做法 |
+|----|------|
+| 日志 | `first_policy` / `mode=open adapter=`；`dns_snapshot`/`ics_egress`/`ics_enable`/`ics_prefer_vpn`/`route_del` |
+| DNS | `QueryInterfaceDNS`（GAA）优先，失败回退 netsh |
+| 路由删 | `DeleteIpForwardEntry2` 优先 |
+| 出站 | `CollectEgressSnapshot` 一次采集，多 LAN 内存匹配 |
+| PreferVPN | `PSSnippetPreferVPNAfterICS` 嵌 ICS Enable 同 PS；回退 `*Context` |
+| ICS | 无残留跳过开头全机预清；Pair 后无残留跳过 DisableAll（打日志钉死） |
+
+### 验证
+
+```text
+go test ./internal/winnet/... ./internal/netstack/... ./internal/clientapp/... ./internal/tun/... -count=1 -skip TestWaitDNSReady
+```
+
+现场对照：单 LAN `policy_elapsed`<30s；`dns_snapshot method=iphlp`；`ics_prefer_vpn embedded=true`。
+
+### 文档
+
+troubleshooting / deploy / architecture / codebase-guide / internal/README / 记忆 已对齐「根因=sync + 启动耗时周边已砍、COM 残留」。
+
+---
+
+## 2026-09-01 · local_lans 复盘：根因=sync，假因退去、纵深留下
+
+### 复盘结论
+
+| 层级 | 内容 |
+|------|------|
+| **已确认根因** | 客户端 post-auth `lan_registry_sync` → 服务端 Replace/Prune/Kick 与数据面交织；去掉后现场恢复。`2cdc5e6` 本无此帧 |
+| **误判曾堆的** | `defer_dns`、peer_silent 门、hbPause 不 touchHB、PreferVPN#2 —— **不是**本因（已回退/删除） |
+| **保留纵深** | Conn 绑定、Done 排空、Decrypt Open 后 commit、`tunUploadReady`、SharedAccess 按需启动、PreferVPN 仅 ICS 内一次、服务端 sync 兼容+勿 Kick via 自己 |
+
+### 本条清理
+
+- 删除死 API：`PeerSilentLongerThan` / `HeartbeatInterval()`；收窄 `hb_pause_test`。
+- 文档统一「根因=sync」：troubleshooting / 记忆 / hardening / CODEMAP。
+
+### 验证
+
+```text
+go test ./internal/transport/... ./internal/crypto/... ./internal/sessionmgr/... ./internal/clientapp/... ./internal/tunnel/... -count=1 -skip TestWaitDNSReady
+```
+
+---
+
+## 2026-09-01 · 去掉 post-auth lan_registry_sync（对齐 2cdc5e6）
+
+### 现场（08:27）
+
+冷启动已对齐：`dns_applied`（ICS 前）→ ICS → 装路由 →「隧道握手成功」；无 decrypt/replay。但仍见 `lan_registry_sync sent`（`skipped=[]`，与握手同 CIDR，零收益却走 prune/Kick）。
+
+### 改动
+
+- 客户端删除 `registrySync*` / `sendLANRegistrySync` / `lan_registry_sync.go`；注册表**仅握手**上报。
+- 服务端保留 `applyLANRegistrySync` 兼容旧客户端（限速 + 勿 Kick via 自己）。
+- `mergeConnectWarns` 留在 `connect_warn.go`（原随 sync 文件删除而丢失）。
+
+### 验证
+
+```text
+go test ./internal/clientapp/... ./internal/tunnel/... ./internal/sessionmgr/... -count=1 -skip TestWaitDNSReady
+```
+
+现场：不应再出现 `lan_registry_sync sent`；服务端握手仍有 `lan_registry_reported`。
+
+---
+
+## 2026-09-01 · local_lans 以 2cdc5e6 为可工作基线回退 WT 尾部
+
+### 纠正
+
+用户确认发布提交 **`2cdc5e6`（0.1.3）** 配 `local_lans` **可用**。先前把「`defer_routes` 未同步 `defer_dns`」写成 0.1.3 回归根因 —— **作废**。
+
+| 基线 | 冷启动顺序 |
+|------|------------|
+| **可工作 `2cdc5e6`** | TUN → `defer_routes` → **DNS（ICS 前）** → ICS → 装路由 → Connected（无 post-auth `lan_registry_sync`） |
+| **WT 曾引入（嫌疑）** | `defer_dns` 晚装；Connected **前** `lan_registry_sync`；`peer_silent` 门；hbPause 恢复不 touchHB |
+
+### 本次对齐
+
+| 项 | 动作 |
+|----|------|
+| DNS | 恢复 ICS 前 `ApplyDNS`（去掉 `defer_dns`） |
+| lan_registry_sync | 先延后 Connected；**随后整段删除**（见上条） |
+| peer_silent 门 | 去掉 |
+| hbPause 恢复 | 恢复 **touchHB**（2cdc5e6） |
+| 保留 | TUN Connected 前静默上送；服务端 Conn 绑定 / Done / Decrypt commit；ICS SharedAccess 按需启动 |
+
+### 验证
+
+```text
+go test ./internal/transport/... ./internal/clientapp/... ./internal/crypto/... ./internal/tunnel/... ./internal/sessionmgr/... -count=1
+```
+
+现场期望：`dns_applied` 在 ICS **之前**；**无** `lan_registry_sync sent`。
+
+---
+
+## 2026-09-01 · ICS 配网末尾 decrypt/replay：健康门 + 去 PreferVPN#2
+
+> **作废（假因实验）**：不 touchHB / peer_silent 门已回退删除。真根因见「复盘」条（post-auth sync）。PreferVPN 仅 ICS 内一次、decrypt 带 counter、勿 Kick via 自己仍保留。
+
+---
+
+## 2026-09-01 · ICS SharedAccess 按需启动（减 soft 重连根因抖）
+
+### 改动
+
+默认不再 `Restart-Service SharedAccess -Force`：已 Running → `ics_sharedaccess action=already_running`；未跑 → `Start-Service`。仅 EnableSharing 两轮都失败后才 Restart 再试（`action=restart`）。
+
+### 验证
+
+```text
+go test ./internal/winnet/... ./internal/netstack/... ./internal/clientapp/... -count=1
+```
+
+现场：ICS 成功路径应见 `already_running` 或 `start`，不应每次都 `restart`；仍可能因 EnableSharing 本身抖一下（`ics_link_risk`）。
+
+---
+
+## 2026-09-01 · ICS PreferVPN 去冗余 + 厘清 soft 重连根因
+
+### 结论（对照现场 client 日志）
+
+| 层次 | 是什么 | 不是什么 |
+|------|--------|----------|
+| **断链根因** | 家庭版 ICS：`Restart-Service SharedAccess` + `EnableSharing(public=WLAN)` 抖底层；隧道走同 WLAN 则 ICS 窗口易 soft 重连。未配 `local_lans` 不进 ICS → 无此问题 | PreferVPN / SkipAsSource / 强制 /32 |
+| **错源问题** | ICS 挂 137 后本机可能用 137 作源 → ping AllowedIPs 不通；`PreferVPN` 设 137 skip / VPN 可源 | soft 重连本身 |
+| **replay 症状** | 软重连后同钥新窗口竞态；或 WT 配网末 sync/Connected 交织 | 「0.1.3 defer_routes 本身必坏」（**已否定**：`2cdc5e6` 可用） |
+
+执行顺序：`tun → defer_routes → DNS → ICS → PreferVPN#1 → 装路由 → Connected`（新客户端无 post-auth sync）。
+
+### 清理
+
+去掉 `via_exit` / 装路由后再 PreferVPN。ICS 启用后打 `ics_link_risk`。
+
+### 验证
+
+```text
+go test ./internal/clientapp/... ./internal/netstack/... -count=1
+```
+
+---
+
+### 目标
+
+修复配 `local_lans`→ICS 软重连时服务端 `decrypt failed` + ascending `replay attack detected`；补齐注册表收缩后的活路由剪枝与限速；抽取 `PollUntil`、删死代码、文档对齐。User DPAPI **未做**（仍听安排）。
+
+### 根因（现场已确认）
+
+post-auth `lan_registry_sync`（已去）。纵深另见：同钥软重连旧 Conn 迟到包 / Decrypt 先 Mark 烧号。
+
+### 代码
+
+| 项 | 内容 |
+|----|------|
+| 入站 | `HandleInbound(userID, conn, …)` 须 `ps.Conn == conn` |
+| 顶替 | `drainOldConn`：`SetOnData(nil)` + Close + 等 `Done`（超时 `old_conn_drain_timeout`） |
+| Crypto | `Decrypt`：Open 失败回滚 Filter 快照，成功才 commit |
+| 客户端 | `tunUploadReady`：非 `StateConnected` 不上送（`tun_upload_quiesced`） |
+| 注册表 | 新客户端仅握手；旧 sync 兼容：`PruneViaRoutesAfterRegistry` + 勿 Kick via 自己；限速 |
+| 抽取 | `safeutil.PollUntil` → DNS settle / GUI 单实例 / SCM 停等待 |
+| 死代码 | 删 `ProbeICSLocalLANsHint`、`ics_hint.go`；Darwin/Linux `platform.Command` |
+
+### 验证
+
+```text
+go test ./internal/crypto/... ./internal/sessionmgr/... ./internal/tunnel/... ./internal/clientapp/... ./internal/safeutil/... ./internal/netstack/... ./internal/netutil/... ./internal/clientgui/... -count=1
+```
+
+### 文档
+
+troubleshooting（replay / registry 行）、security-hardening §4.3 + 重编号 §10 DPAPI、architecture FAQ、codebase-guide 调用链、internal/README、记忆.md。
+
+---
+
+## 2026-09-01 · local_lans 格式硬校验 + ICS 出站三档
+
+### 目标
+
+非法 `local_lans` 登录前挡过；ICS 出站保持简单：配置网卡 → 本机同网段/专用路由 → 默认网关。客户端 via 可读 `windows.outbound_interface`（仅 ICS）。
+
+### 代码
+
+| 项 | 内容 |
+|----|------|
+| 校验 | `netutil.ValidateLocalLANsList`；`ClientConfig.Validate` 硬挡并规范化写回 |
+| 出站 | `findOutboundInterface`；默认网关打 `lan_egress default_route` |
+| via | `via_exit` 传入 `Windows.OutboundInterface` → `OutboundIf` |
+
+### 验证
+
+```text
+go test ./internal/netutil/... ./internal/config/... ./internal/netstack/... ./internal/clientapp/... -count=1
+```
+
+---
+
+## 2026-09-01 · ICS 提示改连接后 + 注册表纠正
+
+### 目标
+
+登录页不再预检 ICS（此时不知 WinNAT/ICS）。确定走 ICS 后再提示；异网卡跳过的网段不得留在服务端注册表误导托管路由。
+
+### 代码
+
+| 项 | 内容 |
+|----|------|
+| GUI | 去掉登录页 `icsHintLbl` / Probe |
+| Setup | `NATSetupOutcome` + Stack `UsedICS`/`ICSPlan`；`via_exit_setup` 打 `active_lans`/`skipped_lans` |
+| 提示 | `ics_multi_nic` + `LastError`（主窗状态，不挡连接） |
+| 注册表 | ICS 后 Handshake `type=lan_registry` → `ReplaceClientLANRegistry` + `ReloadExitLANs` |
+
+### 验证
+
+```text
+go test ./internal/netstack/... ./internal/clientapp/... ./internal/clientgui/... ./internal/tunnel/... ./internal/sessionmgr/... -count=1
+```
+
+---
+
+## 2026-08-31 · 多网段 / 多网卡 ICS：首网卡生效 + 提示清楚
+
+### 目标
+
+Windows ICS 只能一对共享；修复旧版 per-LAN 反复 Enable 互相覆盖。同首出站网卡的多段一并生效，异网卡跳过并提示（不挡登录）。WinNAT 仍一条 VPN 子网覆盖多目的 LAN。
+
+### 代码
+
+| 项 | 内容 |
+|----|------|
+| 决策 | `netstack/ics_plan.go`：`PlanICSByOutbound*`、`FormatICSLocalLANsHint`（日志=GUI 同文案） |
+| Setup | `setupNATForLANs` → WinNAT 一次或 `setupICSForLANs` 整表一次 Enable；键 `ics_multi_nic` / `ics_enable once` |
+| 提示 | **已修订**：见上条「连接后提示 + lan_registry 纠正」（不再登录预检） |
+| 测 | 同 NIC / 异 NIC / Preferred outbound / 文案快照 |
+
+### 验证
+
+```text
+go test ./internal/netstack/... ./internal/clientapp/... ./internal/clientgui/... -count=1
+```
+
+### 文档
+
+troubleshooting / deploy / traffic-routing / architecture 写清 ICS 单出口语义。
+
+---
+
+## 2026-08-31 · 架构解耦第 25 轮（抽取 · 可取消 · 安全 · 文档）
+
+### 目标
+
+高内聚低耦合收口：补全 Stop/HardRestart 可取消链路、WinNAT PS 转义、公共 abort/PS/GUI Stop 辅助、清死代码、补测、文档对齐。明文密码写文档本轮不改。
+
+### 代码
+
+| Phase | 内容 |
+|-------|------|
+| 1 | `nat_windows.go`：`New-NetNat`/`Remove-NetNat` 一律 `EscapeSingleQuoted`；`formatNewNetNatPS` 单测 |
+| 2 | `safeutil.IsCanceled` / `Check`；删死导出 `GoSafeCtx`；`applyPolicy`/`Setup`/`via_exit` 去重 |
+| 3 | `RunPSBestEffortContext`；ICS 探测/Disable/Cleanup 可 Kill；删死别名 `RunPS`；日志 `ps_kill`/`ics_abort` |
+| 4 | `Stack.Setup(ctx)` / `Teardown(ctx)` 取代 `Config.AbortCtx`；Teardown 正常路径用 `Background` 以免跳过 ICS 清理 |
+| 5 | `WaitDNSReadyAbort`（settle 中可 abort）；HardRestart 中段 abort 测例；`setupViaExitLocked` 取消测例 |
+| 6 | `stopEnginesSerial`；`engineOpQueue` 纯状态机 + `decideHardRestartFinish`；login_fail busy→pending logout |
+| 7 | 删 `ShutdownWindows`/`winnet.Shutdown` 空钩；`DisableICSSessionContext`（Pair→残留→All） |
+
+### 验证
+
+```text
+go test ./... -count=1   # 通过
+```
+
+关键单测：`nat_escape_windows_test`、`safeutil/context_test`、`ps_context_test`（BestEffort/DisableAll 取消）、`setup_abort_test`、`WaitDNSReadyAbortMidSettle`、`HardRestartAbortDuringDNS`、`engine_op_queue_test`、`FinishLoginFailureBusyQueuesLogout`。
+
+### 文档
+
+architecture CODEMAP / internal README（FAQ 短表）/ codebase-guide / troubleshooting / security-hardening / 记忆 — 对齐第 25 轮；去掉 AbortCtx、ShutdownWindows、不可中断 WaitDNSReady 等过时表述。
+
+---
+
+## 2026-08-31 · ICS 取消误判 forward_only 成功（现场 22:57）
+
+### 日志问题
+
+ICS 中点重连已见 `ICS 启用已取消`，但随后：
+`netstack NAT 失败: context canceled`（ERROR）→ `forward_only` 吞成「无 SNAT 成功」→ `via_exit_setup ok snat=false` → 误装路由 → 再 `stop_during_policy`。
+
+### 修复
+
+- `Stack.Setup`：abort/`context.Canceled` **立即返回 error**，禁止走 forward_only 成功分支。
+- `via_exit_setup`：取消用 Info，不打 ERROR 堆栈。
+- 单测：`TestSetupAbortNotForwardOnlySuccess`。
+
+### 期望日志
+
+`ICS 启用已取消` → `netstack setup aborted` / `via_exit_setup aborted` → `policy_apply aborted reason=engine_stop`（勿再 `via_exit_setup ok snat=false`）。
+
+---
+
+## 2026-08-31 · 现场日志确认：HardRestart 竞态已修复 + ICS 可取消
+
+### 现场日志（22:39）对比旧日志（22:30）
+
+| 项 | 修复前 | 修复后 |
+|----|--------|--------|
+| HardRestart 耗时 | ~42s（空跑 ICS + soft 重连 + teardown） | **~3.0s** |
+| policy | 跑完 via/ICS | `policy_apply aborted stage=before_via` |
+| soft 重连 | `dataplane_keep` / `将重连` | **无** |
+| Stop | 后 cancel | `engine_stop begin` 先于 abort |
+
+### 残留补强
+
+ICS **已开始**时旧版仍须等 PowerShell 结束。现：`Stack.Setup(ctx)` + `RunPSOneShotContext`（Kill powershell）；ICS 后 1.5s 等待可打断。第 25 轮起探测/Disable 亦 Context 可 Kill。
+
+### 验证
+
+- 现场日志如上；`go test ./internal/winnet/ ./internal/netstack/ ./internal/clientapp/ ./internal/clientgui/ -count=1`
+- `TestRunPSOneShotContextCanceled` / `CancelDuringSleep`
+
+---
+
+## 2026-08-31 · 日志实证：连接中 HardRestart 与 policy/ICS 竞态
+
+### 日志时间线（摘要）
+
+`gui_reconnect`/`hard_restart begin` 发生在首次 `policy_apply` 的 DNS 之后、via/ICS 完成之前；随后仍跑完 ~20s ICS → `session_abandoned disconnected_during_policy` → `dataplane_keep`/`将重连` → 再 `dataplane_clear reason=stop`（HardRestart 总耗时 ~42s）。
+
+### 根因（已用代码路径验证）
+
+1. `Engine.Stop` 旧顺序：先 `rc.Stop`（关 Conn 并等 onConnect）**后** `cancel` → `applyPolicy` 看不到取消，ICS 空跑。
+2. policy 结束后因 `activeConn` 已清走 soft 重连分支（`dataplane_keep`），与 HardRestart 叠在一起。
+3. reconnect loop 在 `Done` 后仍打「将重连」再被 stop 打断。
+
+### 修复
+
+- `Stop`：先 `stopping`+`cancel(runCtx)`，再清 activeConn、`rc.Stop`、清数据面；日志 `engine_stop begin/done`。
+- `applyPolicy(ctx)`：`before_dns`/`before_via` 检查 cancel；abort 不走 `dataplaneFailed`。
+- `session_abandoned`：`isStopping` → `stop_during_policy`，禁止 soft 重连。
+- reconnect：`Done` 后若已 stop 直接 return，不打「将重连」。
+
+### 验证
+
+- `go test ./internal/clientapp/ ./internal/transport/ ./internal/clientgui/ -count=1`
+- 单测：`TestApplyPolicyAbortedAtStart`、`TestStopCancelsRunContext`、`TestIsStoppingSetByStop`
+
+---
+
+## 2026-08-31 · GUI 连接中重连/退出抢占与状态机收口
+
+### 问题
+
+连接/HardRestart 进行中再点「重新连接」：旧清理与新拨号观感并行、二次重连无效；busy 时「退出登录/退出」被直接拒绝；HardRestart 新引擎未挂 `OnDataplaneFailed`；`eng==nil` 时重连静默 return。
+
+### 修复
+
+- `opGen` + `pendingIntent`（logout/quit/reconnect）：busy 时排队；reconnect bump gen。
+- `HardRestart(..., abort)`：Stop/DNS/Start 间隙可中止 → `ErrHardRestartAborted`。
+- `finishHardRestartUI`：supersede/abort/失败/成功后 pending 统一经 orphan Stop，禁止未挂载 eng 泄漏。
+- 登录与 HardRestart 共用 `attachDataplaneHook`；重连允许 `eng==nil`（失败清理后）。
+
+### 验证
+
+- `go test ./internal/clientgui/ ./internal/clientapp/ -count=1`
+- 日志：`gui_reconnect deferred` / `gui_logout deferred` / `gui_hard_restart aborted|superseded|mounted`
+
+---
+
+## 2026-08-31 · GUI 托盘/登录状态机修复（审查收口）
+
+### 问题
+
+1. 退出登录后主界面已回登录页，托盘 tip 仍「正在断开…」。
+2. 登录连不上服务端时：登录钮/文案卡「正在连接」，托盘已红并提示失败。
+
+### 根因与修复
+
+- tip：`engOpBusy` 时强制断开文案；登出回调先 `applyTray` 后 `endEngineOp` 且 end 不刷 tip → tip 锁死。改为先 end 再回登录；`endEngineOp` 必 `refreshTrayTooltip`。
+- 登录失败：`finishLoginFailure` 立刻红字+`trayStickyErr`；再 `beginEngineOp` 串行 Stop（禁未清完就 NewEngine）；busy 时 sticky **优先于**「正在断开」。
+- 审查补洞：HardRestart Start 失败须 Stop 返回的 eng（禁 setEngine 僵尸）；SaveClient 失败仍进主窗；数据面失败经 `pendingLogoutMsg` 回登录保留原因；`applyTray` 无桌面托盘也更新 `trayKind`；超时文案勿盖真实 LastError。
+
+### 验证
+
+- `go test ./internal/clientgui/ ./internal/clientapp/ -count=1`
+- 关键日志：`gui_login_fail` / `gui_login_fail cleanup_done` / `gui_hard_restart_fail cleanup_done`
+
+---
+
 ## 2026-08-31 · 文档治理（对齐 0.1.3 / 第 24 轮）
 
 ### 目标

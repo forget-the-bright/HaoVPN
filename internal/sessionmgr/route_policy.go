@@ -5,33 +5,28 @@ import (
 	"time"
 
 	"haovpn/internal/netutil"
+	"haovpn/internal/safeutil"
 )
 
 // route_policy.go：入站源/目的校验与横向访问策略（无 I/O）。
+// IP 网段命中 / TUN 噪声判定委托 netutil；WARN 限频委托 safeutil.AllowEvery。
 
 // sourceIPAllowed 入站源地址是否合法：本账号 VPN IP，或 via 出口注册网段内（LAN 回程）。
+//
+// ExitLAN 旁路：via 客户端经 LAN 回程时源 IP 为 PLC/工控网段而非 VPN IP，须匹配 ps.ExitLANs。
 func sourceIPAllowed(ps *AccountSession, src net.IP) bool {
 	if ps == nil || src == nil {
 		return false
 	}
-	srcStr := src.String()
-	if ps.VPNIP != "" && srcStr == ps.VPNIP {
-		return true
-	}
-	return sourceFromExitLAN(ps, src)
+	return netutil.VPNIPOrInNets(ps.VPNIP, ps.ExitLANs, src)
 }
 
-// sourceFromExitLAN 源 IP 是否落在本会话 via 广告网段（不含本账号 VPN IP）。
+// sourceFromExitLAN 源 IP 是否落在本会话 via 广告网段（不含本账号 VPN IP 短路，仅网段）。
 func sourceFromExitLAN(ps *AccountSession, src net.IP) bool {
 	if ps == nil || src == nil {
 		return false
 	}
-	for _, n := range ps.ExitLANs {
-		if n != nil && n.Contains(src) {
-			return true
-		}
-	}
-	return false
+	return netutil.IPInAnyNet(ps.ExitLANs, src)
 }
 
 // shouldWarnSpoof 伪造源 WARN 限流：每会话至少间隔 10s 打一条。
@@ -39,55 +34,24 @@ func shouldWarnSpoof(ps *AccountSession) bool {
 	if ps == nil {
 		return true
 	}
-	now := time.Now().UnixNano()
-	last := ps.lastSpoofWarn.Load()
-	if now-last < int64(10*time.Second) {
-		return false
-	}
-	return ps.lastSpoofWarn.CompareAndSwap(last, now)
+	return safeutil.AllowEvery(&ps.lastSpoofWarn, 10*time.Second)
 }
 
-// isNoiseSourceIP 常见无害噪声源（DHCP 0.0.0.0 等）。
-func isNoiseSourceIP(ip net.IP) bool {
-	if ip == nil {
+// shouldWarnDstOverreach 越权目的 WARN 限流：每会话至少间隔 10s 打一条（对称伪造源）。
+// 重连后 OS 常瞬时灌入大量公网/DNS 噪声；无限流会淹没 live 日志。
+func shouldWarnDstOverreach(ps *AccountSession) bool {
+	if ps == nil {
 		return true
 	}
-	if ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return true
-	}
-	return false
+	return safeutil.AllowEvery(&ps.lastDstWarn, 10*time.Second)
 }
 
 // dstAllowed 判断目的 IP 是否在该会话 VPN IP 或 AllowedIPs 网段内。
 func (m *Manager) dstAllowed(ps *AccountSession, dst net.IP) bool {
-	if ps.VPNIP != "" && dst.String() == ps.VPNIP {
-		return true
-	}
-	for _, n := range ps.AllowedIPs {
-		if n.Contains(dst) {
-			return true
-		}
-	}
-	return false
-}
-
-// isMulticastOrLinkLocal 判断 Windows 常经 TUN 漏出的组播/链路本地/广播探测（非真实越权单播）。
-func isMulticastOrLinkLocal(ip net.IP) bool {
-	if ip == nil {
+	if ps == nil {
 		return false
 	}
-	if netutil.IsLimitedBroadcast(ip) {
-		return true
-	}
-	if ip.IsMulticast() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
-		return true
-	}
-	v4 := ip.To4()
-	if v4 == nil {
-		return false
-	}
-	// 224.0.0.0/4 组播；239.255.255.250 SSDP 等
-	return v4[0] >= 224 && v4[0] <= 239
+	return netutil.VPNIPOrInNets(ps.VPNIP, ps.AllowedIPs, dst)
 }
 
 // isOtherAccountVPNIP 判断 dstIP 是否属于其他账号的 VPN IP（横向访问检测）。

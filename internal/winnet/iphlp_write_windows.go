@@ -11,12 +11,15 @@ import (
 	"golang.org/x/sys/windows"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
 )
 
 var (
 	procInitializeUnicastIpAddressEntry = iphlpapi.NewProc("InitializeUnicastIpAddressEntry")
 	procCreateUnicastIpAddressEntry     = iphlpapi.NewProc("CreateUnicastIpAddressEntry")
+	procDeleteUnicastIpAddressEntry     = iphlpapi.NewProc("DeleteUnicastIpAddressEntry")
 	procCreateIpForwardEntry2           = iphlpapi.NewProc("CreateIpForwardEntry2")
+	procDeleteIpForwardEntry2           = iphlpapi.NewProc("DeleteIpForwardEntry2")
 	procInitializeIpForwardEntry        = iphlpapi.NewProc("InitializeIpForwardEntry")
 	procConvertInterfaceIndexToLuid     = iphlpapi.NewProc("ConvertInterfaceIndexToLuid")
 )
@@ -24,21 +27,117 @@ var (
 // errorObjectAlreadyExists Windows ERROR_OBJECT_ALREADY_EXISTS (5010)。
 const errorObjectAlreadyExists windows.Errno = 5010
 
-// SetInterfaceIPv4OnIndex 优先 CreateUnicastIpAddressEntry；失败回退 netsh。
+// errorNotFound Windows ERROR_NOT_FOUND (1168) — 删除路由时目标不存在视为成功。
+const errorNotFound windows.Errno = 1168
+
+// SetInterfaceIPv4OnIndex 优先替换式配 IP（删旧加新）；失败回退 netsh set address。
+//
+// 为何替换：Wintun Close 保留适配器，仅 Create 会导致在线改 VPN IP 后双地址残留。
 func SetInterfaceIPv4OnIndex(ifIndex int, ifName, ip string, prefixLen int) error {
 	start := time.Now()
 	if UseIPHelperEnabled() && ifIndex > 0 {
-		if err := createUnicastIPv4(ifIndex, ip, prefixLen); err == nil {
-			logger.Info("assign_ip method=iphlp elapsed=%s ifIndex=%d ip=%s/%d", time.Since(start), ifIndex, ip, prefixLen)
+		removed, kept, err := ReplaceInterfaceIPv4(ifIndex, ip, prefixLen)
+		if err == nil {
+			logger.Info("assign_ip method=iphlp replace removed=%v kept=%s/%d elapsed=%s ifIndex=%d",
+				removed, kept, prefixLen, time.Since(start), ifIndex)
 			return nil
-		} else {
-			logger.Warn("assign_ip method=iphlp fail elapsed=%s: %v，回退 netsh", time.Since(start), err)
 		}
+		logger.Warn("assign_ip method=iphlp replace fail elapsed=%s: %v，回退 netsh", time.Since(start), err)
 	}
 	mask := prefixLenToMask(prefixLen)
 	err := SetInterfaceIPv4(ifName, ip, mask)
 	logger.Info("assign_ip method=netsh elapsed=%s ifName=%s err=%v", time.Since(start), ifName, err)
 	return err
+}
+
+// ReplaceInterfaceIPv4 将 ifIndex 上的 IPv4 收敛为唯一 wantIP/prefixLen。
+//
+// 步骤：列出单播 → 删除 ≠ wantIP（含 137）→ 若 want 缺失或前缀不对则删重建。
+// 返回：removed 被删地址列表；kept 最终保留的 wantIP；同 IP 且无多余时 removed 为空（快路径）。
+// 软换 IP 且 ICS 仍在时用 ReplaceInterfaceIPv4KeepICS。
+func ReplaceInterfaceIPv4(ifIndex int, wantIP string, prefixLen int) (removed []string, kept string, err error) {
+	return replaceInterfaceIPv4(ifIndex, wantIP, prefixLen, false)
+}
+
+// ReplaceInterfaceIPv4KeepICS 同 ReplaceInterfaceIPv4，但保留 192.168.137.*（在线软换 VPN IP）。
+func ReplaceInterfaceIPv4KeepICS(ifIndex int, wantIP string, prefixLen int) (removed []string, kept string, err error) {
+	return replaceInterfaceIPv4(ifIndex, wantIP, prefixLen, true)
+}
+
+func replaceInterfaceIPv4(ifIndex int, wantIP string, prefixLen int, keepICS bool) (removed []string, kept string, err error) {
+	want := net.ParseIP(wantIP).To4()
+	if want == nil {
+		return nil, "", fmt.Errorf("ReplaceInterfaceIPv4: invalid ipv4 %q", wantIP)
+	}
+	if ifIndex <= 0 {
+		return nil, "", fmt.Errorf("ReplaceInterfaceIPv4: invalid ifIndex=%d", ifIndex)
+	}
+	if prefixLen < 0 || prefixLen > 32 {
+		return nil, "", fmt.Errorf("ReplaceInterfaceIPv4: bad prefixLen=%d", prefixLen)
+	}
+
+	ents, err := unicastIPv4EntriesOnIfIndex(ifIndex)
+	if err != nil {
+		return nil, "", err
+	}
+	haveStr := make([]string, 0, len(ents))
+	for _, e := range ents {
+		haveStr = append(haveStr, e.IP.String())
+	}
+	var toRemove []string
+	if keepICS {
+		toRemove = netutil.IPv4AddrsToRemoveKeepICS(haveStr, want.String())
+	} else {
+		toRemove = netutil.IPv4AddrsToRemove(haveStr, want.String())
+	}
+	removed = append([]string{}, toRemove...)
+	removeSet := make(map[string]struct{}, len(toRemove))
+	for _, s := range toRemove {
+		removeSet[s] = struct{}{}
+	}
+
+	for _, e := range ents {
+		ipStr := e.IP.String()
+		if ipStr == want.String() {
+			continue
+		}
+		if _, ok := removeSet[ipStr]; !ok {
+			continue // KeepICS：跳过 137
+		}
+		if err := deleteUnicastIPv4(ifIndex, e.IP); err != nil {
+			return removed, "", fmt.Errorf("delete %s: %w", ipStr, err)
+		}
+	}
+
+	// 再查表：want 缺失或前缀不对则删重建（VPN 通常 /32；ICS 曾把旧 VPN 改成 /24）
+	ents2, err2 := unicastIPv4EntriesOnIfIndex(ifIndex)
+	if err2 != nil {
+		return removed, "", err2
+	}
+	wantPresent := false
+	wantPrefixOK := false
+	for _, e := range ents2 {
+		if !e.IP.Equal(want) {
+			continue
+		}
+		wantPresent = true
+		if e.PrefixLen == prefixLen {
+			wantPrefixOK = true
+		} else {
+			if err := deleteUnicastIPv4(ifIndex, e.IP); err != nil {
+				return removed, "", fmt.Errorf("delete wrong-prefix %s/%d: %w", want, e.PrefixLen, err)
+			}
+			removed = append(removed, fmt.Sprintf("%s/%d", want.String(), e.PrefixLen))
+			wantPresent = false
+			wantPrefixOK = false
+		}
+	}
+	if !wantPresent || !wantPrefixOK {
+		if err := createUnicastIPv4(ifIndex, want.String(), prefixLen); err != nil {
+			return removed, "", fmt.Errorf("create %s/%d: %w", want, prefixLen, err)
+		}
+	}
+	return removed, want.String(), nil
 }
 
 func prefixLenToMask(ones int) string {
@@ -81,6 +180,32 @@ func createUnicastIPv4(ifIndex int, ipStr string, prefixLen int) error {
 		return nil
 	}
 	return fmt.Errorf("CreateUnicastIpAddressEntry: %v code=%d", e1, r1)
+}
+
+// deleteUnicastIPv4 删除 ifIndex 上指定 IPv4；不存在视为成功。
+func deleteUnicastIPv4(ifIndex int, ip net.IP) error {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return fmt.Errorf("deleteUnicastIPv4: not ipv4")
+	}
+	var row windows.MibUnicastIpAddressRow
+	procInitializeUnicastIpAddressEntry.Call(uintptr(unsafe.Pointer(&row)))
+	row.InterfaceIndex = uint32(ifIndex)
+	sa := (*windows.RawSockaddrInet4)(unsafe.Pointer(&row.Address))
+	sa.Family = windows.AF_INET
+	copy(sa.Addr[:], ip4)
+
+	r1, _, e1 := procDeleteUnicastIpAddressEntry.Call(uintptr(unsafe.Pointer(&row)))
+	if r1 == 0 {
+		return nil
+	}
+	if errno, ok := e1.(windows.Errno); ok && (errno == errorNotFound || errno == windows.ERROR_NOT_FOUND) {
+		return nil
+	}
+	if r1 == uintptr(errorNotFound) || r1 == uintptr(windows.ERROR_NOT_FOUND) {
+		return nil
+	}
+	return fmt.Errorf("DeleteUnicastIpAddressEntry: %v code=%d", e1, r1)
 }
 
 // ifIndexToLuid 将 ifIndex 转为接口 LUID（CreateIpForwardEntry2 / DNS GUID 需要）。
@@ -143,4 +268,40 @@ func AddOnLinkRouteIPHelper(dest net.IP, prefixLen, ifIndex int) error {
 		return nil
 	}
 	return fmt.Errorf("CreateIpForwardEntry2: %v code=%d", e1, r1)
+}
+
+// DeleteOnLinkRouteIPHelper 用 DeleteIpForwardEntry2 删除 on-link 分流路由。
+// 路由不存在（ERROR_NOT_FOUND）视为成功，供 Stop 路径幂等清理。
+func DeleteOnLinkRouteIPHelper(dest net.IP, prefixLen, ifIndex int) error {
+	if !UseIPHelperEnabled() || ifIndex <= 0 {
+		return fmt.Errorf("ip helper disabled")
+	}
+	dest4 := dest.To4()
+	if dest4 == nil {
+		return fmt.Errorf("dest not ipv4")
+	}
+	luid, err := ifIndexToLuid(ifIndex)
+	if err != nil {
+		return err
+	}
+
+	var row windows.MibIpForwardRow2
+	procInitializeIpForwardEntry.Call(uintptr(unsafe.Pointer(&row)))
+	row.InterfaceLuid = luid
+	row.InterfaceIndex = uint32(ifIndex)
+	setSockaddrInet4(&row.DestinationPrefix.Prefix, dest4)
+	row.DestinationPrefix.PrefixLength = uint8(prefixLen)
+	row.Protocol = windows.MIB_IPPROTO_NETMGMT
+
+	r1, _, e1 := procDeleteIpForwardEntry2.Call(uintptr(unsafe.Pointer(&row)))
+	if r1 == 0 {
+		return nil
+	}
+	if errno, ok := e1.(windows.Errno); ok && (errno == errorNotFound || errno == windows.ERROR_NOT_FOUND) {
+		return nil
+	}
+	if r1 == uintptr(errorNotFound) || r1 == uintptr(windows.ERROR_NOT_FOUND) {
+		return nil
+	}
+	return fmt.Errorf("DeleteIpForwardEntry2: %v code=%d", e1, r1)
 }

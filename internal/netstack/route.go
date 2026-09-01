@@ -1,13 +1,14 @@
 package netstack
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
 	"time"
 
 	"haovpn/internal/logger"
-	"haovpn/internal/netutil"
+	"haovpn/internal/safeutil"
 )
 
 // Config 服务端 NAT / 转发所需参数（来自 config.NATSection 与 TUN 信息）。
@@ -20,6 +21,8 @@ import (
 //   OutboundIf — 可选；Windows ICS 公网侧网卡名，空则自动探测。
 //   ForwardOnly — SNAT 全部失败时是否仍仅开 IP 转发（health nat_ok=false）。
 //   Enabled — 对应 nat.enabled；false 时 Setup/Teardown 均为无操作。
+//
+// 生命周期：取消上下文不放本结构（易陈旧）；传给 Setup(ctx)/Teardown(ctx)。
 type Config struct {
 	TunName     string   // TUN 网卡名，如 haovpn0
 	TunIP       net.IP   // 服务端 TUN IP（网关）
@@ -36,7 +39,9 @@ type Config struct {
 // 线程安全：实例方法非并发安全，须由单 goroutine（服务端主流程）调用。
 type Stack struct {
 	cfg         Config
-	snatEnabled bool // 是否已成功配置 SNAT/MASQUERADE
+	snatEnabled bool            // 是否已成功配置 SNAT/MASQUERADE
+	icsUsed     bool            // 本次 Setup 是否走了 Windows ICS
+	icsPlan     ICSOutboundPlan // ICS 决策（仅 icsUsed 时有意义）
 }
 
 // New 创建 netstack 管理器，不触发任何系统变更。
@@ -54,13 +59,57 @@ func (s *Stack) SNATEnabled() bool {
 	return s.snatEnabled
 }
 
+// UsedICS 报告最近一次成功 Setup 是否启用了 Windows ICS（非 WinNAT）。
+func (s *Stack) UsedICS() bool {
+	return s.icsUsed
+}
+
+// ICSLocalLANsHint 用户可见 ICS 多网卡提示（有跳过或同网卡多段 Info）；未走 ICS 或无可提示时为空。
+func (s *Stack) ICSLocalLANsHint() string {
+	if !s.icsUsed {
+		return ""
+	}
+	return FormatICSLocalLANsHint(s.icsPlan)
+}
+
+// ICSActiveCIDRs ICS 实际生效的网段；未走 ICS 时返回空切片（调用方应用全部 LanCIDRs）。
+func (s *Stack) ICSActiveCIDRs() []string {
+	if !s.icsUsed {
+		return nil
+	}
+	out := make([]string, 0, len(s.icsPlan.Active))
+	for _, b := range s.icsPlan.Active {
+		if c := strings.TrimSpace(b.CIDR); c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// ICSSkippedCIDRs ICS 因异网卡等原因未生效的网段。
+func (s *Stack) ICSSkippedCIDRs() []string {
+	if !s.icsUsed {
+		return nil
+	}
+	out := make([]string, 0, len(s.icsPlan.Skipped))
+	for _, b := range s.icsPlan.Skipped {
+		if c := strings.TrimSpace(b.CIDR); c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // Setup 启用系统 IP 转发并为每个 LanCIDR 配置 VPN→LAN 的 NAT。
 //
-// 参数：无（使用 New 时的 Config）。
-// 返回：Enabled=false 时 nil；全部 SNAT 失败且非 forward_only 时 error。
+// 参数：ctx — Stop/HardRestart 取消时 Kill ICS/探测 PowerShell；nil 等同 Background。
+// 返回：Enabled=false 时 nil；全部 SNAT 失败且非 forward_only 时 error；
+//
+//	ctx 取消时返回 context.Canceled（不得当作 forward_only「无 SNAT 成功」）。
+//
 // 副作用：写 iptables/WinNAT/ICS、注册表 IPEnableRouter 等（依平台）。
 // 并发：非并发安全。
-func (s *Stack) Setup() error {
+func (s *Stack) Setup(ctx context.Context) error {
 	if !s.cfg.Enabled {
 		logger.Info("netstack: NAT/转发已关闭（nat.enabled=false）")
 		return nil
@@ -68,65 +117,76 @@ func (s *Stack) Setup() error {
 	if s.cfg.VPNSubnet == "" {
 		return fmt.Errorf("netstack: VPNSubnet 为空，无法配置 SNAT")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := safeutil.Check(ctx); err != nil {
+		logger.Info("netstack setup aborted err=%v", err)
+		return err
+	}
 	if err := enableIPForwardPlatform(); err != nil {
 		return fmt.Errorf("启用 IP 转发失败: %w", err)
 	}
 	logger.Info("netstack: IP 转发已开启")
 
-	var errs []string
-	okCount := 0
-	for _, lan := range s.cfg.LanCIDRs {
-		if err := setupNATPlatform(s.cfg.VPNSubnet, lan, s.cfg.TunName, s.cfg.TunIP, s.cfg.OutboundIf); err != nil {
-			errs = append(errs, fmt.Sprintf("NAT %s→%s: %v", s.cfg.VPNSubnet, lan, err))
-			logger.Error("netstack NAT 失败: %v", err)
-			continue
-		}
-		okCount++
-		logger.Info("netstack: NAT 已配置 VPN %s → LAN %s", s.cfg.VPNSubnet, lan)
-	}
-	s.snatEnabled = okCount > 0
 	if len(s.cfg.LanCIDRs) == 0 {
 		logger.Warn("netstack: allowed_lan_cidrs 为空，仅开启转发、未加 SNAT 规则")
+		s.snatEnabled = false
+		s.icsUsed = false
+		s.icsPlan = ICSOutboundPlan{}
+		logger.Info("netstack setup 完成 lan_count=0 snat=false")
+		return nil
 	}
-	if len(errs) > 0 && len(errs) == len(s.cfg.LanCIDRs) {
+
+	out, err := setupNATForLANs(ctx, s.cfg.VPNSubnet, s.cfg.LanCIDRs, s.cfg.TunName, s.cfg.TunIP, s.cfg.OutboundIf)
+	if err != nil {
+		if safeutil.IsCanceled(err) || safeutil.Check(ctx) != nil {
+			logger.Info("netstack setup aborted err=%v", err)
+			if e := safeutil.Check(ctx); e != nil {
+				return e
+			}
+			return err
+		}
 		if s.cfg.ForwardOnly {
-			logger.Warn("netstack: 全部 SNAT 失败，forward_only=true，仅 IP 转发继续（health nat_ok=false）")
-			logger.Warn("netstack: 可测隧道/ ping 网关 10.88.0.1；访问其它 LAN 需 WinNAT(Hyper-V)/Linux，或在「网络连接→WLAN→共享」手工启用 ICS 后重启")
+			logger.Warn("netstack: SNAT 失败，forward_only=true，仅 IP 转发继续（health nat_ok=false）: %v", err)
+			logger.Warn("netstack: 可测隧道/ ping 网关；访问其它 LAN 需 WinNAT(Hyper-V)/Linux，或手工启用 ICS 后重启")
+			s.snatEnabled = false
+			s.icsUsed = false
+			s.icsPlan = ICSOutboundPlan{}
 			logger.Info("netstack setup 完成（无 SNAT） lan_count=%d", len(s.cfg.LanCIDRs))
 			return nil
 		}
-		return fmt.Errorf("全部 NAT 规则失败: %s", strings.Join(errs, "; "))
+		return err
 	}
-	logger.Info("netstack setup 完成 lan_count=%d snat=%v", len(s.cfg.LanCIDRs), s.snatEnabled)
+	s.snatEnabled = true
+	s.icsUsed = out.UsedICS
+	s.icsPlan = out.Plan
+	if out.UsedICS {
+		logger.Info("netstack setup 完成 lan_count=%d snat=%v ics=true active=%d skipped=%d",
+			len(s.cfg.LanCIDRs), s.snatEnabled, len(out.Plan.Active), len(out.Plan.Skipped))
+	} else {
+		logger.Info("netstack setup 完成 lan_count=%d snat=%v", len(s.cfg.LanCIDRs), s.snatEnabled)
+	}
 	return nil
 }
 
-// ProbeIPForCIDR 取 LAN 网段内用于路由/ICS 探测的代表性 IPv4（通常为 network+1）。
-//
-// 参数：lanCIDR — 工控网段 CIDR；解析失败时回退 192.168.1.1。
-// 返回：可用于 Find-NetRoute 等探测的目标 IP 字符串。
-func ProbeIPForCIDR(lanCIDR string) string {
-	ip, ipnet, err := netutil.ParseCIDR(lanCIDR)
-	if err != nil {
-		return "192.168.1.1"
-	}
-	probe := ip.Mask(ipnet.Mask).To4()
-	if probe == nil {
-		return ip.String()
-	}
-	if probe[3] < 254 {
-		probe[3]++
-	}
-	return probe.String()
-}
+// ProbeIPForCIDR 已迁至 netutil.ProbeIPForCIDR；本包调用方请直接用 netutil。
 
 // Teardown 按 Config 拆除已配置的 NAT 规则（尽力而为，失败仅打日志）。
 //
+// 参数：ctx — 取消时 Kill 进行中的 Disable* PowerShell；正常 Stop 清数据面应传
+//
+//	context.Background()，避免因 runCtx 已取消而跳过 ICS 清理留下残留。
+//	快速退出/抢占路径可传可取消 ctx。
+//
 // 返回：Enabled=false 时 nil；个别规则删除失败不阻断整体返回。
 // 副作用：删除 iptables/NetNat；Windows 上 ICS 仅关闭一次（避免多 LAN 重复 COM 卡顿）。
-func (s *Stack) Teardown() error {
+func (s *Stack) Teardown(ctx context.Context) error {
 	if !s.cfg.Enabled {
 		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	start := time.Now()
 	for _, lan := range s.cfg.LanCIDRs {
@@ -136,7 +196,7 @@ func (s *Stack) Teardown() error {
 	}
 	// ICS 关闭与 LAN 条数无关，只做一次（每条 LAN 调一次会卡数秒×N）
 	icsStart := time.Now()
-	disableICSPlatform()
+	disableICSPlatform(ctx)
 	logger.Info("netstack teardown 完成 elapsed=%s ics_elapsed=%s lans=%d",
 		time.Since(start), time.Since(icsStart), len(s.cfg.LanCIDRs))
 	return nil

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"syscall"
 	"unsafe"
 
@@ -57,11 +56,11 @@ func openPlatform(cfg Config) (Device, error) {
 	}
 	ones, _ := ipNet.Mask.Size()
 	// 必须真正配 IP 并 UP，否则路由/转发无效
-	if out, err := exec.Command("ip", "addr", "replace", fmt.Sprintf("%s/%d", ip, ones), "dev", actualName).CombinedOutput(); err != nil {
+	if out, err := platform.Command("ip", "addr", "replace", fmt.Sprintf("%s/%d", ip, ones), "dev", actualName).CombinedOutput(); err != nil {
 		syscall.Close(fd)
 		return nil, platform.CommandOutputError("ip addr", out, err)
 	}
-	if out, err := exec.Command("ip", "link", "set", "dev", actualName, "up", "mtu", fmt.Sprintf("%d", cfg.MTU)).CombinedOutput(); err != nil {
+	if out, err := platform.Command("ip", "link", "set", "dev", actualName, "up", "mtu", fmt.Sprintf("%d", cfg.MTU)).CombinedOutput(); err != nil {
 		syscall.Close(fd)
 		return nil, platform.CommandOutputError("ip link up", out, err)
 	}

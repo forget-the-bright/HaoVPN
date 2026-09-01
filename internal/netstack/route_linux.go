@@ -3,10 +3,10 @@
 package netstack
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 
 	"haovpn/internal/logger"
@@ -21,21 +21,22 @@ func enableIPForwardPlatform() error {
 }
 
 // setupNATPlatform：VPN 子网访问 LAN 时做 MASQUERADE（源必须是 VPN 池，不是 LAN）。
-func setupNATPlatform(vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outboundIf string) error {
+func setupNATPlatform(ctx context.Context, vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outboundIf string) error {
+	_ = ctx
 	_ = outboundIf
 	_ = tunName
 	_ = tunIP
 	// FORWARD 放行
-	fwd := exec.Command("iptables", "-A", "FORWARD", "-s", vpnSubnet, "-d", lanCIDR, "-j", "ACCEPT")
+	fwd := platform.Command("iptables", "-A", "FORWARD", "-s", vpnSubnet, "-d", lanCIDR, "-j", "ACCEPT")
 	if out, err := fwd.CombinedOutput(); err != nil {
 		logger.Warn("iptables FORWARD: %s %v", strings.TrimSpace(string(out)), err)
 	}
-	fwdBack := exec.Command("iptables", "-A", "FORWARD", "-s", lanCIDR, "-d", vpnSubnet, "-j", "ACCEPT")
+	fwdBack := platform.Command("iptables", "-A", "FORWARD", "-s", lanCIDR, "-d", vpnSubnet, "-j", "ACCEPT")
 	if out, err := fwdBack.CombinedOutput(); err != nil {
 		logger.Warn("iptables FORWARD back: %s %v", strings.TrimSpace(string(out)), err)
 	}
 	// SNAT/MASQUERADE：来自 VPN 去往 LAN
-	cmd := exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING",
+	cmd := platform.Command("iptables", "-t", "nat", "-A", "POSTROUTING",
 		"-s", vpnSubnet, "-d", lanCIDR, "-j", "MASQUERADE")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -44,26 +45,44 @@ func setupNATPlatform(vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outbound
 	return nil
 }
 
+// setupNATForLANs Linux：逐条 LAN 配置 MASQUERADE（无 ICS 多网卡限制）。
+func setupNATForLANs(ctx context.Context, vpnSubnet string, lanCIDRs []string, tunName string, tunIP net.IP, outboundIf string) (NATSetupOutcome, error) {
+	var errs []string
+	for _, lan := range lanCIDRs {
+		if err := setupNATPlatform(ctx, vpnSubnet, lan, tunName, tunIP, outboundIf); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", lan, err))
+			logger.Error("netstack NAT 失败: %v", err)
+			continue
+		}
+		logger.Info("netstack: NAT 已配置 VPN %s → LAN %s", vpnSubnet, lan)
+	}
+	if len(errs) > 0 && len(errs) == len(lanCIDRs) {
+		return NATSetupOutcome{}, fmt.Errorf("全部 NAT 规则失败: %s", strings.Join(errs, "; "))
+	}
+	// 部分失败：已有成功规则，与历史 Setup 行为一致（snatEnabled=true）
+	return NATSetupOutcome{}, nil
+}
+
 func teardownNATPlatform(vpnSubnet, lanCIDR, tunName string) error {
 	_ = tunName
-	_ = exec.Command("iptables", "-D", "FORWARD", "-s", vpnSubnet, "-d", lanCIDR, "-j", "ACCEPT").Run()
-	_ = exec.Command("iptables", "-D", "FORWARD", "-s", lanCIDR, "-d", vpnSubnet, "-j", "ACCEPT").Run()
-	_ = exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING",
+	_ = platform.Command("iptables", "-D", "FORWARD", "-s", vpnSubnet, "-d", lanCIDR, "-j", "ACCEPT").Run()
+	_ = platform.Command("iptables", "-D", "FORWARD", "-s", lanCIDR, "-d", vpnSubnet, "-j", "ACCEPT").Run()
+	_ = platform.Command("iptables", "-t", "nat", "-D", "POSTROUTING",
 		"-s", vpnSubnet, "-d", lanCIDR, "-j", "MASQUERADE").Run()
 	return nil
 }
 
 // disableICSPlatform Linux 无 ICS。
-func disableICSPlatform() {}
+func disableICSPlatform(ctx context.Context) { _ = ctx }
 
 func addClientRoutePlatform(cidr, tunName, gateway string) error {
-	var cmd *exec.Cmd
+	var out []byte
+	var err error
 	if gateway != "" {
-		cmd = exec.Command("ip", "route", "replace", cidr, "via", gateway, "dev", tunName)
+		out, err = platform.Command("ip", "route", "replace", cidr, "via", gateway, "dev", tunName).CombinedOutput()
 	} else {
-		cmd = exec.Command("ip", "route", "replace", cidr, "dev", tunName)
+		out, err = platform.Command("ip", "route", "replace", cidr, "dev", tunName).CombinedOutput()
 	}
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return platform.CommandOutputError("ip route replace "+cidr, out, err)
 	}
@@ -72,7 +91,6 @@ func addClientRoutePlatform(cidr, tunName, gateway string) error {
 
 func delClientRoutePlatform(cidr, tunName, gateway string) error {
 	_ = gateway
-	cmd := exec.Command("ip", "route", "del", cidr, "dev", tunName)
-	_ = cmd.Run()
+	_ = platform.Command("ip", "route", "del", cidr, "dev", tunName).Run()
 	return nil
 }

@@ -40,11 +40,6 @@ type dnsInterfaceSettings struct {
 	ProfileNameServer    *uint16
 }
 
-// SetInterfaceDNSStatic 优先 SetInterfaceDnsSettings；失败回退 netsh。
-func SetInterfaceDNSStatic(ifName, server string) error {
-	return SetInterfaceDNSServers(ifName, 0, []string{server})
-}
-
 // SetInterfaceDNSServers 写入静态 DNS 列表（逗号分隔 NameServer）。
 // ifIndex>0 时走 Index→LUID→GUID；否则尝试按 ifName 解析 ifIndex。
 func SetInterfaceDNSServers(ifName string, ifIndex int, servers []string) error {

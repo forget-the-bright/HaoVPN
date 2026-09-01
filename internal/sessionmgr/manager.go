@@ -6,16 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"haovpn/internal/auth"
 	"haovpn/internal/config"
 	"haovpn/internal/crypto"
 	"haovpn/internal/persist"
 )
-
-// ErrAccountAlreadyOnline 兼容别名：哨兵定义在 auth（切断 clientapp→sessionmgr 仅为错误类型的依赖）。
-//
-// Deprecated: 新代码请用 auth.ErrAccountAlreadyOnline。
-var ErrAccountAlreadyOnline = auth.ErrAccountAlreadyOnline
 
 // Manager 维护多账号 VPN 隧道在线会话，负责注册、踢线、TUN 出站路由与入站包校验。
 //
@@ -31,6 +25,8 @@ var ErrAccountAlreadyOnline = auth.ErrAccountAlreadyOnline
 //   reconnectGrace — 同公网 IP 短窗内顶替旧会话并续算流量；0=关闭。
 //   onKick — 强制踢线后的回调（如禁用/改策略后通知上层）；无论是否在线都会触发。
 //   onDisconnect — 断线或踢线后按 ip_mode 回收 IP 的回调。
+//
+// 账号已在线哨兵：auth.ErrAccountAlreadyOnline（本包不再 re-export 别名）。
 //
 // 线程安全：导出方法内部持 mu；RouteOutbound/HandleInbound 使用 RLock。
 type Manager struct {
@@ -74,6 +70,9 @@ type viaRouteEntry struct {
 //   lastStatFlush — 上次写入 session_stats 的 UnixNano；atomic，用于流量统计节流。
 //   ExitLANs — via 出口广告网段（来自 client_lan_registry）；允许这些源 IP 入站回程（否则 SNAT 回程会被当伪造源丢掉）。
 //   lastSpoofWarn — 伪造源 WARN 限流时间戳（UnixNano）。
+//   lastDstWarn — 越权目的 WARN 限流时间戳（UnixNano）。
+//   dstDropCount — 越权目的累计丢弃次数（限频 WARN 时打出）。
+//   lanRegistrySyncCount / lastLANRegistrySync — 本会话 post-auth lan_registry 次数与时间，防刷库。
 type AccountSession struct {
 	UserID        int64
 	PublicKey     string
@@ -93,6 +92,12 @@ type AccountSession struct {
 	ConnectedAt   time.Time
 	lastStatFlush atomic.Int64
 	lastSpoofWarn atomic.Int64
+	lastDstWarn   atomic.Int64
+	dstDropCount  atomic.Uint64
+	// lanRegistrySyncCount 本连接已接受的 lan_registry 次数（含本次数）。
+	lanRegistrySyncCount int
+	// lastLANRegistrySync 上次接受 lan_registry 的时间。
+	lastLANRegistrySync time.Time
 }
 
 // PeerReg 注册会话时附带的 peer/托管路由策略（由 vpnaccount.ResolveClientPolicy 填充）。

@@ -9,9 +9,10 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
-	"haovpn/internal/autostart"
+	"haovpn/internal/clientapp"
 	"haovpn/internal/brand"
 	"haovpn/internal/logger"
+	"haovpn/internal/safeutil"
 	"haovpn/internal/singleinstance"
 )
 
@@ -65,33 +66,19 @@ func WaitSingleInstanceFree(timeout time.Duration) bool {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if !singleinstance.ClientAlreadyRunning() {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return !singleinstance.ClientAlreadyRunning()
+	return safeutil.PollUntil(time.Now().Add(timeout), 50*time.Millisecond, nil, func() bool {
+		return !singleinstance.ClientAlreadyRunning()
+	})
 }
 
-// StopServiceForTakeover 停止 HaoVPN 客户端服务并等待（超时见 autostart.DefaultServiceStopTimeout）。
+// StopServiceForTakeover 停止 HaoVPN 客户端服务并等待（超时见 clientapp.DefaultServiceStopTimeout）。
 func StopServiceForTakeover() error {
 	logger.Info("gui_takeover stop_service begin")
-	err := autostart.ServiceStopAndWait(autostart.DefaultServiceStopTimeout)
+	err := clientapp.ServiceStopAndWait(clientapp.DefaultServiceStopTimeout)
 	if err != nil {
 		logger.Warn("gui_takeover stop_service: %v", err)
 		return err
 	}
 	logger.Info("gui_takeover stop_service done")
 	return nil
-}
-
-// resolveGUIExe 当前进程 exe 绝对路径。
-func resolveGUIExe() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	return absPath(exe)
 }

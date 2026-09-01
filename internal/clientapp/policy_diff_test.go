@@ -60,7 +60,7 @@ func TestRouteSetDiff(t *testing.T) {
 	}
 }
 
-// TestViaFingerprint 相同配置指纹一致；空 lans 为空串。
+// TestViaFingerprint 相同配置指纹一致；空 lans 为空串；tunIP 不参与指纹。
 func TestViaFingerprint(t *testing.T) {
 	if viaFingerprint(nil, "10.88.0.0/24", "10.88.0.2") != "" {
 		t.Fatal("空 lans 指纹应空")
@@ -69,6 +69,10 @@ func TestViaFingerprint(t *testing.T) {
 	b := viaFingerprint([]string{"192.168.31.0/24"}, "10.88.0.0/24", "10.88.0.2")
 	if a == "" || a != b {
 		t.Fatalf("相同配置指纹应一致 a=%q b=%q", a, b)
+	}
+	sameLansDiffIP := viaFingerprint([]string{"192.168.31.0/24"}, "10.88.0.0/24", "10.88.0.9")
+	if a != sameLansDiffIP {
+		t.Fatalf("tunIP 不应影响指纹 a=%q ip9=%q", a, sameLansDiffIP)
 	}
 	c := viaFingerprint([]string{"192.168.32.0/24"}, "10.88.0.0/24", "10.88.0.2")
 	if a == c {
@@ -90,7 +94,18 @@ func TestDNSServersEqual(t *testing.T) {
 	}
 }
 
-// TestWillViaSetupLocked 有 local_lans 且指纹未应用时应推迟路由；已 Setup 相同指纹则否。
+// TestRouteListsEqual 软换 IP 路由 noop 决策。
+func TestRouteListsEqual(t *testing.T) {
+	a := []string{"10.88.0.0/24", "192.168.3.0/24"}
+	b := []string{"192.168.3.0/24", "10.88.0.0/24"}
+	if !routeListsEqual(a, b) {
+		t.Fatal("顺序不同应相等")
+	}
+	if routeListsEqual(a, []string{"10.88.0.0/24"}) {
+		t.Fatal("条数不同应不等")
+	}
+}
+
 func TestWillViaSetupLocked(t *testing.T) {
 	rt := &runtime{}
 	lans := []string{"192.168.31.0/24"}
@@ -105,6 +120,9 @@ func TestWillViaSetupLocked(t *testing.T) {
 	rt.via = &viaExit{stack: &netstack.Stack{}} // 非 nil 即表示已有 stack（不调用方法）
 	if rt.willViaSetupLocked("10.88.0.0/24", "10.88.0.2", lans) {
 		t.Fatal("指纹未变且 stack 在，不应再 Setup")
+	}
+	if rt.willViaSetupLocked("10.88.0.0/24", "10.88.0.9", lans) {
+		t.Fatal("仅 tunIP 变不应再 Setup（指纹不含 IP）")
 	}
 	if !rt.willViaSetupLocked("10.88.0.0/16", "10.88.0.2", lans) {
 		t.Fatal("subnet 变应再 Setup")

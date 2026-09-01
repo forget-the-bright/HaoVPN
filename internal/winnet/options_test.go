@@ -1,7 +1,6 @@
 package winnet_test
 
 import (
-	"net"
 	"testing"
 
 	"haovpn/internal/config"
@@ -30,12 +29,5 @@ func TestConfigureOptions(t *testing.T) {
 	winnet.Configure(winnet.Options{UseIPHelper: true})
 	if !winnet.UseIPHelperEnabled() {
 		t.Fatal("应为 true")
-	}
-}
-
-// TestIPv4AfterConfigure 钉 Configure 不破坏 ICS 地址判定。
-func TestIPv4AfterConfigure(t *testing.T) {
-	if !winnet.IPv4IsICSPrivate(net.ParseIP("192.168.137.1")) {
-		t.Fatal("137 应为 ICS")
 	}
 }

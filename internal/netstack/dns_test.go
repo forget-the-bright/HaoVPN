@@ -35,19 +35,6 @@ func TestDNSSavedTakeDoesNotRepollute(t *testing.T) {
 	}
 }
 
-func TestParseCIDRToV4Mask(t *testing.T) {
-	ip, mask, err := netutil.ParseCIDRToV4Mask("192.168.1.0/24")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ip != 0xc0a80100 {
-		t.Fatalf("ip=%x", ip)
-	}
-	if mask != 0xffffff00 {
-		t.Fatalf("mask=%x", mask)
-	}
-}
-
 // TestSelectProductFilterIDs 仅删除本产品子层过滤器。
 func TestSelectProductFilterIDs(t *testing.T) {
 	product := HaoVPNKillSublayerBytes()

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"haovpn/internal/auth"
 	"haovpn/internal/crypto"
 	"haovpn/internal/persist"
 )
@@ -20,11 +21,12 @@ func TestLateralAllowAllPeers(t *testing.T) {
 	sess1, _ := crypto.NewSession(kp1.PrivateKey, kp1.PublicKey)
 	sess2, _ := crypto.NewSession(kp2.PrivateKey, kp2.PublicKey)
 	_, n, _ := net.ParseCIDR("10.88.0.3/32")
+	conn1 := &captureConn{}
 	conn2 := &captureConn{}
 	m.mu.Lock()
 	m.sessions[1] = &AccountSession{
 		UserID: 1, VPNIP: "10.88.0.2", Crypto: sess1, AllowedIPs: []*net.IPNet{n},
-		Conn: &captureConn{},
+		Conn: conn1,
 	}
 	m.sessions[2] = &AccountSession{
 		UserID: 2, VPNIP: "10.88.0.3", Crypto: sess2, Conn: conn2,
@@ -37,7 +39,7 @@ func TestLateralAllowAllPeers(t *testing.T) {
 	copy(pkt[12:16], net.ParseIP("10.88.0.2").To4())
 	copy(pkt[16:20], net.ParseIP("10.88.0.3").To4())
 	wroteTUN := false
-	_ = m.HandleInbound(1, mustEncrypt(t, sess1, pkt), func(b []byte) error {
+	_ = m.HandleInbound(1, conn1, mustEncrypt(t, sess1, pkt), func(b []byte) error {
 		wroteTUN = true
 		return nil
 	})
@@ -58,12 +60,13 @@ func TestLateralPeerAccessWhitelist(t *testing.T) {
 	sess1, _ := crypto.NewSession(kp1.PrivateKey, kp1.PublicKey)
 	sess2, _ := crypto.NewSession(kp2.PrivateKey, kp2.PublicKey)
 	_, n, _ := net.ParseCIDR("10.88.0.3/32")
+	conn1 := &captureConn{}
 	conn2 := &captureConn{}
 	m.mu.Lock()
 	m.sessions[1] = &AccountSession{
 		UserID: 1, VPNIP: "10.88.0.2", Crypto: sess1, AllowedIPs: []*net.IPNet{n},
 		PeerAccess: map[int64]struct{}{2: {}},
-		Conn:       &captureConn{},
+		Conn:       conn1,
 	}
 	m.sessions[2] = &AccountSession{
 		UserID: 2, VPNIP: "10.88.0.3", Crypto: sess2, Conn: conn2,
@@ -76,7 +79,7 @@ func TestLateralPeerAccessWhitelist(t *testing.T) {
 	copy(pkt[12:16], net.ParseIP("10.88.0.2").To4())
 	copy(pkt[16:20], net.ParseIP("10.88.0.3").To4())
 	wroteTUN := false
-	_ = m.HandleInbound(1, mustEncrypt(t, sess1, pkt), func(b []byte) error {
+	_ = m.HandleInbound(1, conn1, mustEncrypt(t, sess1, pkt), func(b []byte) error {
 		wroteTUN = true
 		return nil
 	})
@@ -97,12 +100,13 @@ func TestLateralViaPeersForwards(t *testing.T) {
 	sess2, _ := crypto.NewSession(kp2.PrivateKey, kp2.PublicKey)
 	sess3, _ := crypto.NewSession(kp3.PrivateKey, kp3.PublicKey)
 	_, pool, _ := net.ParseCIDR("10.88.0.0/24")
+	conn2 := &captureConn{}
 	conn3 := &captureConn{}
 	m.mu.Lock()
 	m.sessions[2] = &AccountSession{
 		UserID: 2, VPNIP: "10.88.0.87", Crypto: sess2, AllowedIPs: []*net.IPNet{pool},
 		ViaPeers: map[int64]struct{}{3: {}},
-		Conn:     &captureConn{},
+		Conn:     conn2,
 	}
 	m.sessions[3] = &AccountSession{
 		UserID: 3, VPNIP: "10.88.0.2", Crypto: sess3, Conn: conn3,
@@ -114,7 +118,7 @@ func TestLateralViaPeersForwards(t *testing.T) {
 	pkt[0] = 0x45
 	copy(pkt[12:16], net.ParseIP("10.88.0.87").To4())
 	copy(pkt[16:20], net.ParseIP("10.88.0.2").To4())
-	_ = m.HandleInbound(2, mustEncrypt(t, sess2, pkt), func(b []byte) error {
+	_ = m.HandleInbound(2, conn2, mustEncrypt(t, sess2, pkt), func(b []byte) error {
 		t.Fatal("不应 writeTUN")
 		return nil
 	})
@@ -133,10 +137,11 @@ func TestRegisterVPNViaPeersAllowsLateral(t *testing.T) {
 	ua := &persist.User{ID: 2, Username: "company", PublicKey: kpA.PublicKey, VPNIP: "10.88.0.87", Enabled: true}
 	ub := &persist.User{ID: 3, Username: "wanghao", PublicKey: kpB.PublicKey, VPNIP: "10.88.0.2", Enabled: true}
 	connB := &captureConn{}
+	connA := &captureConn{}
 	if err := m.RegisterVPN(ub, []string{"10.88.0.0/24"}, connB, sessB, "1.1.1.1:1", PeerReg{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.RegisterVPN(ua, []string{"10.88.0.0/24"}, &captureConn{}, sessA, "2.2.2.2:2", PeerReg{
+	if err := m.RegisterVPN(ua, []string{"10.88.0.0/24"}, connA, sessA, "2.2.2.2:2", PeerReg{
 		ViaUserIDs: []int64{3},
 	}); err != nil {
 		t.Fatal(err)
@@ -145,7 +150,7 @@ func TestRegisterVPNViaPeersAllowsLateral(t *testing.T) {
 	pkt[0] = 0x45
 	copy(pkt[12:16], net.ParseIP("10.88.0.87").To4())
 	copy(pkt[16:20], net.ParseIP("10.88.0.2").To4())
-	_ = m.HandleInbound(2, mustEncrypt(t, sessA, pkt), func(b []byte) error {
+	_ = m.HandleInbound(2, connA, mustEncrypt(t, sessA, pkt), func(b []byte) error {
 		t.Fatal("不应 writeTUN")
 		return nil
 	})
@@ -204,13 +209,14 @@ func TestInboundManagedRouteForwardsToVia(t *testing.T) {
 	sessA, _ := crypto.NewSession(kpA.PrivateKey, kpA.PublicKey)
 	sessB, _ := crypto.NewSession(kpB.PrivateKey, kpB.PublicKey)
 	_, lan, _ := net.ParseCIDR("192.168.0.0/24")
+	connA := &captureConn{}
 	connB := &captureConn{}
 	m.mu.Lock()
 	m.sessions[1] = &AccountSession{
 		UserID: 1, VPNIP: "10.88.0.10", Crypto: sessA, AllowedIPs: []*net.IPNet{lan},
 		ViaRoutes: []viaRouteEntry{{net: lan, viaUserID: 2}},
 		ViaPeers:  map[int64]struct{}{2: {}},
-		Conn:      &captureConn{},
+		Conn:      connA,
 	}
 	m.sessions[2] = &AccountSession{
 		UserID: 2, VPNIP: "10.88.0.14", Crypto: sessB, Conn: connB,
@@ -222,7 +228,7 @@ func TestInboundManagedRouteForwardsToVia(t *testing.T) {
 	copy(pkt[12:16], net.ParseIP("10.88.0.10").To4())
 	copy(pkt[16:20], net.ParseIP("192.168.0.8").To4())
 	wroteTUN := false
-	_ = m.HandleInbound(1, mustEncrypt(t, sessA, pkt), func(b []byte) error {
+	_ = m.HandleInbound(1, connA, mustEncrypt(t, sessA, pkt), func(b []byte) error {
 		wroteTUN = true
 		return nil
 	})
@@ -271,7 +277,7 @@ func TestReconnectGraceRejectDifferentIP(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, nopConn{}, sess, "198.51.100.2:1", PeerReg{})
-	if !errors.Is(err, ErrAccountAlreadyOnline) {
+	if !errors.Is(err, auth.ErrAccountAlreadyOnline) {
 		t.Fatalf("异 IP 且活跃应拒绝, got %v", err)
 	}
 }

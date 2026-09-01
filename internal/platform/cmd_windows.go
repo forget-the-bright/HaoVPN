@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"context"
 	"os/exec"
 	"syscall"
 )
@@ -20,6 +21,13 @@ func hideWindowAttr() *syscall.SysProcAttr {
 // Command 创建无控制台窗口的子进程（route / netsh / powershell 等）。
 func Command(name string, arg ...string) *exec.Cmd {
 	cmd := exec.Command(name, arg...)
+	cmd.SysProcAttr = hideWindowAttr()
+	return cmd
+}
+
+// CommandContext 同 Command，且 ctx 取消时 Kill 子进程（Stop 打断 ICS PowerShell）。
+func CommandContext(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, arg...)
 	cmd.SysProcAttr = hideWindowAttr()
 	return cmd
 }

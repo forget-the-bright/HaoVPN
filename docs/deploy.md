@@ -177,7 +177,7 @@ cd C:\HaoVPN
 
 可选：使用 `scripts/install-windows-service.ps1`（代码落地后）注册服务。
 
-> **NAT 说明（Windows）**：专业版/已启用 Hyper-V 时优先 `New-NetNat`（WinNAT）。**Windows 家庭版**无 WinNAT（`0x80041010 Invalid class`），服务端会自动回退 **ICS**（Internet 连接共享）；live.log 应出现 `windows: ICS 已启用`。工控生产环境仍推荐 **Linux + iptables MASQUERADE**。
+> **NAT 说明（Windows）**：专业版/已启用 Hyper-V 时优先 `New-NetNat`（WinNAT）——**一条** VPN 子网 NetNat 可覆盖多个目的 LAN（不读 `outbound_interface`）。**家庭版**回退 **ICS**：出站网卡 = 配置的 `nat.outbound_interface`（若有）→ 本机同网段/专用路由 → 默认网关；多 `local_lans` 时同首网卡一并生效、异网卡跳过（`ics_multi_nic`）。live.log 应出现 `windows: ICS 已启用`。工控生产环境仍推荐 **Linux + iptables MASQUERADE**。
 
 ### 4.3 macOS
 
@@ -249,7 +249,7 @@ launchd 配置历史见 `docs/dev-log.md`。
 | `database.connection_events_retention_days` | `90` | 连接事件保留天数 |
 | `log.history_retention_days` | `90` | 结构化历史日志（`logs.db`）；`-1` 关闭 |
 | `log.history_db` | 同目录 `logs.db` | WebUI 分页检索用 |
-| 客户端 `local_lans` | 未配/空 | **手动**填写本机后面的 LAN（如 `192.168.31.0/24`）；须为 **RFC1918** 且前缀 **≥ /16**（禁 `/0`～`/15` 与公网前缀）；非空则登录上报注册表并开 via 出口；空则整条关闭。勿写入账号 AllowedIPs；勿写 ICS `192.168.137.0/24` |
+| 客户端 `local_lans` | 未配/空 | **手动**填写本机后面的 LAN（如 `192.168.31.0/24`）；须 **RFC1918** 且 **≥ /16**；**非法项连接前 Validate 失败**（不再静默丢弃）。非空则上报注册表并开 via；空=关闭。勿写 ICS `192.168.137.0/24`。**ICS 出站**：`windows.outbound_interface`（可选）→ 本机同网段/专用路由 → 默认网关；多网段异网卡见 `ics_multi_nic` + 握手上报 + `icsHint`/`skipped_lans`（新客户端**不**再 ICS 后 sync）。**WinNAT** 一条 VPN 子网覆盖多 LAN，不读 `outbound_interface` |
 
 管理控制台：维护页读 live 日志；**探针**页（`/security`）；**托管路由**页（`/peers`：注册表 + Managed Routes + 互访）；滚动大文件仅读尾部块。
 
@@ -373,7 +373,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/haovpn/haovpn-client-gui service
+ExecStart=/opt/haovpn/haovpn-client service
 Restart=on-failure
 RestartSec=5
 
@@ -435,6 +435,7 @@ api:
 | 5 | 改策略踢线 | PATCH allowed_ips | 踢线 + 重连后新策略 |
 | 6 | 禁用账号 | 禁用后 client 重连 | 握手失败 |
 | 7 | 备份 | 下载 SQLite 备份 | 文件可打开 |
+| 8 | 家庭版 via 冷启动（单/双 LAN） | 配 `local_lans`，管理员连接；看 `client.live.log` | 冷连首次 `policy_elapsed` **&lt;18s**；`tun_default_route_scrub method=skip`；软换 IP `prefer_vpn_light method=noop\|iphlp` **&lt;500ms**；`vpn_ip_inplace routes=keep`（gw/allowed 未变时） |
 
 ### 7.3 安全验收（必做）
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"syscall"
 	"unsafe"
 
@@ -46,7 +45,7 @@ func openPlatform(cfg Config) (Device, error) {
 		}
 		ones, _ := ipNet.Mask.Size()
 		// utun 必须 ifconfig 配地址，否则无 IP
-		cmd := exec.Command("ifconfig", name, "inet", ip.String(), ip.String(), "netmask", net.IP(ipNet.Mask).String(), "mtu", fmt.Sprintf("%d", cfg.MTU), "up")
+		cmd := platform.Command("ifconfig", name, "inet", ip.String(), ip.String(), "netmask", net.IP(ipNet.Mask).String(), "mtu", fmt.Sprintf("%d", cfg.MTU), "up")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			file.Close()
 			return nil, platform.CommandOutputError("ifconfig "+name, out, err)

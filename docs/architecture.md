@@ -3,7 +3,7 @@
 本文是重构后的**包导航单一来源**：分层、依赖规则、改代码去哪找。
 
 > **文档约定**：进度与轮次摘要只写 [dev-log.md](dev-log.md)；接手入口见 [记忆.md](../记忆.md)；部署/排障/加固各管一块，勿在此重复操作手册。  
-> 最近一轮（2026-08-31）：**架构解耦第 24 轮**（依赖边界、TUN/PS 校验、peer 写进 vpnaccount；见 [dev-log](dev-log.md)）。
+> 最近一轮（2026-09-01）：**架构审计第 29 轮**（ICS/egress PS 集中 / cmd 门面 / PreferVPN 组装 / 死代码 / 文档）；User DPAPI **未做**。见 [dev-log](dev-log.md)。
 
 ---
 
@@ -47,12 +47,17 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | 托管路由 / 互访 / LAN 注册 / 应用生效 | HTTP：`api/handler_peer_routes.go`、`handler_peer_access.go`、`handler_lan_registry.go`、`handler_peers_apply.go`；**写用例** `vpnaccount/peer_write.go` + dirty/apply `peer_apply.go`；DTO `readmodel/peers.go` |
 | peer dirty / 应用生效（非 HTTP） | `vpnaccount/peer_apply.go`（`PeerPolicyApplier`）；重启清空内存脏集，启动 WARN 见 `serverapp/boot_api.go` |
 | TUN 名校验 | `config.ValidateTunName`（`tun_name.go`）；客户端 Validate 强制 `[A-Za-z0-9_-]{1,64}` |
-| TUN 预热（GUI） | `clientapp.WarmupTun` → `tun.WarmupAdapter`；GUI **禁止** import tun；与 `auto_connect` 重叠（**勿** Wait 后再拨号）；Open `reuse from_warmup` |
+| TUN 预热（CLI/GUI/服务） | `clientapp.StartWarmupAsync` → `warmupTun` → `tun.WarmupAdapter`；GUI **禁止** import tun；与拨号重叠；Open `reuse from_warmup` |
+| CLI 启动契约 | `clientapp/bootstrap.go`：`RunCLI`（预热+FailFast+45s）vs `RunServiceLoop`（持续重连） |
+| GUI 引擎启动契约 | `clientapp/engine_bootstrap.go`：`PrepareEngine` + `StartAndWaitFirstAuth`（与 CLI 共用 FailFast/45s/`FormatConnectFailure`） |
+| 连接失败 / 拨号 UX 文案 | **首连** `connect_failure.go` → `FormatConnectFailure`；**拨号/TLS** `dial_errors.go` → `FormatDialError`；**已连告警** `connect_warn.go` → `MergeConnectWarns`；停止重连判定 `ShouldStopReconnectOnDial`（勿与 `dialerr.IsFatalDialError` 混淆） |
 | 服务凭据（LocalMachine DPAPI） | `clientapp.SaveServiceCredentials` → `credentials.SaveService`；GUI 禁止直接 import credentials |
-| Windows 加速/ICS 门面 | `netstack.ConfigureWindows` / `ShutdownWindows` / `HasICSResidue` 等（`winnet_facade.go`）；`clientapp` **禁止**直接 import winnet |
-| PS `-match` 转义 | `winnet.EscapeRegex` 再 `EscapeSingleQuoted`；模板 `ps_snippets.go` |
-| 记住密码（yaml 明文）债 | 仍明文写 `client.yaml`；User DPAPI **听安排** — 详见 [security-hardening.md](security-hardening.md) §8 |
-| 短时重试（Listen 等） | `safeutil.RetryN`（`safeutil/retry.go`）；指数退避 `ExpBackoff`（重连用）；长生命周期 goroutine 用 `GoSafe` |
+| Windows 加速/ICS 门面 | `netstack.ConfigureWindows` / `HasICSResidue` / `CleanupICSResidue(Context)` / `RemoveICSAddressesKeepVPN` / `ReplaceTUNIPv4KeepICS`（`winnet_facade.go`）；**不**导出 DisableAllICS/DisableICSPair——Teardown 经 `ics_enable_windows.disableICSPlatform` → `winnet.DisableICSSessionContext`；`clientapp` **禁止**直接 import winnet |
+| 入站解密 / 软重连 | `sessionmgr.HandleInbound(userID, conn, …)`（须 Conn 匹配）；`RegisterVPN` Close+`Done` 排空；`crypto.Decrypt` Open 成功后 commit 防重放；客户端 `tunUploadReady`（StateConnected 闸门） |
+| LAN 注册表 | 握手 `applyLANRegistry`（新客户端仅此）；旧客户端 post-auth sync → `tunnel/lan_registry_sync.go`（限速 + prune + 勿 Kick via 自己） |
+| PS `-match` 转义 | `winnet.EscapeRegex` 再 `EscapeSingleQuoted`；模板 `ps_snippets.go`（含 `PSSnippetNewNetNat`/`Remove`/`EnableIPv4Forwarding`/`GetNetNatMatch`）；编排在 `nat_windows.go` / `forward_windows.go` |
+| 记住密码（yaml 明文）债 | 仍明文写 `client.yaml`；User DPAPI **听安排 / 第 26～29 轮未做** — 详见 [security-hardening.md](security-hardening.md) §10 |
+| 短时重试 / 可中止轮询 | `safeutil.RetryN` / `ExpBackoff` / **`PollUntil`**；**ctx 取消**用 `IsCanceled` / `Check`；**登录超时文案**用 `IsDeadline`（不含 Canceled） |
 | 管理面 Listen 重试 | `safeutil.RetryN`；挂点 `serverapp/boot_api.go` |
 | WebUI CSP / 页面脚本 | CSP：`security/tls_policy.go`（`script-src`/`style-src` 均 `'self'`，无 unsafe-inline）；脚本 `web/static/*.js`；样式 `style.css`；显隐 `HaoVPN.setVisible` / `setOverlayOpen` |
 | 广告 LAN 禁与 VPN 池重叠 | `netutil.ValidateAdvertisedLANNotForbidden`；握手挂点 `tunnel/server_handler.go` applyLANRegistry |
@@ -60,7 +65,7 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | VPN 策略 PATCH / 启禁 | `vpnaccount/patch.go`（`ApplyVPNPatch`）、`enable.go`（`SetAccountEnabled`）；禁用吊销 Web 会话 |
 | 删 VPN 账号（踢线+释 IP） | `vpnaccount/delete.go` |
 | 自改密（须 old_password）/ 须改密 / 吊销会话 | `auth/password_ops.go`、`session.go`（`LogoutAllForUser`）；`api/auth_handlers.go` |
-| 登录/握手哨兵错误（含账号已在线） | `auth/errors.go`；客户端致命判定 `clientapp/fatal_auth.go` |
+| 登录/握手哨兵错误（含账号已在线） | `auth.ErrAccountAlreadyOnline`（`auth/errors.go`）；客户端致命判定 `clientapp/fatal_auth.go`；sessionmgr **不再** re-export 别名 |
 | 用户名格式 | `auth/username.go`（`ValidateUsername`）；开户/EnsureAdmin 强制 |
 | Web/隧道分表锁定 | `auth/lockout.go` |
 | 探针防御 / 封禁表 | `probedefense/guard.go`；分类 `classify_tls.go` / `classify_handshake.go`；常量 `signatures.go`；自动封 `auto_ban.go`；挂载 `serverapp/boot_session.go`；API `handler_security_*.go`；UI `/security` |
@@ -69,7 +74,7 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | Session Context（requireAuth 注入） | `api/session_context.go` + `auth_handlers.go`；handler 用 `actorFromRequest` |
 | GUI 托盘托管路由展示 DTO | `clientapp/route_view.go`（`ManagedRouteView`）；`clientgui/tray_routes.go` |
 | 远端 host:port 拆分 | `netutil/hostport.go`（`SplitRemoteAddr`） |
-| CIDR 规范化 / 广告 LAN / 列表合并 | `netutil`：`NormalizeCIDROrHost`、`NormalizeCIDRList`、`AppendCIDRUnique`、`ValidateAdvertisedLAN`、`ValidLANCIDRs`、`ForbidDefaultRoute` |
+| CIDR 规范化 / 广告 LAN / 列表合并 | `netutil`：`NormalizeCIDROrHost`、`NormalizeCIDRList`、`AppendCIDRUnique`、`ValidateAdvertisedLAN`、`ValidLANCIDRs`、`ForbidDefaultRoute`、`ProbeIPForCIDR`、`ParseLocalLANsField`、`FilterDNSServersPoison`、`IsVirtualInterfaceName` |
 | ExitLAN / via 回程隔离 | `sessionmgr/route.go`（仅 viaIndex 命中才旁路 peer_access）；`persist/lan_registry.go` |
 | 审计文案中文 | `audit/labels.go`；API enrichment `handler_ops.go`；对照表 [security-hardening.md](security-hardening.md) |
 | 备份 / 导出客户端包 | **POST** `/api/v1/backup`、`/users/{id}/export(.zip)`（须 CSRF）；`HaoVPN.downloadPost` |
@@ -90,26 +95,35 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | 握手帧 vs Data | `transport`：`SetOnHandshake`；`tunnel/client_handshake.go` 只挂 Handshake；Data 密文不得当 JSON |
 | 源 IP 白名单共用 | `netutil/source_ip.go`（`CheckSourceIPAllowed` wrap `dialerr.ErrSourceDenied`）；`tunnel`/`probedefense` 直接调用，无薄包装 |
 | 客户端策略差分 / via 指纹 | `clientapp/policy_diff.go`、`runtime.go`（`applyPolicy`）、`via_exit.go` |
-| 空 local_lans 与 ICS 清理 | `clientapp/via_exit.go`；`netstack.HasICSResidue`；`DisableICSPair` / `DisableAllICS`（经 netstack 门面） |
-| WinNAT / ICS | `nat_windows.go` + `sku_home`；`ics_nat_windows.go`：`RememberICSPair`；Teardown 优先 Pair |
+| 空 local_lans 与 ICS 清理 | `clientapp/via_exit.go`：`HasICSResidue` → 无残留跳过；hadVia 只 `RemoveICSAddressesKeepVPN`；否则 `CleanupICSResidueContext`（可取消） |
+| WinNAT / ICS | `nat_windows.go` + `sku_home`；`ics_egress_windows.go`（出站）+ `ics_enable_windows.go`（Enable/PreferVPN）；无残留预清；**already_paired 跳过 Enable**；注册表仅握手 |
 | 家庭版 NAT | `winnet.IsWindowsHomeSKU` → 跳过 WinNAT 直进 ICS |
-| GUI 防连点 | `clientgui` `beginEngineOp` + 按钮 Disable（重连/登出/退出/登录连接） |
+| 启动耗时埋点 | `prepare_orphan skipped` / `dns_snapshot skip_empty` / `ics_egress` / `ics_enable already_paired=` / `ics_prefer_vpn wait_ms=` |
+| Wintun 孤儿 | `winnet.HasWintunOrphanAdapters` + `IsWintunOrphanAdapterName`；有孤儿才 PS Remove |
+| GUI 防连点 / Stop 串行 | `clientgui` `beginEngineOp` + `beginNetworkOp` + 按钮 Disable；`stopEnginesSerial`；busy 时 `pendingIntent`+`opGen`（`engine_op_queue.go`）；login_fail busy→排队 logout |
 | Fyne.Do 迁移 | 构建 `-tags migrated_fynedo`（`Invoke-GoBuildGui`）+ `clientgui/fyne_meta.go` SetMetadata；仅改 `FyneApp.toml` 对 go build 无效 |
-| 配网时心跳 | `Conn.SetHeartbeatTimeoutPaused`；`engine_connect` 包住 `applyPolicy` |
-| 手动重连 / Soft vs Hard | Soft：`transport/reconnect.go` + `protectForReconnect`；Hard：`clientapp.HardRestart` / `WaitDNSReady`（`hard_restart.go`）；GUI 仅调度（`reconnect_dns.go`）；登录页仍 FailFast |
-| Stop 时 DNS/路由顺序 | `runtime_routes.go`：先 `RestoreDNS` 再删路由；`Engine.Stop`→`netstack.ShutdownWindows`（空挂点） |
+| 配网时心跳 / Stop 打断 policy | `applyPolicy(ctx)`；`Stack.Setup(ctx)` + `RunPS*Context` Kill；**abort 不得 forward_only 吞成功** |
+| 手动重连 / Soft vs Hard | Soft：`transport/reconnect.go` + `protectForReconnect`；Hard：`HardRestart` / `waitDNSReadyAbort`（settle 中可 abort）；GUI：`reconnect_dns.go` + `engine_intent.go`；登录页仍 FailFast |
+| GUI 服务接管 | `clientgui/service_takeover.go` + `clientapp/autostart_facade`（ServiceStopAndWait）；`cmd/client-gui` `handleOccupiedInstance` |
+| Stop 时 DNS/路由顺序 | `runtime_routes.go`：先 `RestoreDNS(poison…)` 再删路由；`Engine.Stop`：先 `cancel(runCtx)` 再 `rc.Stop`/清数据面 |
 | 分流路由部分失败 | `route_install` 日志；零成功硬失败；部分成功 → `LastError` + `partial_routes=true` |
-| 配 TUN IPv4 / wait | `tun/tun_windows.go`；`winnet.SetInterfaceIPv4OnIndex`（iphlp→netsh） |
-| 分流路由 / DNS 写入 | `netstack/route_ops_windows.go`；`dns_windows.go`→`SetInterfaceDNSServers` |
+| 同 IP vs 变 VPN IP | `runtime_policy.go`：同 IP 保 dataplane；**变 IP 软换** `vpn_ip_replace_inplace`（`ReplaceTUNIPv4KeepICS` + PreferVPN，**不**拆 via/ICS）；冷启动才 `tun.Open` |
+| TUN 上送 / 越权目的 | 公式：`netutil.VPNIPOrInNets`；噪声：`IsTUNNoiseDst` / `IsTUNNoiseForLog` / **`IsTUNNoiseSource`**；限频：`safeutil.AllowEvery`；DNS `/32`→`MergeDNSIntoAllowedIPs` |
+| 配 TUN IPv4 / wait | `tun/tun_windows.go` `assignIPv4`（禁止「已有则跳过」）；`winnet.ReplaceInterfaceIPv4` / `ReplaceInterfaceIPv4KeepICS`；埋点 `tun_addrs_before/after` |
+| 分流路由 / DNS 写入 | `route_ops_windows.go`（add/del 优先 iphlp）；`dns_windows.go`→首次 `skip_empty`；`RestoreDNS(poison…)` 防旧 VPN IP 写回 |
+| Windows 出站快照 | `winnet/egress.go` + `egress_windows.go`（一次 GAA+路由表） |
+| PreferVPN / SkipAsSource | 四层：① ICS 嵌入 PS ② iphlp Late scrub ③ 软换 `ApplyPreferVPNSkipAsSource`（noop/iphlp）④ PS fallback |
+| send queue full | `transport.noteSendQueueFull` 限频 5s + drops；根因常在数据面错乱，勿只加大队列 |
 | Windows `client.yaml` windows 段 | `config.ClientWindowsSection`：`use_ip_helper`；`NewEngine`→`netstack.ConfigureWindows` |
 | 策略分段耗时 | `runtime_policy.go` `policy_apply stage=` |
-| 字符串 Trim+小写 / VPN 子网 hint | `netutil.TrimLower`；`netutil.InferVPNSubnetHint` |
-| Windows PowerShell 模板 | `winnet/ps_snippets.go`（找网卡/ICS/孤儿）；`RunPS*` 一律一进程 |
-| DNS show 输出解析 | `winnet.ParseDNSShowOutput` |
+| 字符串 Trim+小写 / VPN 子网 hint / 网关 | `netutil.TrimLower`；`InferVPNSubnetHint`；`ResolveGateway(handshakeGW, vpnIP)`（yaml gateway 已废除） |
+| Windows PowerShell 模板 | `winnet/ps_snippets.go`（找网卡/ICS/WinNAT/孤儿）；`RunPS*` 一律一进程 |
+| DNS 恢复（Windows） | `netstack/dns_windows.go` ApplyDNS/RestoreDNS（skip_empty 快照；不再读 netsh QueryInterfaceDNS） |
 | 杀开关前缀去重 | `netutil.DedupTrimNonEmpty` |
 | 桌面 GUI（Fyne） | `clientgui/` + `fyne_meta.go` + `tray_tooltip.go`；tag `migrated_fynedo` |
-| 托盘悬停气泡 | `tray_tooltip.go`（预算 **63**）；Disconnecting；鉴权后早写 VPNIP |
-| GUI 登录/服务自启 | `autostart/`（Win SCM+计划任务；Linux/macOS 见包内） |
+| 托盘悬停气泡 | `tray_tooltip.go`（预算 **63**）；Disconnecting；`trayStickyErr`（登录失败无 eng）；busy 时 sticky 优先于「正在断开」 |
+| GUI 登录失败收口 | `clientgui/login_fail.go`；HardRestart 失败须 Stop；`engine_intent.go` 抢占 |
+| GUI 登录/服务自启 | `clientapp/autostart_facade.go`（编排）；底层 `autostart/`（Win SCM+计划任务；Linux/macOS 见包内）；GUI `tray_config.go` 仅读 UI→调 facade |
 | 服务端启动流程 | `serverapp/engine.go`、`engine_boot.go`、`boot_*.go`（persist/ippool/session/tun/tunnel/api）、`engine_shutdown.go` |
 | YAML 默认值/校验 | `config/client.go`、`server.go` |
 | 默认 TLS 证书路径 | `config/paths.go`（`DefaultServerCertPath`、`ResolveServerCertPath`） |
@@ -122,10 +136,10 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | 敏感文件原子写 / 目录 / Exists / AbsPair / ACL | `fileutil`：`WriteFileAtomic`、`EnsureDir`/`EnsureParentDir`、`ExecutableDir`、`Exists`、`AbsPair`、`CheckWorldReadable`、`RestrictToAdminsOnly` |
 | Web/API 读模型 | `readmodel/`（`types.go`、`monitor.go`、`audit.go`、**`peers.go`** PeerRoute/Access/LANRegistry 视图） |
 | Dashboard 字段 | `health/dashboard.go`（`DashboardMap`；公开 health 仅 ok+uptime） |
-| Windows 路由/DNS/杀开关 | `netstack/`：`forward_windows.go`、`nat_windows.go`、`ics_nat_windows.go`、`route_ops_windows.go`、`dns_windows.go`、`killswitch_windows.go` + `killswitch_wfp_*.go`；底层 `winnet/` |
-| 无窗口 route/netsh 子进程 | `platform/`（`CommandOutputError`）；**PowerShell 一律 `winnet.RunPS*`** |
+| Windows 路由/DNS/杀开关 | `netstack/`：`forward_windows.go`、`nat_windows.go`、`ics_egress_windows.go`、`ics_enable_windows.go`、`ics_plan.go`、`route_ops_windows.go`、`dns_windows.go`、`killswitch_windows.go` + `killswitch_wfp_*.go`；底层 `winnet/` |
+| 无窗口 route/netsh 子进程 | `platform/`（`CommandOutputError`）；**PowerShell 一律 `winnet.RunPSOneShot*` / `RunPSBestEffort*`** |
 | 客户端单实例 | `singleinstance/`（`lock.go` + `coord.go`，127.0.0.1 TCP） |
-| TUN / Wintun DLL | `tun/`（含 `WarmupAdapter`；GUI 经 `clientapp.WarmupTun`）、`tun/wintundll/` |
+| TUN / Wintun DLL | `tun/`（含 `WarmupAdapter`；GUI 经 `clientapp.StartWarmupAsync`）、`tun/wintundll/` |
 | TLS / 数据密钥 | `security/` |
 | WebUI 静态资源 | `web/embed.go` |
 | 包索引（任务导向 FAQ） | [internal/README.md](../internal/README.md) |
@@ -146,8 +160,8 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 
 | 包 | 职责 | 关键文件 | 依赖 |
 |----|------|----------|------|
-| **clientapp** | CLI/GUI 共用拨号引擎；增量 applyPolicy；via 出口；HardRestart；WarmupTun；服务凭据门面 | `engine_*.go`, `hard_restart.go`, `warmup.go`, `credentials.go`, `runtime*.go`, `via_exit.go` | config, transport, tunnel, dialerr, autherr, netstack, netutil, tun, credentials（**禁** winnet） |
-| **clientgui** | Fyne UI；托盘；异步 Stop；HardRestart 仅调度 UI | `run.go`, `tray.go`, `reconnect_dns.go`, `engine_stop.go`, `login.go`（FailFast） | clientapp, autostart, config, netutil（**禁** tun/winnet/credentials） |
+| **clientapp** | CLI/GUI 共用拨号引擎；**bootstrap**（RunOptions）；**engine_bootstrap**（PrepareEngine）；增量 applyPolicy；via 出口；HardRestart；Warmup；服务/自启 facade | `bootstrap.go`, `engine_bootstrap.go`, `engine_*.go`, `hard_restart.go`, `warmup.go`, `hooks.go`, `connect_failure.go`, `connect_warn.go`, `dial_errors.go`, `autostart_facade.go`, `runtime*.go`, `via_exit.go` | config, transport, tunnel, dialerr, autherr, netstack, netutil, tun, credentials（**禁** winnet） |
+| **clientgui** | Fyne UI；托盘；异步 Stop；HardRestart + intent 抢占 | `run.go`, `tray.go`, `tray_state.go`, `reconnect_dns.go`, `engine_intent.go`, `engine_stop.go`, `login.go`/`login_fail.go` | clientapp, config, netutil（**禁** tun/winnet/credentials/autostart 直接编排） |
 | **autostart** | 登录自启 + 开机无界面：Win SCM/计划任务；Linux XDG/systemd；macOS LaunchAgent/Daemon | `gen.go`（ExecStart 空格引号）、`paths_unix.go`（`AbsPair`）、`logon_*.go`, `service_*.go`, `stub_other.go` | brand, fileutil, logger |
 | **serverapp** | 服务端启动编排 | `engine.go`, `engine_boot.go`, `boot_persist.go`, `boot_ippool.go`, `boot_session.go`, `boot_tun.go`, `boot_tunnel.go`, `boot_api.go`（含 peerDirty 重启 WARN）、`engine_shutdown.go` | api, tunnel, transport, probedefense, tun, netstack, vpnaccount, maintenance, safeutil |
 | **api** | HTTP 管理 API + WebUI | `handler_*.go`、`httputil.go`（`writeDomainError`）、`users_*.go`；账号/peer **写**经 vpnaccount | auth, vpnaccount, persist, probedefense, readmodel, config, netutil |
@@ -160,12 +174,12 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | **tunnel** | 握手协议（含 handshake_err.code） | `handshake.go`, `handshake_reject.go`, `client_handshake.go`, `server_handler.go`, `server_handshake_auth.go`, `server_handshake_session.go` | transport, crypto, auth, autherr, sessionmgr, netutil, **tun** |
 | **transport** | TLS-TCP 帧、重连、Probe、banner I/O | `transport.go`, `config.go`, `conn_loops.go`, `server.go`, `probe_banner.go`, `mtu.go`, `frame.go`, `reconnect.go`（均经 GoSafe） | dialerr, netutil, timeutil, config, safeutil |
 | **dialerr** | 拨号/TLS 前拒绝叶子哨兵与 banner 常量 | `errors.go`, `classify.go` | — |
-| **sessionmgr** | 会话与报文路由 | `manager.go`, `register.go`, `kick.go`, `route.go`, `route_inbound.go`, `route_lookup.go`, `route_policy.go`, `stats.go`；托管 via 索引、横向放行、grace 顶替续算 | crypto, netutil, persist, config, auth |
+| **sessionmgr** | 会话与报文路由 | `manager.go`, `register.go`, `register_grace.go`, `register_lan.go`, `kick.go`, `route.go`, `route_inbound.go`, `route_lookup.go`, `route_policy.go`, `stats.go`；托管 via 索引、横向放行、grace 顶替续算 | crypto, netutil, persist, config, auth, safeutil |
 | **probedefense** | 公网探针识别/落库/封禁；实现 tunnel.ProbeRecorder | `guard.go`（`OnHandshakeReject`）、`exempt.go`, `manual_ban.go`, `classify_tls.go`, `classify_handshake.go`, `signatures.go`, `auto_ban.go`, `errors.go` | persist, netutil, dialerr, config, autherr, logger |
-| **netstack** | 路由/DNS/杀开关；Windows 门面（Configure/ICS） | `forward_windows.go`, `nat_windows.go`, `ics_nat_windows.go`, `route_ops_windows.go`, `dns_*.go`, `killswitch_*`, `winnet_facade.go` | winnet, netutil, **platform** |
+| **netstack** | 路由/DNS/杀开关；Windows 门面（Configure/ICS 探测清理）；`Setup(ctx)`/`Teardown(ctx)` | `forward_windows.go`, `nat_windows.go`, `ics_egress_windows.go`, `ics_enable_windows.go`, `ics_plan.go`, `route_ops_windows.go`, `dns_*.go`, `killswitch_*`, `winnet_facade.go` | winnet, netutil, platform, safeutil |
 | **tun** | TUN 抽象（CIDR 解析用 netutil，不导出薄包装） | `tun.go`, `tun_*.go` | winnet, **wintundll**, fileutil, netutil |
 | **wintundll**（嵌套于 `tun/wintundll/`） | 嵌入/释放 wintun.dll | `tun/wintundll/ensure.go` | fileutil |
-| **winnet** | Windows 网卡/IP Helper/netsh/ICS/PS 模板与转义 | `ps_snippets.go`、`escape.go`（EscapeSingleQuoted/EscapeRegex）、`options.go`、`ics_*` | platform, logger, netutil, brand |
+| **winnet** | Windows 网卡/IP Helper/替换式配 IP/netsh/ICS/PS 模板与转义；Context Kill | `ipv4_replace.go`、`iphlp_write_windows.go`、`ps_windows.go`、`ps_snippets.go`、`escape.go`、`ics_*`（`DisableICSSessionContext`） | platform, logger, netutil, brand, safeutil |
 | **netutil** | CIDR/地址/监听/MTU/LAN/源 IP/TrimLower/子网 hint | `cidr.go`, `validate_ip.go`, `addr.go`, `source_ip.go`、`gateway.go`（InferGateway/InferVPNSubnetHint）、`strings.go`（TrimLower）、`listen.go`, `slices.go` | dialerr |
 | **autherr** | 握手/拨号错误分类 + 线上 code 映射 | `classify.go` | auth, dialerr |
 | **audit** | 管理审计 | `audit.go`, `labels.go`, `public_bind.go`, `tun_listen.go` | persist |
@@ -177,7 +191,7 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | **health** | 启动自检 + Dashboard | `health.go`, `dashboard.go` | config, persist |
 | **logstore** | 结构化历史日志库 | `logstore.go` | paginate, timeutil |
 | **logger** | 分级日志 + 脱敏 | `logger.go`, `redact.go`（Authorization / `session=` 等） | — |
-| **safeutil** | GoSafe、Ticker、Shutdown、RetryN、ExpBackoff | `goroutine.go`, `ticker.go`, `retry.go` | — |
+| **safeutil** | GoSafe、Ticker、Shutdown、RetryN、ExpBackoff、IsCanceled/Check | `goroutine.go`, `ticker.go`, `retry.go`, `context.go` | — |
 | **crypto** | 隧道加解密 | `wg_crypto.go` | — |
 | **credentials** | Windows DPAPI 凭据（写后 RestrictToAdminsOnly） | `windows.go` | fileutil |
 | **platform** | UAC（EscapeArg）、无窗口子进程、错误包装 | `elevate_windows.go`, `cmderr.go` | — |
@@ -216,90 +230,23 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 23. **`autherr` 不得 import `transport`**：只依赖 `auth` + `dialerr`。
 24. **生产路径长生命周期 goroutine**：须 `safeutil.GoSafe`（transport Conn 循环、ListenTLS、sessionmgr 关旧连接、logstore writer、singleinstance accept）；测试内裸 `go` 可保留。
 25. **源 IP 白名单**：仅 `netutil.CheckSourceIPAllowed`；`tunnel`/`probedefense` 禁止薄包装或再 export `ErrSourceDenied`。
-26. **Windows PowerShell**：一律 `winnet.RunPS` / `RunPSOneShot` / `RunPSBestEffort`（一进程、`-ExecutionPolicy Bypass`）；禁止业务包 raw powershell；清理失败须 Warn。
+26. **Windows PowerShell**：一律 `winnet.RunPSOneShot` / `RunPSOneShotContext` / `RunPSBestEffort` / `RunPSBestEffortContext`（一进程、`-ExecutionPolicy Bypass`；取消 Kill）；禁止业务包 raw powershell；清理失败须 Warn；嵌入参数须 `EscapeSingleQuoted`（`-match` 先 `EscapeRegex`）。
 27. **WebUI CSP**：`script-src` 与 `style-src` 均仅 `'self'`；禁止 HTML `style=` / 内联 `<style>` / JS 写 `el.style.*`（显隐用 class + `HaoVPN.setVisible`/`setOverlayOpen`）。
-28. **`clientgui` 禁止 import `tun` / `winnet` / `credentials`**：预热经 `clientapp.WarmupTun`；服务凭据经 `SaveServiceCredentials`。
-29. **`clientapp` 禁止 import `winnet`**：经 `netstack` 门面（`ConfigureWindows` / ICS 探测清理）。
-30. **`api` 不直接 `InsertPeerRoute` / `AddPeerAccessPair` 等 peer 写**：经 `vpnaccount.PeerPolicyApplier`（`peer_write.go`）。
-31. **TUN 名**：`config.ValidateTunName`；PS `-match` 须 `EscapeRegex` 再 `EscapeSingleQuoted`。
+28. **`clientgui` 禁止 import `tun` / `winnet` / `credentials` / 直接 `autostart.*` 编排**：预热经 `clientapp.StartWarmupAsync`；自启经 `autostart_facade`；服务凭据经 `SaveServiceCredentials`。
+29. **`cmd/client` / `cmd/client-gui` 读 Windows 服务状态**须经 `clientapp.ServiceAutostartStatus`（禁 direct `autostart.ServiceStatus`）。
+30. **`clientapp` 禁止 import `winnet`**：经 `netstack` 门面（`ConfigureWindows` / ICS 探测清理）。
+31. **`api` 不直接 `InsertPeerRoute` / `AddPeerAccessPair` 等 peer 写**：经 `vpnaccount.PeerPolicyApplier`（`peer_write.go`）。
+32. **TUN 名**：`config.ValidateTunName`；PS `-match` 须 `EscapeRegex` 再 `EscapeSingleQuoted`。
+33. **`netstack.Setup(ctx)` / `Teardown(ctx)`**：取消上下文不放 Config；正常 Teardown 传 `Background`（勿用已取消的 runCtx 跳过 ICS 清理）。
 
 ---
 
-## 第二十四轮要点（2026-08-31）
+## 历史轮次
 
-- **依赖边界**：GUI→clientapp（WarmupTun / SaveServiceCredentials）；clientapp→netstack→winnet；切断 GUI→tun/credentials、clientapp→winnet。
-- **安全**：`ValidateTunName`；`EscapeRegex`；`handleStatic` path.Clean；去掉无意义 `PreferServerCipherSuites`。
-- **领域**：peer 写进 `vpnaccount/peer_write.go`；`writeDomainError` 覆盖 vpnaccount/auth/probedefense 哨兵。
-- **可维护**：`WaitDNSReady` 用 `RetryN`；三种 escape 方言交叉注释。
-- **债**：记住密码仍 yaml 明文 — 见 [security-hardening.md](security-hardening.md) §8（User DPAPI 听安排）。更早轮次全文见 [dev-log.md](dev-log.md)。
+架构解耦第 12～25 轮及更早变更摘要**只写** [dev-log.md](dev-log.md)（本文件不堆轮次长文，避免与进度源双份漂移）。
+本轮（第 29）：ICS/egress PS 集中、cmd 门面、PreferVPN 组装、死代码收口；见 dev-log 顶部「架构审计第 29 轮」。
 
-## 第二十三轮要点（2026-08-31）
-
-- **PS 模板单一真相源**：`winnet/ps_snippets.go`（找网卡、ICS Disable、孤儿 Wintun）；tun/netstack 只组合，禁止第二套 Get-NetAdapter。
-- **重连双路径**：Soft=`transport.ReconnectClient`+`protectForReconnect`；Hard=`clientapp.HardRestart`/`WaitDNSReady`；GUI 禁止第三套编排。
-- **路由可观测**：`route_install ok/fail`；期望非空且零成功 → applyPolicy 硬失败；部分失败 → `LastError` + `partial_routes=true`；Del 失败 Warn。
-
-## 第二十二轮要点（2026-08-31）
-
-- **叶子抽取**：`netutil.TrimLower`、`InferVPNSubnetHint`；删 api/clientgui 私有副本；删 `NormalizeKillPrefixes` 薄封装。
-- **PS 收口**：`RunPSBestEffort`；`DisableAllICS`/NAT/转发清理失败打 Warn；netstack 无 raw powershell。
-- **DNS 解析**：`ParseDNSShowOutput` → `winnet/dns_parse.go`。
-- **同包拆分**：winnet → `ps_`/`address_`/`dns_netsh_`/`ics_windows.go`；netstack → `forward_`/`nat_`/`ics_nat_`/`route_ops_` + killswitch WFP 分文件。
-- **CSP**：外置内联 style；`style-src 'self'`；测试钉死模板无 `style=`。
-
-## 第二十一轮要点（2026-08-31）
-
-- **降耦**：删 `clientapp.IsIPBannedDialError` / `IsAccountAlreadyOnline`、`probedefense`/`tunnel` 的 `ErrSourceDenied` re-export、`tunnel.CheckTunnelSourceIP`。
-- **GoSafe**：`transport` Dial/Accept/Listen、`sessionmgr` 关旧连接、`logstore` writer、`singleinstance` accept。
-- **叶子**：dialerr banner 前缀共用 + 哨兵 Error() 中文；autherr 子串表与 Is* 合一；`ExpBackoff` 测试对齐。
-- **可读性**：`doHandshake` → `server_handshake_auth.go` + `server_handshake_session.go`。
-
-## 第二十轮要点（2026-08-31）
-
-- **叶子**：`internal/dialerr`（banner/哨兵/`IsFatalDialError`/`ClassifyTLSHandshakeErr`）；`safeutil.ExpBackoff`；`netutil.CheckSourceIPAllowed` wrap 统一哨兵。
-- **协议**：`handshake_err.code`；客户端还原哨兵；`reportFirstFailure` 禁止剥 wrap。
-- **边界**：`tunnel`↛`probedefense`；`autherr`↛`transport`；`ReconnectClient` 用 `GoSafe` + `Conn.Done` + 防双 Start。
-
-## 第十二轮要点（2026-08-29）
-
-- 叶子：`SplitRemoteAddr`、`Seconds`、`fillIPBlock`。
-- P0：Probe 始终挂载；握手 OK 失败回滚；改密须旧密码并 `LogoutAllForUser`；`requireAuth` 失败关闭。
-- P1：明文钥默认拒绝（`allow_plaintext_private_keys`）；导出不解密；双 lockout；CSRF 常量时间；retention 解耦；sessionmgr 回调/路由加固。
-
-## 第十三轮要点（2026-08-29）
-
-- netutil 收口 CIDR/LAN/广播/远端主机；ExitLAN→对端 VPN 仅 via。
-- 管理面 ReadHeaderTimeout 等；备份/导出 POST+CSRF；会话滑动+绝对上限；Accept 源白名单始终生效。
-- 审计：`audit/labels.go` + API enrichment；WebUI `码（中文）` / `用户名 (#id)`。
-
-## 第十四轮要点（2026-08-30）
-
-- **叶子**：`ValidLANCIDRs`/`NormalizeCIDRList`/`AppendCIDRUnique` 在 netutil；clientapp 不再为 LAN 校验依赖 persist。
-- **哨兵**：`auth.ErrAccountAlreadyOnline`；sessionmgr 兼容别名；clientapp 仅依赖 auth。
-- **安全**：公开 health 无 `recent_errors`；末管理员不可删/禁；logout 仅 POST；`ValidateUsername` 下沉；500 稳定「内部错误」。
-- **API**：`requireMethod`/`parseFormOrError`/`decodeJSONOrForm`/`parsePathID`；`?online=1` 分页修正。
-- **GUI**：`getEngine`/`setEngine`/`takeEngine` 与 `engOpMu` 同锁。
-
-## 第十五轮要点（2026-08-30）
-
-- **SCM 单一真相源**：install/start/stop/uninstall 仅 `autostart`；`clientapp` 只保留 `svc.Run` + CLI 薄封装；修吞错。
-- **跨平台自启**：Linux XDG desktop + systemd；macOS LaunchAgent/Daemon；生成物 `gen.go` 可测；Disable/Stop 不再伪成功。
-- **叶子边界**：`tun.parseCIDR` 不导出；删 persist LAN 薄包装；`security.Redact` 保留为防循环委托。
-- **API**：拆 `handler_peers.go`；`writeOKWith`/`writePendingApply`。
-- **安全**：公开 health 仅 `ok`+`uptime_sec`；默认口令测试对齐 `changeme12`；登录与管理页脚本外置 `web/static/*.js`；CSP `script-src 'self'`（**禁止** HTML `onclick=`）。**CSP style：本轮仍曾允许 `unsafe-inline`，已被第 22 轮收紧为 `style-src 'self'`**（见 [security-hardening.md](security-hardening.md) §7）。
-
-## 第十六轮要点（2026-08-30）
-
-- **正确性/安全**：成员替换 dirty=旧∪新；apply 仅清成功 done（防 TOCTOU 伪成功）；`GetPeerRoute` 判空；`local_lans` 禁与 `vpn.subnet` 重叠；via/成员须 VPN 账号；`host_id` 长度上限。
-- **叶子收敛**：`paginate.ParseBoolQuery` 统一表单/settings；`httputil` writeItems/parse*Int64/requireMethod；`fileutil.Exists`/`AbsPair`/`CheckWorldReadable`；证书原子写；GUI `requireAdmin`；autostart unix AbsPair。
-- **同包拆分**：transport / persist peer_* / sessionmgr route_* / clientapp runtime_* / serverapp boot_*。
-- **边界**：peer 视图 DTO→`readmodel/peers.go`；`api/doc.go` 写清 vpnaccount vs persist+sessionmgr；systemd ExecStart 空格引号。
-
-## 第十七轮要点（2026-08-30）
-
-- **安全/正确性**：`setSessionCookie`/`clearSessionCookie` Secure/SameSite 对齐；Touch 重发 Cookie；`must_change` 可取 CSRF；`transport.Conn.Close` 锁拷贝 `onClose`；viaIndex 重建稳定排序；`peer_access` 须已存在 VPN 用户；`decodeJSONBody` 1MiB；密码 ≤72；logger 脱敏 Authorization/`session=`；历史日志 API items 再脱敏；Windows `EscapeArg` / 凭据 ACL / Everyone 检测；`boot_api` peerDirty 重启 WARN。
-- **结构**：`fileutil.EnsureDir`/`AbsPair`/`RestrictToAdminsOnly`；`safeutil.RetryN`；`netutil.StringSlicesEqualTrimmed`；**`vpnaccount.PeerPolicyApplier`**（dirty/apply 出 api）；WebUI 页脚本外置，CSP `script-src 'self'`（**style 当时仍 unsafe-inline，已被第 22 轮取代**）。
-- **一致性**：`serverapp/boot_*.go` 分阶段启动；与第十六轮拆分命名对齐。
+---
 
 ## HTTP API 路由表
 
@@ -341,7 +288,7 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 
 | 概念 | 含义 | 存储 / 下发 |
 |------|------|-------------|
-| **AllowedIPs** | 经**服务端网关/NAT**可达的工控网段（及可选 VPN 子网） | `users.allowed_ips` + 默认 NAT CIDR；握手 `allowed_ips` |
+| **AllowedIPs** | 经**服务端网关/NAT**可达的工控网段（及可选 VPN 子网）；握手时另并入策略 DNS `/32` | `users.allowed_ips` + 默认 NAT CIDR；`MergeDNSIntoAllowedIPs`；握手 `allowed_ips` |
 | **local_lans** | 客户端 YAML/GUI **手动**配置的本机后面 LAN；非空才开启 | `client.yaml` → 握手 `local_lans` → 临时表 `client_lan_registry`；客户端 `netstack` via 出口 |
 | **托管路由 Managed Routes** | `dest via 客户端`（hub 转 via，via 再出 LAN） | 定义 `peer_routes` + 访问方 `peer_route_members`（`user_id=0`=全部）；握手仅下发**非失效**项 |
 | **互访** | 默认可 ping 对方 `vpn_ip/32` 禁止 | `security.allow_all_vpn_peers` / `peer_access`（默认双向）；「应用生效」踢线刷新 |
@@ -352,14 +299,29 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 
 **失效**：via 离线，或注册表无匹配 `dest` → UI 标失效；握手跳过，不装客户端路由。注册表 alone **不转发**，须管理员从注册表创建托管路由。
 
-出站 `RouteOutbound`：仅 `dst==vpn_ip` 或托管 via 索引；**禁止**用会话 AllowedIPs（NAT）把流量错送回客户端。入站：横向 → via 匹配（优先于 writeTUN）→ 否则 writeTUN（网关 NAT）。
+出站 `RouteOutbound`：仅 `dst==vpn_ip` 或托管 via 索引；**禁止**用会话 AllowedIPs（NAT）把流量错送回客户端。入站：横向 → via 匹配（优先于 writeTUN）→ 否则 writeTUN（网关 NAT）。入站越权目的：`netutil.VPNIPOrInNets` + `safeutil.AllowEvery` 限频；客户端上送同公式。
+
+查功能：公式 → `netutil.VPNIPOrInNets` / `IsTUNNoise*`（含 `IsTUNNoiseSource`）；限频 → `safeutil.AllowEvery`；调用 → `clientapp/runtime_tun.go`、`sessionmgr/route_inbound.go`；DNS 并入 → `MergeDNSIntoAllowedIPs`（握手 `server_handshake_session.go`）。
+
+**客户端冷启动时序（家庭版 via / ICS）**：
+
+```text
+Handshake(+ local_lans) → TUN open → defer_routes → ApplyDNS（ICS 前）
+  → via Setup：egress 快照 → ICS Enable（同 PS 内 PreferVPN：/32 + 清 TUN 默认路由 + SkipAsSource）
+  → 全量装分流路由 →（viaDidSetup 时 Fast scrub）→ StateConnected
+```
+
+- **无** post-auth `lan_registry_sync`（仅握手上报注册表）。
+- 慢路径文件：`winnet/dns_query_windows.go`、`egress_windows.go`、`ics_egress_windows.go`、`ics_enable_windows.go`、`ps_snippets.go`、`default_route_windows.go`、`prefer_vpn_light_windows.go`、`route_ops_windows.go`。
+- PreferVPN 四层：① ICS 嵌入 PS ② iphlp Late scrub ③ 软换 `ApplyPreferVPNSkipAsSource` ④ PS fallback。
+- **在线仅改 VPN IP**：`vpn_ip_replace_inplace`（KeepICS Replace + iphlp SkipAsSource；routes=keep 若 gw/allowed 未变）。
 
 **客户端断线重连与策略应用（差分）**：
 
 | 路径 | 行为 | 代码 |
 |------|------|------|
 | 临时断线（自动重连） | **保留** TUN / 分流路由 / via·ICS / DNS；若开杀开关则 Enable | `protectForReconnect` |
-| 握手后策略 | 比对内容指纹：路由集合差分增删；via 指纹未变则跳过 ICS；完全一致则 `policy_apply mode=noop`；**预判将跑 ICS 时推迟装路由，Setup 后再装一次** | `runtime.applyPolicy`、`policy_diff.go`、`via_exit.go` |
+| 握手后策略 | 比对内容指纹：路由集合差分增删；via 指纹（lans\|subnet）未变则跳过 ICS；完全一致则 `policy_apply mode=noop`；**预判将跑 ICS 时推迟装路由，Setup 后再装一次**；变 VPN IP 软换 | `runtime.applyPolicy`、`policy_diff.go`、`via_exit.go` |
 | Stop / 登出 / 策略失败 | **全清**数据面 | `rt.close`、`protectThenClearRoutes` |
 | 服务端 | 仍下发完整 `HandshakePolicy`；断线清该用户 LAN 注册表（via 重握手后恢复） | 无需增量帧 |
 
@@ -376,7 +338,11 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 ```go
 cfg, _, _ := config.LoadClient(path)
 cfg.Log.InitGlobal()
-clientapp.NewEngine(cfg).Start()
+// CLI 交互拨号
+clientapp.RunCLI(context.Background(), cfg, creds, clientapp.DefaultInteractiveRunOptions())
+// GUI 登录（无 Start，由 StartAndWaitFirstAuth 首连）
+eng, _ := clientapp.PrepareEngine(cfg, creds, clientapp.DefaultGUIRunOptions(nil))
+clientapp.StartAndWaitFirstAuth(ctx, eng)
 ```
 
 **服务端**
@@ -409,3 +375,4 @@ serverapp.New(cfg, path).Run()
 | `web/` | WebUI embed；见 [web/README.md](../web/README.md) |
 | `scripts/` | build-local、build-release、验收 |
 | `docs/` | 开发/部署/架构文档 |
+

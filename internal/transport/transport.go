@@ -25,6 +25,8 @@ import (
 //   state — 连接生命周期（State，atomic）。
 //   mu — 保护 onData/onHandshake/onClose 回调指针。
 //   sendQ — 待发编码帧队列；满则 SendRaw 失败。
+//   queueFullDrops — 发送队列满累计丢弃次数（限频 WARN 时一并打出）。
+//   lastQueueFullWarnUnixNano — 上次打 send queue full WARN 的时间（限频用）。
 //   onData — 收到 Data 帧时的回调（鉴权后隧道密文）。
 //   onHandshake — 收到 Handshake 帧时的回调；nil 时 Handshake 回退到 onData（兼容旧测）。
 //   onClose — Close 或读写出错时的回调。
@@ -35,21 +37,23 @@ import (
 //
 // 并发：内部启动 readLoop、writeLoop、heartbeatLoop；须通过 Close 停止。
 type Conn struct {
-	cfg         Config
-	raw         net.Conn
-	tls         *tls.Conn
-	decoder     Decoder
-	state       atomic.Int32
-	mu          sync.Mutex
-	writeMu     sync.Mutex // 保护 tls.Write（writeLoop 与 SendRawSync）
-	sendQ       chan []byte
-	onData      func([]byte)
-	onHandshake func([]byte)
-	onClose     func(error)
-	lastHB      atomic.Int64
-	hbPause     atomic.Bool // applyPolicy 期间为 true：仍发心跳，但不因静默超时 Close
-	closed      chan struct{}
-	closeOnce   sync.Once
+	cfg                      Config
+	raw                      net.Conn
+	tls                      *tls.Conn
+	decoder                  Decoder
+	state                    atomic.Int32
+	mu                       sync.Mutex
+	writeMu                  sync.Mutex // 保护 tls.Write（writeLoop 与 SendRawSync）
+	sendQ                    chan []byte
+	queueFullDrops           atomic.Uint64
+	lastQueueFullWarnUnixNano atomic.Int64
+	onData                   func([]byte)
+	onHandshake              func([]byte)
+	onClose                  func(error)
+	lastHB                   atomic.Int64
+	hbPause                  atomic.Bool // applyPolicy 期间为 true：仍发心跳，但不因静默超时 Close
+	closed                   chan struct{}
+	closeOnce                sync.Once
 }
 
 // Dial 以 TLS 连接 addr 并启动读/写/心跳协程（客户端出站）。
@@ -149,8 +153,9 @@ func (c *Conn) touchHB() { c.lastHB.Store(time.Now().UnixNano()) }
 
 // SetHeartbeatTimeoutPaused 暂停/恢复「对端静默超时关连接」。
 //
-// 用途：客户端 applyPolicy 配 TUN/路由可能数十秒到两分钟，期间若对端心跳偶发缺失，
+// 用途：客户端 applyPolicy 配 TUN/路由可能数十秒，期间若对端心跳偶发缺失，
 // 不应掐掉刚鉴权成功的隧道（否则 session_abandoned）。仍照常发送本端心跳。
+// 恢复时（paused=false）touchHB，避免配网刚结束因暂停期间的自然静默立刻误判超时。
 func (c *Conn) SetHeartbeatTimeoutPaused(paused bool) {
 	if c == nil {
 		return
@@ -203,9 +208,20 @@ func (c *Conn) SendRaw(frameType byte, payload []byte) error {
 	case c.sendQ <- frame:
 		return nil
 	default:
-		logger.Warn("transport send queue full (max=%d), frame type=%d dropped", c.cfg.MaxQueueSize, frameType)
+		c.noteSendQueueFull(frameType)
 		return errors.New("send queue full")
 	}
+}
+
+// noteSendQueueFull 记录丢弃并限频打 WARN（默认 5s 一条），避免刷屏掩盖根因。
+// 典型根因：VPN IP 变更后双地址/错源导致写侧跟不上；勿靠加大队列「修复」。
+func (c *Conn) noteSendQueueFull(frameType byte) {
+	n := c.queueFullDrops.Add(1)
+	if !safeutil.AllowEvery(&c.lastQueueFullWarnUnixNano, 5*time.Second) {
+		return
+	}
+	logger.Warn("transport send queue full (max=%d), frame type=%d dropped drops=%d (限频)",
+		c.cfg.MaxQueueSize, frameType, n)
 }
 
 // SendRawSync 同步写出一帧（握手拒绝等须在 Close 前务必送达的场景）。

@@ -72,14 +72,51 @@ func DedupTrimNonEmpty(items []string) []string {
 func MergeDedupTrimNonEmpty(a, b []string) []string {
 	return DedupTrimNonEmpty(append(append([]string(nil), a...), b...))
 }
+
+// IsLimitedBroadcast 判断是否为 IPv4 受限广播 255.255.255.255。
 //
-// 用途：sessionmgr / clientapp 过滤 TUN 噪声，避免与组播/链路本地判断散落两套实现。
+// 用途：sessionmgr / clientapp 过滤经 TUN 漏出的广播探测（与 IsTUNNoiseDst 共用）。
 func IsLimitedBroadcast(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
 	v4 := ip.To4()
 	return v4 != nil && v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255
+}
+
+// IsTUNNoiseDst 客户端 TUN 上送早丢的目的噪声：组播 / 链路本地组播 / 受限广播。
+//
+// 不含链路本地单播（169.254.x.x）：客户端不因此多丢业务包；服务端日志降级见 IsTUNNoiseForLog。
+func IsTUNNoiseDst(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if IsLimitedBroadcast(ip) {
+		return true
+	}
+	return ip.IsMulticast() || ip.IsLinkLocalMulticast()
+}
+
+// IsTUNNoiseForLog 服务端越权/伪造日志降为 DEBUG 的目的噪声。
+//
+// 在 IsTUNNoiseDst 基础上含链路本地单播（Windows 常经 TUN 漏出，非真实越权单播）。
+func IsTUNNoiseForLog(ip net.IP) bool {
+	if IsTUNNoiseDst(ip) {
+		return true
+	}
+	return ip != nil && ip.IsLinkLocalUnicast()
+}
+
+// IsTUNNoiseSource 服务端入站伪造源 WARN 可降级的无害噪声源。
+//
+// 覆盖：nil、未指定（0.0.0.0，DHCP/ARP 探测常见）、链路本地单播/组播。
+// 为何独立于 IsTUNNoiseDst：源侧噪声与目的侧不同（目的侧重组播/受限广播，源侧重未指定地址）。
+// 关联：sessionmgr/route_inbound 伪造源判定；禁止在 sessionmgr 再写一套。
+func IsTUNNoiseSource(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
 // NormalizeRemoteHost 从 "host:port" 或裸主机提取并规范化远端主机。
@@ -139,6 +176,9 @@ func NormalizeLANCIDR(cidr string) (string, error) {
 // ValidLANCIDRs 过滤并规范化 CIDR 列表（供客户端上报 / 握手 ExitLANs / via 指纹）。
 //
 // 无效项静默跳过；保序去重。策略见 ValidateAdvertisedLAN。
+//
+// 调用场景（软过滤/清洗）：握手与 via 出口上报前、TUN 上送过滤缓存（cacheExitLANNetsLocked）。
+// 登录前硬校验请用 ValidateLocalLANsList（非法项不得静默通过，供 ClientConfig.Validate / GUI 红字）。
 // 为何放在 netutil：纯校验，避免 clientapp/tunnel 仅为 LAN 校验依赖 persist（分层倒置）。
 func ValidLANCIDRs(cidrs []string) []string {
 	var out []string
@@ -150,6 +190,34 @@ func ValidLANCIDRs(cidrs []string) []string {
 		out = append(out, n)
 	}
 	return DedupTrimNonEmpty(out)
+}
+
+// ValidateLocalLANsList 硬校验 local_lans：非空行须全部合法，非法则 error（含原文）。
+//
+// 空列表 / 仅空白 → 返回 nil,nil（表示关闭 via）。
+// 返回：规范化去重后的列表；任一行失败时 error，供 ClientConfig.Validate / 登录挡连。
+//
+// 与 ValidLANCIDRs 分工：本函数「挡过」；ValidLANCIDRs「清洗」。勿在 Validate 路径用软过滤，
+// 否则用户瞎写仍能点连接、仅运行时丢弃（历史坑，见 troubleshooting local_lans 硬挡）。
+func ValidateLocalLANsList(cidrs []string) ([]string, error) {
+	var out []string
+	seen := map[string]struct{}{}
+	for _, raw := range cidrs {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		n, err := ValidateAdvertisedLAN(raw)
+		if err != nil {
+			return nil, fmt.Errorf("local_lans 无效 %q: %w", raw, err)
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // ValidateAdvertisedLAN 校验并规范化客户端上报的本地网段。

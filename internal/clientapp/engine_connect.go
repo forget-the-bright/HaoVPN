@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"haovpn/internal/crypto"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
+	"haovpn/internal/safeutil"
 	"haovpn/internal/transport"
 	"haovpn/internal/tunnel"
 )
@@ -110,14 +112,22 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 
 	policyStart := time.Now()
 	conn.SetHeartbeatTimeoutPaused(true)
-	err = e.rt.applyPolicy(hsRes.Policy)
+	err = e.rt.applyPolicy(e.runContext(), hsRes.Policy)
 	conn.SetHeartbeatTimeoutPaused(false)
 	if err != nil {
+		if e.isStopping() || errors.Is(err, context.Canceled) {
+			// Stop/HardRestart：勿 dataplaneFailed（会误回登录），勿 soft 重连
+			logger.Info("policy_apply aborted reason=engine_stop elapsed=%s", time.Since(policyStart))
+			return
+		}
 		logger.Warn("应用服务端策略失败: %v elapsed=%s", err, time.Since(policyStart))
 		e.dataplaneFailed(conn, fmt.Sprintf("应用服务端策略失败: %v", err))
 		return
 	}
+
+	// applyPolicy 完成后校验 Conn，再 StateConnected；注册表仅握手上报（不发 post-auth sync）。
 	routeWarn := e.rt.takeRouteWarn()
+	icsHint := e.rt.takeICSHint()
 
 	e.activeMu.Lock()
 	stillActive := e.activeConn == conn && conn.State() == transport.StateConnected
@@ -127,6 +137,11 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 			e.cryptoSess = nil
 		}
 		e.activeMu.Unlock()
+		if e.isStopping() {
+			// Stop 已清 activeConn / 关传输：属预期，禁止 protectForReconnect + 将重连
+			logger.Info("session_abandoned reason=stop_during_policy")
+			return
+		}
 		logger.Warn("session_abandoned reason=disconnected_during_policy，等待自动重连")
 		e.protectForReconnect()
 		e.setLastError("连接在配置网络时断开，正在重连…")
@@ -135,6 +150,7 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 		return
 	}
 	mtu := netutil.ResolveMTU(hsRes.Policy.MTU, e.cfg.Tun.MTU)
+	userWarn := MergeConnectWarns(routeWarn, icsHint)
 	e.mu.Lock()
 	// vpnIP 等已在鉴权后写入；此处确认并打点连接时刻
 	e.vpnIP = hsRes.Policy.VPNIP
@@ -144,13 +160,20 @@ func (e *Engine) onConnect(conn *transport.Conn) {
 	e.allowedIPs = append([]string{}, hsRes.Policy.AllowedIPs...)
 	e.state = StateConnected
 	e.connectedAt = time.Now()
-	// 部分分流失败保留提示；否则清空旧错误
-	e.lastError = routeWarn
+	// 部分分流失败 / ICS 异网卡提示保留到 LastError（主窗状态条；不挡连接）
+	e.lastError = userWarn
 	e.mu.Unlock()
 	e.activeMu.Unlock()
 
 	if routeWarn != "" {
 		logger.Warn("partial_routes=true connected_with_warn: %s", routeWarn)
+	}
+	if userWarn != "" {
+		if sink := e.userWarnSinkFn(); sink != nil {
+			sink(userWarn)
+		} else {
+			logger.Info("ics_hint_shown_to_user chars=%d", len(userWarn))
+		}
 	}
 	if e.cfg.Security.KillSwitch {
 		if err := e.ks.Disable(); err != nil {
@@ -183,14 +206,8 @@ func (e *Engine) dataplaneFailed(conn *transport.Conn, msg string) {
 func (e *Engine) tunReadLoop(ctx context.Context) {
 	mtu := netutil.ResolveMTU(e.cfg.Tun.MTU)
 	e.rt.readLoop(ctx, func(b []byte) error {
-		e.activeMu.Lock()
-		conn := e.activeConn
-		sess := e.cryptoSess
-		e.activeMu.Unlock()
-		if conn == nil || sess == nil {
-			return nil
-		}
-		if conn.State() != transport.StateConnected {
+		conn, sess, ok := e.tunUploadReady()
+		if !ok {
 			return nil
 		}
 		enc, err := sess.Encrypt(b)
@@ -199,6 +216,37 @@ func (e *Engine) tunReadLoop(ctx context.Context) {
 		}
 		return conn.Send(enc)
 	}, mtu)
+}
+
+// tunUploadReady 返回当前可上送的 conn/sess；数据面未就绪时静默丢弃。
+//
+// 为何闸门在 StateConnected：鉴权后立刻挂上 cryptoSess/activeConn，但 applyPolicy
+//（含 local_lans→ICS，常十余秒）完成前不应上送。否则从 counter=0 起发，软重连后
+// 与新会话双发撞车，服务端表现为 ascending replay。
+//
+// 返回：conn/sess 非 nil 且 ok=true 时调用方才可 Encrypt+Send。
+func (e *Engine) tunUploadReady() (conn *transport.Conn, sess *crypto.Session, ok bool) {
+	if e.State() != StateConnected {
+		e.noteTUNUploadQuiesced("policy_pending")
+		return nil, nil, false
+	}
+	e.activeMu.Lock()
+	conn = e.activeConn
+	sess = e.cryptoSess
+	e.activeMu.Unlock()
+	if conn == nil || sess == nil || conn.State() != transport.StateConnected {
+		e.noteTUNUploadQuiesced("conn_mismatch")
+		return nil, nil, false
+	}
+	return conn, sess, true
+}
+
+// noteTUNUploadQuiesced 节流记录上送静默原因（约 5s 一条）。
+func (e *Engine) noteTUNUploadQuiesced(reason string) {
+	if !safeutil.AllowEvery(&e.lastQuiesceLog, 5*time.Second) {
+		return
+	}
+	logger.Debug("tun_upload_quiesced reason=%s", reason)
 }
 
 // onDialError 拨号/TLS 失败回调。
@@ -212,7 +260,7 @@ func (e *Engine) onDialError(err error) {
 	}
 	msg := FormatDialError(err)
 	logger.Warn("%s", msg)
-	fatal := IsFatalDialError(err)
+	fatal := ShouldStopReconnectOnDial(err)
 	if e.hasAuthOKOnce() {
 		if fatal {
 			e.setLastError(msg)

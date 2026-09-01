@@ -3,7 +3,7 @@
 package netstack
 
 import (
-	"fmt"
+	"context"
 	"net"
 	"strings"
 	"sync"
@@ -11,38 +11,51 @@ import (
 	"haovpn/internal/brand"
 	"haovpn/internal/logger"
 	"haovpn/internal/platform"
+	"haovpn/internal/safeutil"
 	"haovpn/internal/winnet"
 )
 
 var (
-	winnatMu                  sync.Mutex
+	winnatMu                sync.Mutex
 	winnatUnavailableCached bool // 本进程已确认无 WinNAT（家庭版等），跳过重复 PS
 )
 
-// setupNATPlatform 为 VPN 子网访问 LAN 配置 SNAT。
-// 优先 WinNAT（New-NetNat，需 Hyper-V）；家庭版等无 WinNAT 时回退 ICS（见 ics_nat_windows.go）。
-func setupNATPlatform(vpnSubnet, lanCIDR, tunName string, tunIP net.IP, outboundIf string) error {
-	// 家庭版/Core：无 Hyper-V WinNAT，跳过 Get-NetNat/New-NetNat（避免 resident/CIM 空等）。
+// setupNATForLANs 为 VPN 子网访问若干 LAN 配置 SNAT（Windows）。
+//
+// WinNAT：对 VPN 子网建一条 New-NetNat（与 LAN 条数无关）。
+// ICS 回退：整表只 Enable 一次；与首条出站网卡相同的网段一并生效，异网卡跳过并 Warn（ics_multi_nic）。
+func setupNATForLANs(ctx context.Context, vpnSubnet string, lanCIDRs []string, tunName string, tunIP net.IP, outboundIf string) (NATSetupOutcome, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := safeutil.Check(ctx); err != nil {
+		return NATSetupOutcome{}, err
+	}
+	if len(lanCIDRs) == 0 {
+		return NATSetupOutcome{}, nil
+	}
+	// 家庭版/Core：无 Hyper-V WinNAT，跳过 Get-NetNat/New-NetNat。
 	if winnet.IsWindowsHomeSKU() {
 		markWinNATUnavailable()
 		logger.Info("WinNAT skip reason=sku_home，直接 ICS 回退")
-		return setupICSPlatform(tunName, lanCIDR, outboundIf, tunIP)
+		return setupICSForLANs(ctx, tunName, lanCIDRs, outboundIf, tunIP)
 	}
 	if isWinNATCachedUnavailable() {
 		logger.Info("WinNAT 本进程已确认不可用，跳过 New-NetNat，直接 ICS 回退")
-		return setupICSPlatform(tunName, lanCIDR, outboundIf, tunIP)
+		return setupICSForLANs(ctx, tunName, lanCIDRs, outboundIf, tunIP)
 	}
 	winErr := setupWinNAT(vpnSubnet)
 	if winErr == nil {
-		return nil
+		logger.Info("windows: WinNAT 已覆盖 VPN 子网 %s（多 LAN 共用一条 NetNat） lans=%d", vpnSubnet, len(lanCIDRs))
+		return NATSetupOutcome{}, nil
 	}
 	if isWinNATUnavailable(winErr) {
 		markWinNATUnavailable()
 		logger.Warn("WinNAT 不可用（Windows 家庭版或未启用 Hyper-V）: %v", winErr)
 		logger.Info("尝试 ICS 回退（Internet 连接共享）…")
-		return setupICSPlatform(tunName, lanCIDR, outboundIf, tunIP)
+		return setupICSForLANs(ctx, tunName, lanCIDRs, outboundIf, tunIP)
 	}
-	return winErr
+	return NATSetupOutcome{}, winErr
 }
 
 func isWinNATCachedUnavailable() bool {
@@ -67,23 +80,17 @@ func resetWinNATCacheForTest() {
 // setupWinNAT 使用 New-NetNat（依赖 Hyper-V/WinNAT 子系统）。
 //
 // 若已有同名同 prefix 规则则跳过；否则尽力 Remove 旧规则再 New。
-// PowerShell 一律经 winnet.RunPS / RunPSBestEffort。
+// PowerShell 一律经 winnet.RunPSOneShot / RunPSBestEffort。
+// 安全：name/vpnSubnet 必须 EscapeSingleQuoted 后嵌入 '…'，禁止裸 %s（握手下发子网若含 ' 可破坏脚本）。
 func setupWinNAT(vpnSubnet string) error {
 	name := brand.WinNATName
 	if winNATMatches(name, vpnSubnet) {
 		logger.Info("windows: NetNat %s 已存在 prefix=%s，跳过", name, vpnSubnet)
 		return nil
 	}
-	winnet.RunPSBestEffort(
-		fmt.Sprintf("Remove-NetNat -Name %s -Confirm:$false -ErrorAction SilentlyContinue", name),
-		"Remove-NetNat-before-New",
-	)
+	winnet.RunPSBestEffort(winnet.PSSnippetRemoveNetNat(name), "Remove-NetNat-before-New")
 
-	ps := fmt.Sprintf(
-		`New-NetNat -Name %s -InternalIPInterfaceAddressPrefix %s -ErrorAction Stop`,
-		name, vpnSubnet,
-	)
-	out, err := winnet.RunPSOneShot(ps)
+	out, err := winnet.RunPSOneShot(winnet.PSSnippetNewNetNat(name, vpnSubnet))
 	if err != nil {
 		return platform.CommandOutputError("New-NetNat", out, err)
 	}
@@ -112,10 +119,7 @@ func teardownNATPlatform(vpnSubnet, lanCIDR, tunName string) error {
 	if isWinNATCachedUnavailable() {
 		return nil
 	}
-	winnet.RunPSBestEffort(
-		`Remove-NetNat -Name `+brand.WinNATName+` -Confirm:$false -ErrorAction SilentlyContinue`,
-		"Remove-NetNat-teardown",
-	)
+	winnet.RunPSBestEffort(winnet.PSSnippetRemoveNetNat(brand.WinNATName), "Remove-NetNat-teardown")
 	return nil
 }
 
@@ -125,12 +129,7 @@ func winNATMatches(name, prefix string) bool {
 	if isWinNATCachedUnavailable() {
 		return false
 	}
-	ps := fmt.Sprintf(`
-$n = Get-NetNat -Name '%s' -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $n) { Write-Output 'MISS' }
-elseif ($n.InternalIPInterfaceAddressPrefix -eq '%s') { Write-Output 'MATCH' }
-else { Write-Output 'DIFF' }
-`, winnet.EscapeSingleQuoted(name), winnet.EscapeSingleQuoted(prefix))
+	ps := winnet.PSSnippetGetNetNatMatch(name, prefix)
 	out, err := winnet.RunPSOneShot(ps)
 	if err != nil {
 		return false

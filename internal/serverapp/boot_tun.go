@@ -1,6 +1,8 @@
 package serverapp
 
 import (
+	"context"
+
 	"haovpn/internal/brand"
 	"haovpn/internal/logger"
 	"haovpn/internal/netstack"
@@ -35,7 +37,7 @@ func bootTUNNetstack(bc *bootContext) (*tunNetstackResult, error) {
 		ForwardOnly: cfg.NAT.ForwardOnly,
 		Enabled:     cfg.NAT.Enabled,
 	})
-	if err := ns.Setup(); err != nil {
+	if err := ns.Setup(context.Background()); err != nil {
 		if cfg.NAT.Enabled {
 			_ = tunDev.Close()
 			return nil, err

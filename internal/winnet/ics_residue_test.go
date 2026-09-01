@@ -1,37 +1,12 @@
 package winnet_test
 
 import (
-	"net"
 	"runtime"
 	"strings"
 	"testing"
 
 	"haovpn/internal/winnet"
 )
-
-// TestIPv4IsICSPrivate 覆盖 ICS 默认网段判定（有/无 137）。
-func TestIPv4IsICSPrivate(t *testing.T) {
-	cases := []struct {
-		ip   string
-		want bool
-	}{
-		{"192.168.137.1", true},
-		{"192.168.137.254", true},
-		{"192.168.3.1", false},
-		{"10.88.0.2", false},
-		{"::1", false},
-		{"", false},
-	}
-	for _, tc := range cases {
-		got := winnet.IPv4IsICSPrivate(net.ParseIP(tc.ip))
-		if got != tc.want {
-			t.Fatalf("ip=%q got=%v want=%v", tc.ip, got, tc.want)
-		}
-	}
-	if winnet.IPv4IsICSPrivate(nil) {
-		t.Fatal("nil IP 应为 false")
-	}
-}
 
 // TestHasICSResidueNonWindows 非 Windows 恒 false，避免误触发清理。
 func TestHasICSResidueNonWindows(t *testing.T) {

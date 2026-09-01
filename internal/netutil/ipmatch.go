@@ -72,6 +72,34 @@ func CIDRListContainsIP(cidrs []string, ip net.IP) bool {
 	return IPMatchesRules(ip, cidrs)
 }
 
+// IPInAnyNet 判断 ip 是否落在 nets 中任一条（nil 项跳过；ip/nets 空为 false）。
+//
+// 热路径：已解析的 []*net.IPNet（TUN 上送 / 入站 ExitLANs），勿用 CIDRListContainsIP 反复解析字符串。
+func IPInAnyNet(nets []*net.IPNet, ip net.IP) bool {
+	if ip == nil || len(nets) == 0 {
+		return false
+	}
+	for _, n := range nets {
+		if n != nil && n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// VPNIPOrInNets 目的（或源）是否为本机 VPN IP，或落在 nets（AllowedIPs / ExitLANs）。
+//
+// 用途：客户端 shouldUploadTUN 与服务端 dstAllowed 的单一公式，避免双包各写一套。
+func VPNIPOrInNets(vpnIP string, nets []*net.IPNet, ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if vpnIP != "" && ip.String() == vpnIP {
+		return true
+	}
+	return IPInAnyNet(nets, ip)
+}
+
 // IPMatchesRules 判断 ip 是否命中 rules 中任一条 CIDR 或单 IP 规则。
 //
 // 参数：无效规则项被跳过；ip 为 nil 时恒 false。
@@ -167,6 +195,27 @@ func AppendCIDRUnique(cidrs []string, nets []*net.IPNet, c string, skipIfCovered
 		}
 	}
 	return append(cidrs, s), append(nets, n), true
+}
+
+// MergeDNSIntoAllowedIPs 将策略 DNS 服务器以 /32 并入 AllowedIPs（已被覆盖则跳过）。
+//
+// 用途：TUN 接口 DNS 查询须进隧道；否则客户端滤 dst / 服务端 dstAllowed 会丢弃，
+// 出现「丢弃越权目的 IP」刷屏且 DNS 只能依赖其它网卡回落。
+// 空 dns 或空 allowed 基线：仍可只追加 DNS /32（调用方须保证最终非空策略）。
+func MergeDNSIntoAllowedIPs(allowed []string, dnsServers []string) []string {
+	if len(dnsServers) == 0 {
+		return append([]string{}, allowed...)
+	}
+	nets, _ := ParseCIDRListToNets(allowed)
+	out := append([]string{}, allowed...)
+	for _, d := range dnsServers {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		out, nets, _ = AppendCIDRUnique(out, nets, d+"/32", true)
+	}
+	return out
 }
 
 // ParseCIDRListToNets 将 allowed_ips 等字符串列表解析为 []*net.IPNet。

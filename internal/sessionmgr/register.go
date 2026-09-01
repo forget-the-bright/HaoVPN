@@ -2,7 +2,6 @@ package sessionmgr
 
 import (
 	"net"
-	"sort"
 	"time"
 
 	"haovpn/internal/auth"
@@ -11,8 +10,10 @@ import (
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 	"haovpn/internal/persist"
-	"haovpn/internal/safeutil"
 )
+
+// register.go：RegisterVPN 主路径 + 旧 Conn 排空 + RemoveIfConn。
+// grace/顶替判定见 register_grace.go；ExitLAN / viaIndex / lan_registry 见 register_lan.go。
 
 // RegisterVPN 注册账号 VPN 会话（每账号最多 1 条连接）；peer 可为空。
 //
@@ -28,10 +29,11 @@ import (
 //
 // 副作用：
 //   - reject_second：已有会话则：同主机 grace 顶替，或对端静默超时（半死）顶替；否则 auth.ErrAccountAlreadyOnline；
-//   - kick_previous：异步 Close 旧连接后注册新会话；
+//   - kick_previous / grace 顶替：先摘旧会话，清 Data 回调，同步 Close 并等待 Done（旧 readLoop 退出），
+//     再挂新 Crypto（避免同钥迟到包占防重放窗口；local_lans/ICS 长配网软重连现场）；
 //   更新 sessions/byIP/vpnIndex/viaIndex；写 connection_events / session_stats。
 //
-// 并发：持写锁；旧连接在 goroutine 中关闭，避免在 readLoop/握手栈内同步 Close 引发死锁。
+// 并发：持写锁摘旧/挂新；旧连接在解锁后由本函数同步 Close+排空（调用方须为新连接握手栈，勿在旧 readLoop 内调 RegisterVPN）。
 func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketConn, cryptoSess *crypto.Session, remoteAddr string, peer PeerReg) error {
 	var nets []*net.IPNet
 	nets, err := netutil.ParseCIDRListToNets(allowed)
@@ -86,6 +88,8 @@ func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketC
 				inheritRx = old.RxBytes.Load()
 				inheritTx = old.TxBytes.Load()
 				oldConn = old.Conn
+				// 先摘会话：旧 Conn 再入站时 sessions miss → 丢弃，避免同钥旧 counter 灌进新 Crypto
+				old.Crypto = nil
 				delete(m.sessions, user.ID)
 				if old.VPNIP != "" {
 					delete(m.byIP, old.VPNIP)
@@ -100,11 +104,20 @@ func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketC
 			// kick_previous：踢掉旧会话
 			logger.Info("踢掉旧会话 user_id=%d（新连接）", user.ID)
 			oldConn = old.Conn
+			old.Crypto = nil
 			delete(m.sessions, user.ID)
 			if old.VPNIP != "" {
 				delete(m.byIP, old.VPNIP)
 			}
 		}
+	}
+	m.mu.Unlock()
+
+	// 在挂新 Crypto 之前：清回调 → Close → 等 Done。
+	// 为何：仅 Close 不保证 readLoop 已退出；旧 onData 仍可能在新会话挂上后调用 HandleInbound。
+	// HandleInbound 已按 Conn 身份校验作第二道防线；此处排空缩小竞态窗口。
+	if oldConn != nil {
+		drainOldConn(oldConn, user.ID)
 	}
 
 	ps := &AccountSession{
@@ -125,6 +138,8 @@ func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketC
 	}
 	ps.RxBytes.Store(inheritRx)
 	ps.TxBytes.Store(inheritTx)
+
+	m.mu.Lock()
 	m.sessions[user.ID] = ps
 	if user.VPNIP != "" {
 		m.byIP[user.VPNIP] = ps
@@ -132,11 +147,6 @@ func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketC
 	}
 	m.rebuildViaIndexLocked()
 	m.mu.Unlock()
-
-	if oldConn != nil {
-		// 异步关闭，避免在 readLoop/握手栈内同步 Close 引发重入或死锁；GoSafe 防 Close panic。
-		safeutil.GoSafe("sessionmgr-close-old", func() { _ = oldConn.Close() })
-	}
 
 	now := time.Now()
 	if m.store != nil {
@@ -162,123 +172,35 @@ func (m *Manager) RegisterVPN(user *persist.User, allowed []string, conn PacketC
 	return nil
 }
 
-// loadExitLANs 从临时注册表加载本账号 via 出口网段（握手前已 ReplaceClientLANRegistry）。
-func (m *Manager) loadExitLANs(userID int64) []*net.IPNet {
-	if m.store == nil || userID <= 0 {
-		return nil
-	}
-	rows, err := m.store.ListClientLANRegistry(userID)
-	if err != nil || len(rows) == 0 {
-		return nil
-	}
-	var cidrs []string
-	for _, r := range rows {
-		cidrs = append(cidrs, r.DestCIDR)
-	}
-	nets, err := netutil.ParseCIDRListToNets(cidrs)
-	if err != nil {
-		logger.Warn("解析 exit_lans 失败 user_id=%d: %v", userID, err)
-		return nil
-	}
-	return nets
-}
+// oldConnDrainTimeout 等待旧 Conn readLoop 退出的上限。
+// 过短仍可能残留迟到包（靠 HandleInbound Conn 校验兜底）；过长拖慢握手。
+const oldConnDrainTimeout = 2 * time.Second
 
-// parseViaRoutes 将规格解析为 viaRouteEntry；非法 CIDR 返回错误。
-func parseViaRoutes(specs []ViaRouteSpec) ([]viaRouteEntry, error) {
-	if len(specs) == 0 {
-		return nil, nil
-	}
-	out := make([]viaRouteEntry, 0, len(specs))
-	for _, s := range specs {
-		nets, err := netutil.ParseCIDRListToNets([]string{s.DestCIDR})
-		if err != nil {
-			return nil, err
-		}
-		if len(nets) == 0 || s.ViaUserID <= 0 {
-			continue
-		}
-		out = append(out, viaRouteEntry{net: nets[0], viaUserID: s.ViaUserID})
-	}
-	return out, nil
-}
-
-// rebuildViaIndexLocked 从所有在线会话重建托管路由出站索引（调用方须持写锁）。
+// drainOldConn 清除 Data 回调、Close，并在实现 DrainableConn 时等待 Done。
 //
-// 先按 userID 排序再扁平化，再按 dest CIDR + viaUserID 稳定排序，避免 map 迭代导致
-// 重叠 CIDR 时 RouteOutbound 首次命中 via 不确定（间歇性错路）。
-func (m *Manager) rebuildViaIndexLocked() {
-	ids := make([]int64, 0, len(m.sessions))
-	for id := range m.sessions {
-		ids = append(ids, id)
+// 参数：old — 被顶替的旧连接；userID — 仅用于超时日志。
+// 为何先 SetOnData(nil)：即使 readLoop 仍在读，也不再进入业务解密路径。
+func drainOldConn(old PacketConn, userID int64) {
+	if old == nil {
+		return
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	var idx []viaRouteEntry
-	for _, id := range ids {
-		ps := m.sessions[id]
-		if ps == nil {
-			continue
-		}
-		idx = append(idx, ps.ViaRoutes...)
+	if dc, ok := old.(DataCallbackConn); ok {
+		dc.SetOnData(nil)
 	}
-	sort.SliceStable(idx, func(i, j int) bool {
-		si, sj := viaNetString(idx[i]), viaNetString(idx[j])
-		if si != sj {
-			return si < sj
-		}
-		return idx[i].viaUserID < idx[j].viaUserID
-	})
-	m.viaIndex = idx
-}
-
-// viaNetString 将 via 条目的网段转为可比较字符串（nil 视为空）。
-func viaNetString(e viaRouteEntry) string {
-	if e.net == nil {
-		return ""
-	}
-	return e.net.String()
-}
-
-// sameRemoteHost 比较两个 host:port 的主机部分是否相同（忽略端口；规范化 IPv4/IPv6/本机回环）。
-func sameRemoteHost(a, b string) bool {
-	ha := netutil.NormalizeRemoteHost(a)
-	hb := netutil.NormalizeRemoteHost(b)
-	return ha != "" && ha == hb
-}
-
-// reconnectStaleAfter 半死会话判定阈值：对端静默超过此时间则允许密码重连顶替。
-// 取 grace 与 20s 中较小者（至少 8s），以便客户端持续重试窗口内能顶替 ZT 黑洞会话。
-//
-// 刻意留在本包：仅 sessionmgr 注册路径使用，与传输层 HeartbeatTimeout / SCM 停服超时语义不同。
-func reconnectStaleAfter(grace time.Duration) time.Duration {
-	const minStale = 8 * time.Second
-	const maxStale = 20 * time.Second
-	if grace <= 0 {
-		return maxStale
-	}
-	d := grace
-	if d > maxStale {
-		d = maxStale
-	}
-	if d < minStale {
-		d = minStale
-	}
-	return d
-}
-
-// peerActivityStale 旧连接对端是否已静默超过阈值（实现 PeerActivityConn 时才可判定）。
-func peerActivityStale(conn PacketConn, after time.Duration) bool {
-	if conn == nil || after <= 0 {
-		return false
-	}
-	pa, ok := conn.(PeerActivityConn)
+	_ = old.Close()
+	dr, ok := old.(DrainableConn)
 	if !ok {
-		return false
+		return
 	}
-	t := pa.LastPeerActivity()
-	if t.IsZero() {
-		return false
+	done := dr.Done()
+	if done == nil {
+		return
 	}
-	return time.Since(t) >= after
+	select {
+	case <-done:
+	case <-time.After(oldConnDrainTimeout):
+		logger.Warn("old_conn_drain_timeout user_id=%d wait=%s", userID, oldConnDrainTimeout)
+	}
 }
 
 // RemoveIfConn 仅当当前在线会话仍绑定指定 conn 时移除并触发断线流程。

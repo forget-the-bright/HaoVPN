@@ -1,12 +1,14 @@
 package clientapp
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/netstack"
 	"haovpn/internal/netutil"
+	"haovpn/internal/safeutil"
 	"haovpn/internal/tunnel"
 	"haovpn/internal/tun"
 )
@@ -15,8 +17,11 @@ import (
 
 // applyPolicy 按握手策略创建/更新 TUN、路由与 DNS（增量：仅改差异部分）。
 //
-// 参数：policy — 服务端 handshake_ok 下发的权威策略；VPNIP 非空。
-// 返回：err 为 TUN 创建失败、via Setup 失败，或期望分流路由全部安装失败（硬失败）；
+// 参数：ctx — Engine.runCtx；Stop 时取消，须在 via/ICS 等慢阶段前检查以免空跑十余秒。
+//
+//	policy — 服务端 handshake_ok 下发的权威策略；VPNIP 非空。
+//
+// 返回：err 为 TUN 创建失败、via Setup 失败、ctx 取消，或期望分流路由全部安装失败（硬失败）；
 //
 //	部分路由失败不返回 err，文案写入 rt.routeWarn 供 Engine.LastError 展示。
 //
@@ -25,11 +30,22 @@ import (
 //
 // 装路由顺序：若预判本次会跑 via/ICS Setup，则先不装分流路由（ICS 会冲掉），
 // Setup 成功后再清一次并全量安装；避免「装路由 → ICS → 再装路由」的重复开销。
-func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
+func (rt *runtime) applyPolicy(ctx context.Context, policy tunnel.HandshakePolicy) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	totalStart := time.Now()
 	rt.routeWarn = ""
+
+	abort := func(stage string) error {
+		if err := safeutil.Check(ctx); err != nil {
+			logger.Info("policy_apply aborted stage=%s err=%v elapsed=%s", stage, err, time.Since(totalStart))
+			return err
+		}
+		return nil
+	}
+	if err := abort("start"); err != nil {
+		return err
+	}
 
 	// --- 阶段 1：校验 vpn_ip ---
 	if policy.VPNIP == "" {
@@ -37,23 +53,21 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 	}
 
 	mtu := netutil.ResolveMTU(policy.MTU, rt.cfg.Tun.MTU)
-	gw := netutil.ResolveGateway(policy.GatewayIP, "", policy.VPNIP)
+	gw := netutil.ResolveGateway(policy.GatewayIP, policy.VPNIP)
 	desired := desiredClientRoutes(gw, policy.AllowedIPs)
 	deferRoutes := rt.willViaSetupLocked(policy.VPNSubnet, policy.VPNIP, rt.cfg.LocalLANs)
 
-	needRecreate := rt.tunDev == nil || rt.vpnIP != policy.VPNIP
+	ipChanged := rt.tunDev != nil && rt.vpnIP != policy.VPNIP
+	needColdOpen := rt.tunDev == nil
 	mode := "noop"
+	adapterLabel := ""
 	addN, failN, delN := 0, 0, 0
 
-	// --- 阶段 2：按需创建或重建 TUN；路由可推迟到 via 之后 ---
+	// --- 阶段 2：冷开 TUN / 软换 VPN IP / 保 TUN 差分路由；路由可推迟到 via 之后 ---
 	tunStageStart := time.Now()
-	if needRecreate {
-		logger.Info("dataplane_clear reason=vpn_ip_change old=%s new=%s", rt.vpnIP, policy.VPNIP)
-		if rt.tunDev != nil {
-			rt.clearRoutesLocked()
-			_ = rt.tunDev.Close()
-			rt.tunDev = nil
-		}
+	switch {
+	case needColdOpen:
+		logger.Info("tun_open reason=first_policy new=%s", policy.VPNIP)
 		dev, err := tun.Open(tun.Config{
 			Name: rt.cfg.Tun.Name,
 			MTU:  mtu,
@@ -70,7 +84,8 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 		rt.appliedDNS = nil
 		rt.gateway = gw
 		mode = "tun_recreate"
-		logger.Info("policy_apply stage=tun elapsed=%s mode=recreate", time.Since(tunStageStart))
+		adapterLabel = adapterReuseLabel(dev)
+		logger.Info("policy_apply stage=tun elapsed=%s mode=open adapter=%s", time.Since(tunStageStart), adapterLabel)
 		routesStart := time.Now()
 		if !deferRoutes {
 			addN, failN = rt.installRouteListLocked(desired, gw, rt.tunDev.Name())
@@ -78,17 +93,71 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 			logger.Info("policy_apply defer_routes reason=via_setup_pending")
 		}
 		logger.Info("policy_apply stage=routes elapsed=%s add=%d fail=%d defer=%v", time.Since(routesStart), addN, failN, deferRoutes)
-	} else {
+
+	case ipChanged:
+		// 在线仅改 VPN IP：不关 TUN、不拆 via/ICS、不清 viaFP（指纹不含 tunIP）。
+		// KeepICS Replace → PreferVPN（/32 + 清默认路由）→ DNS poison 后重装 AllowedIPs。
+		oldIP := rt.vpnIP
+		logger.Info("vpn_ip_replace_inplace old=%s new=%s dataplane_keep=true", oldIP, policy.VPNIP)
+		if err := abort("before_vpn_ip_inplace"); err != nil {
+			return err
+		}
+		tunName := rt.tunDev.Name()
+		dnsPoisonStart := time.Now()
+		if err := netstack.RestoreDNS(tunName, oldIP, policy.VPNIP); err != nil {
+			logger.Warn("vpn_ip_inplace RestoreDNS: %v", err)
+		} else {
+			logger.Info("vpn_ip_inplace RestoreDNS ok elapsed=%s poison=[%s %s]", time.Since(dnsPoisonStart), oldIP, policy.VPNIP)
+		}
+		// poison 后仅当握手 DNS 列表变化时才强制重装（见阶段 4）
+		if rt.cfg.Tun.DNSFromPolicyEnabled() && len(policy.DNSServers) > 0 && !dnsServersEqual(rt.appliedDNS, policy.DNSServers) {
+			rt.appliedDNS = nil
+		}
+		removed, kept, err := netstack.ReplaceTUNIPv4KeepICS(tunName, policy.VPNIP, 32)
+		if err != nil {
+			return fmt.Errorf("vpn_ip_inplace ReplaceTUNIPv4KeepICS: %w", err)
+		}
+		logger.Info("vpn_ip_inplace replace removed=%v kept=%s", removed, kept)
+		if err := netstack.PreferVPNAfterSoftIPReplace(ctx, tunName, policy.VPNIP); err != nil {
+			logger.Warn("vpn_ip_inplace PreferVPN light: %v", err)
+		}
+		oldGw := rt.gateway
+		if oldGw == "" {
+			oldGw = netutil.ResolveGateway("", oldIP)
+		}
+		rt.vpnIP = policy.VPNIP
+		rt.gateway = gw
+		mode = "vpn_ip_inplace"
+		logger.Info("policy_apply stage=tun elapsed=%s mode=vpn_ip_inplace", time.Since(tunStageStart))
+		routesStart := time.Now()
+		if !deferRoutes {
+			if oldGw == gw && routeListsEqual(rt.routes, desired) {
+				logger.Info("vpn_ip_inplace routes=keep count=%d", len(rt.routes))
+			} else {
+				for _, cidr := range rt.routes {
+					if e := netstack.DelClientRoute(cidr, tunName, oldGw); e != nil {
+						logger.Warn("vpn_ip_inplace 删旧路由 %s: %v", cidr, e)
+					}
+				}
+				delN = len(rt.routes)
+				rt.routes = nil
+				addN, failN = rt.installRouteListLocked(desired, gw, tunName)
+			}
+		} else {
+			logger.Info("policy_apply defer_routes reason=via_setup_pending after_vpn_ip_inplace")
+		}
+		logger.Info("policy_apply stage=routes elapsed=%s add=%d fail=%d del=%d defer=%v", time.Since(routesStart), addN, failN, delN, deferRoutes)
+
+	default:
 		logger.Info("policy_apply stage=tun elapsed=%s mode=keep", time.Since(tunStageStart))
 		tunName := rt.tunDev.Name()
 		oldGw := rt.gateway
 		if oldGw == "" {
-			oldGw = netutil.ResolveGateway("", "", rt.vpnIP)
+			oldGw = netutil.ResolveGateway("", rt.vpnIP)
 		}
 		gwChanged := oldGw != gw
 		routesStart := time.Now()
 		if gwChanged {
-			// 下一跳变化：先用旧网关删掉；若将 via Setup 则新路由延后安装
 			for _, cidr := range rt.routes {
 				if err := netstack.DelClientRoute(cidr, tunName, oldGw); err != nil {
 					logger.Warn("删除路由失败 cidr=%s gw=%s: %v", cidr, oldGw, err)
@@ -112,7 +181,6 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 					mode = "routes_diff"
 				}
 			} else {
-				// 将跑 ICS：不必先差分（随后全量重装）；保留现有条目供 Setup 期间尽量黑洞
 				logger.Info("policy_apply defer_routes reason=via_setup_pending keep_existing_until_ics")
 			}
 		}
@@ -127,8 +195,13 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 	}
 	rt.policyVer = policy.PolicyVer
 	rt.allowedCIDRs = append([]string{}, policy.AllowedIPs...)
+	rt.cacheAllowedNetsLocked()
 
 	// --- 阶段 4：按配置应用 DNS（列表未变则跳过）---
+	// ICS 前立刻 ApplyDNS（与 defer_routes 独立）。
+	if err := abort("before_dns"); err != nil {
+		return err
+	}
 	dnsStart := time.Now()
 	dnsChanged := false
 	if rt.cfg.Tun.DNSFromPolicyEnabled() && len(policy.DNSServers) > 0 {
@@ -145,9 +218,13 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 	logger.Info("policy_apply stage=dns elapsed=%s changed=%v", time.Since(dnsStart), dnsChanged)
 
 	// --- 阶段 5：via 出口；Setup 成功后再装/重装分流路由 ---
+	// Stop/HardRestart 最常见卡点：ICS 十余秒；须在 Setup 前尊重 cancel
+	if err := abort("before_via"); err != nil {
+		return err
+	}
 	viaStart := time.Now()
 	rt.cacheExitLANNetsLocked()
-	viaDidSetup, err := rt.setupViaExitLocked(policy.VPNSubnet, tunName, policy.VPNIP, rt.cfg.LocalLANs)
+	viaDidSetup, err := rt.setupViaExitLocked(ctx, policy.VPNSubnet, tunName, policy.VPNIP, rt.cfg.LocalLANs)
 	logger.Info("policy_apply stage=via_cleanup elapsed=%s did_setup=%v err=%v", time.Since(viaStart), viaDidSetup, err)
 	if err != nil {
 		// via 失败：若曾推迟装路由，补装一次以便排障/短暂可用，随后 dataplaneFailed 仍会全清
@@ -165,6 +242,7 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 			mode = "via_rebuild"
 		}
 		logger.Info("via_exit 后已安装客户端分流路由（仅此一次）")
+		// PreferVPN 仅 ICS Setup 内一次；勿在装路由后再调。
 	} else if deferRoutes {
 		// 预判与实际不一致（极少）：补做差分/安装
 		logger.Warn("policy_apply defer_routes mismatch，补装路由")
@@ -173,6 +251,10 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 		if addN > 0 || delN > 0 || failN > 0 {
 			mode = "routes_diff"
 		}
+	}
+	// 纵深：仅本次刚跑 ICS Setup 时快路径 scrub（嵌入 PreferVPN + ics_enable Late 已清；此处 skip noop 重连）
+	if viaDidSetup {
+		netstack.ScrubTUNDefaultRouteFast(tunName)
 	}
 
 	// 最终路由结果：零成功硬失败；部分失败写入 routeWarn（不阻断连接）
@@ -193,8 +275,13 @@ func (rt *runtime) applyPolicy(policy tunnel.HandshakePolicy) error {
 		mode = "dns_only"
 	}
 
-	logger.Info("policy_apply mode=%s vpn_ip=%s add=%d fail=%d del=%d defer_routes=%v policy_ver=%d gateway=%s mtu=%d allowed_ips=%v total_elapsed=%s",
-		mode, policy.VPNIP, addN, failN, delN, deferRoutes, policy.PolicyVer, gw, mtu, policy.AllowedIPs, time.Since(totalStart))
+	if adapterLabel != "" {
+		logger.Info("policy_apply mode=%s open=session adapter=%s vpn_ip=%s add=%d fail=%d del=%d defer_routes=%v policy_ver=%d gateway=%s mtu=%d allowed_ips=%v total_elapsed=%s",
+			mode, adapterLabel, policy.VPNIP, addN, failN, delN, deferRoutes, policy.PolicyVer, gw, mtu, policy.AllowedIPs, time.Since(totalStart))
+	} else {
+		logger.Info("policy_apply mode=%s vpn_ip=%s add=%d fail=%d del=%d defer_routes=%v policy_ver=%d gateway=%s mtu=%d allowed_ips=%v total_elapsed=%s",
+			mode, policy.VPNIP, addN, failN, delN, deferRoutes, policy.PolicyVer, gw, mtu, policy.AllowedIPs, time.Since(totalStart))
+	}
 	return nil
 }
 
@@ -205,4 +292,29 @@ func (rt *runtime) takeRouteWarn() string {
 	w := rt.routeWarn
 	rt.routeWarn = ""
 	return w
+}
+
+// takeICSHint 取出并清空 ICS 多网卡提示（确定走 ICS 后由 via Setup 写入）。
+func (rt *runtime) takeICSHint() string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	h := rt.icsHint
+	rt.icsHint = ""
+	return h
+}
+
+// adapterReuseHint 可选：Windows Wintun 设备报告是否复用已有适配器。
+type adapterReuseHint interface {
+	AdapterReused() bool
+}
+
+// adapterReuseLabel 返回 reuse|create|unknown，供 policy_apply 日志避免「mode=recreate」被误解为再建网卡。
+func adapterReuseLabel(dev tun.Device) string {
+	if h, ok := dev.(adapterReuseHint); ok {
+		if h.AdapterReused() {
+			return "reuse"
+		}
+		return "create"
+	}
+	return "unknown"
 }

@@ -11,8 +11,8 @@ type ManagedRouteView struct {
 	Stale       bool
 }
 
-// ManagedRouteFromTunnel 将握手托管路由转为展示 DTO。
-func ManagedRouteFromTunnel(m tunnel.ManagedRoute) ManagedRouteView {
+// managedRouteFromTunnel 将握手托管路由转为展示 DTO（包内）。
+func managedRouteFromTunnel(m tunnel.ManagedRoute) ManagedRouteView {
 	return ManagedRouteView{
 		Dest: m.Dest, ViaIP: m.ViaIP, ViaUserID: m.ViaUserID,
 		ViaUsername: m.ViaUsername, Stale: m.Stale,
@@ -26,7 +26,7 @@ func ManagedRoutesFromTunnel(in []tunnel.ManagedRoute) []ManagedRouteView {
 	}
 	out := make([]ManagedRouteView, len(in))
 	for i, m := range in {
-		out[i] = ManagedRouteFromTunnel(m)
+		out[i] = managedRouteFromTunnel(m)
 	}
 	return out
 }

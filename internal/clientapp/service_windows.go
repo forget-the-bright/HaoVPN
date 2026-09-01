@@ -69,7 +69,7 @@ func (m *clientService) Execute(args []string, r <-chan svc.ChangeRequest, chang
 	cfgPath := config.ResolveClientConfigPath()
 	errCh := make(chan error, 1)
 	safeutil.GoSafe("windows-service-client", func() {
-		errCh <- RunCLI(cfgPath, Credentials{})
+		errCh <- RunServiceLoop(cfgPath, Credentials{})
 	})
 
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}

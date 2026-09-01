@@ -36,3 +36,22 @@ func TestClientValidateRequiresCA(t *testing.T) {
 		t.Fatal("should require ca_file")
 	}
 }
+
+// TestClientValidateLocalLANsHardFail 非法 local_lans 挡过；合法写回规范化。
+func TestClientValidateLocalLANsHardFail(t *testing.T) {
+	cfg := &config.ClientConfig{}
+	cfg.Server.Address = "192.168.1.10:8443"
+	cfg.Auth.Username = "u"
+	cfg.Server.TLS.InsecureSkipVerify = true
+	cfg.LocalLANs = []string{"not-a-lan"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("非法 local_lans 应失败")
+	}
+	cfg.LocalLANs = []string{"192.168.31.0/24", "", "192.168.31.0/24"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.LocalLANs) != 1 || cfg.LocalLANs[0] != "192.168.31.0/24" {
+		t.Fatalf("规范化写回: %v", cfg.LocalLANs)
+	}
+}

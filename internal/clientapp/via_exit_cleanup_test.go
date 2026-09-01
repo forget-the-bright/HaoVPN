@@ -1,6 +1,7 @@
 package clientapp
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -14,7 +15,7 @@ func TestCleanupTUNAfterViaDisabledNoResidue(t *testing.T) {
 		hasICSResidueFn, cleanupICSResidueFn, removeICSAddressesFn = origHas, origClean, origRem
 	})
 	hasICSResidueFn = func(string) bool { return false }
-	cleanupICSResidueFn = func(string, string) error {
+	cleanupICSResidueFn = func(context.Context, string, string) error {
 		cleanupN.Add(1)
 		return nil
 	}
@@ -23,14 +24,14 @@ func TestCleanupTUNAfterViaDisabledNoResidue(t *testing.T) {
 		return nil
 	}
 
-	cleanupTUNAfterViaDisabled("haovpn0", "10.88.0.2", false)
-	cleanupTUNAfterViaDisabled("haovpn0", "10.88.0.2", true)
+	cleanupTUNAfterViaDisabled(context.Background(), "haovpn0", "10.88.0.2", false)
+	cleanupTUNAfterViaDisabled(context.Background(), "haovpn0", "10.88.0.2", true)
 	if cleanupN.Load() != 0 || removeN.Load() != 0 {
 		t.Fatalf("无残留不应清理 cleanup=%d remove=%d", cleanupN.Load(), removeN.Load())
 	}
 }
 
-// TestCleanupTUNAfterViaDisabledResidueFull 有残留且非 hadVia：走一次 CleanupICSResidue。
+// TestCleanupTUNAfterViaDisabledResidueFull 有残留且非 hadVia：走一次 CleanupICSResidueContext。
 func TestCleanupTUNAfterViaDisabledResidueFull(t *testing.T) {
 	var cleanupN, removeN atomic.Int32
 	origHas, origClean, origRem := hasICSResidueFn, cleanupICSResidueFn, removeICSAddressesFn
@@ -38,7 +39,10 @@ func TestCleanupTUNAfterViaDisabledResidueFull(t *testing.T) {
 		hasICSResidueFn, cleanupICSResidueFn, removeICSAddressesFn = origHas, origClean, origRem
 	})
 	hasICSResidueFn = func(string) bool { return true }
-	cleanupICSResidueFn = func(tun, vpn string) error {
+	cleanupICSResidueFn = func(ctx context.Context, tun, vpn string) error {
+		if ctx == nil {
+			t.Fatal("ctx must not be nil after normalize")
+		}
 		if tun != "haovpn0" || vpn != "10.88.0.5" {
 			t.Fatalf("args tun=%s vpn=%s", tun, vpn)
 		}
@@ -50,7 +54,7 @@ func TestCleanupTUNAfterViaDisabledResidueFull(t *testing.T) {
 		return nil
 	}
 
-	cleanupTUNAfterViaDisabled("haovpn0", "10.88.0.5", false)
+	cleanupTUNAfterViaDisabled(context.Background(), "haovpn0", "10.88.0.5", false)
 	if cleanupN.Load() != 1 || removeN.Load() != 0 {
 		t.Fatalf("want CleanupICSResidue only cleanup=%d remove=%d", cleanupN.Load(), removeN.Load())
 	}
@@ -64,7 +68,7 @@ func TestCleanupTUNAfterViaDisabledHadVia(t *testing.T) {
 		hasICSResidueFn, cleanupICSResidueFn, removeICSAddressesFn = origHas, origClean, origRem
 	})
 	hasICSResidueFn = func(string) bool { return true }
-	cleanupICSResidueFn = func(string, string) error {
+	cleanupICSResidueFn = func(context.Context, string, string) error {
 		cleanupN.Add(1)
 		return nil
 	}
@@ -73,7 +77,7 @@ func TestCleanupTUNAfterViaDisabledHadVia(t *testing.T) {
 		return nil
 	}
 
-	cleanupTUNAfterViaDisabled("haovpn0", "10.88.0.5", true)
+	cleanupTUNAfterViaDisabled(context.Background(), "haovpn0", "10.88.0.5", true)
 	if cleanupN.Load() != 0 || removeN.Load() != 1 {
 		t.Fatalf("hadVia 应只 Remove addresses cleanup=%d remove=%d", cleanupN.Load(), removeN.Load())
 	}
@@ -86,9 +90,20 @@ func TestCleanupTUNAfterViaDisabledWarnOnError(t *testing.T) {
 		hasICSResidueFn, cleanupICSResidueFn = origHas, origClean
 	})
 	hasICSResidueFn = func(string) bool { return true }
-	cleanupICSResidueFn = func(string, string) error { return errors.New("ps fail") }
+	cleanupICSResidueFn = func(context.Context, string, string) error { return errors.New("ps fail") }
 	// 不应 panic
-	cleanupTUNAfterViaDisabled("haovpn0", "10.88.0.5", false)
+	cleanupTUNAfterViaDisabled(context.Background(), "haovpn0", "10.88.0.5", false)
+}
+
+// TestCleanupTUNAfterViaDisabledCanceled 取消时打 aborted 路径且不 panic。
+func TestCleanupTUNAfterViaDisabledCanceled(t *testing.T) {
+	origHas, origClean := hasICSResidueFn, cleanupICSResidueFn
+	t.Cleanup(func() {
+		hasICSResidueFn, cleanupICSResidueFn = origHas, origClean
+	})
+	hasICSResidueFn = func(string) bool { return true }
+	cleanupICSResidueFn = func(context.Context, string, string) error { return context.Canceled }
+	cleanupTUNAfterViaDisabled(context.Background(), "haovpn0", "10.88.0.5", false)
 }
 
 // TestSetupViaExitEmptySkipsCleanupWhenNoResidue 空 local_lans + 无残留：setup 不触发慢清理。
@@ -99,13 +114,13 @@ func TestSetupViaExitEmptySkipsCleanupWhenNoResidue(t *testing.T) {
 		hasICSResidueFn, cleanupICSResidueFn = origHas, origClean
 	})
 	hasICSResidueFn = func(string) bool { return false }
-	cleanupICSResidueFn = func(string, string) error {
+	cleanupICSResidueFn = func(context.Context, string, string) error {
 		cleanupN.Add(1)
 		return nil
 	}
 
 	rt := &runtime{}
-	did, err := rt.setupViaExitLocked("10.88.0.0/24", "haovpn0", "10.88.0.2", nil)
+	did, err := rt.setupViaExitLocked(context.Background(), "10.88.0.0/24", "haovpn0", "10.88.0.2", nil)
 	if err != nil || did {
 		t.Fatalf("empty lans: did=%v err=%v", did, err)
 	}
@@ -116,7 +131,7 @@ func TestSetupViaExitEmptySkipsCleanupWhenNoResidue(t *testing.T) {
 		t.Fatal("无残留不应 CleanupICSResidue")
 	}
 	// 二次 apply：指纹未变，直接 skip
-	did, err = rt.setupViaExitLocked("10.88.0.0/24", "haovpn0", "10.88.0.2", nil)
+	did, err = rt.setupViaExitLocked(context.Background(), "10.88.0.0/24", "haovpn0", "10.88.0.2", nil)
 	if err != nil || did || cleanupN.Load() != 0 {
 		t.Fatalf("unchanged off did=%v err=%v cleanup=%d", did, err, cleanupN.Load())
 	}

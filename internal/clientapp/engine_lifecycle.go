@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"haovpn/internal/logger"
-	"haovpn/internal/netstack"
 	"haovpn/internal/safeutil"
 	"haovpn/internal/security"
 	"haovpn/internal/transport"
@@ -81,6 +80,7 @@ func (e *Engine) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.runCtx = ctx
 	e.cancel = cancel
+	e.stopping = false
 	e.state = StateConnecting
 	e.lastError = ""
 	// 每次 Start 重置首次结果通道，供 WaitConnected 等待本次连接
@@ -101,14 +101,13 @@ func (e *Engine) Start() error {
 }
 
 // Stop 停止重连循环、关闭 TUN/路由并拆除杀开关。
+//
+// 顺序关键（日志实测）：须先 cancel runCtx，再关 Conn/等 loop。
+// 旧顺序先 rc.Stop（关 Conn 并等 onConnect）后 cancel → applyPolicy 仍跑完 ICS（十余秒），
+// 再走 session_abandoned soft 重连，与 HardRestart 观感「清理和拨号并行」。
 func (e *Engine) Stop() {
-	e.activeMu.Lock()
-	e.activeConn = nil
-	e.cryptoSess = nil
-	e.sessionPriv = ""
-	e.activeMu.Unlock()
-
 	e.mu.Lock()
+	e.stopping = true
 	cancel := e.cancel
 	e.cancel = nil
 	rc := e.reconnect
@@ -122,12 +121,21 @@ func (e *Engine) Stop() {
 	e.connectedAt = time.Time{}
 	e.mu.Unlock()
 
+	// 先取消：applyPolicy 在 via/ICS 前检查 ctx，可跳过昂贵 Setup
+	if cancel != nil {
+		cancel()
+	}
+	logger.Info("engine_stop begin")
+
+	e.activeMu.Lock()
+	e.activeConn = nil
+	e.cryptoSess = nil
+	e.sessionPriv = ""
+	e.activeMu.Unlock()
+
 	if rc != nil {
 		// 须等 loop 退出：否则手动重连 NewEngine.Start 会与旧 Dial/onConnect 竞态。
 		rc.Stop()
-	}
-	if cancel != nil {
-		cancel()
 	}
 	// 传输已停后再清数据面（DNS/路由/TUN），禁止并行僵尸 Dial。
 	e.rt.close()
@@ -137,6 +145,5 @@ func (e *Engine) Stop() {
 	} else {
 		e.setKillSwitchStatus(true, "")
 	}
-	// Windows 网卡子系统退出挂点（经 netstack 门面；当前为空操作）。
-	netstack.ShutdownWindows()
+	logger.Info("engine_stop done")
 }

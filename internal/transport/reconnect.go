@@ -30,7 +30,7 @@ const stopWaitTimeout = 45 * time.Second
 //   once — 保证 stop channel 只关闭一次。
 //   started — 防双 Start（CAS）；重复 Start 打 Warn 并忽略。
 //
-// 线程安全：Start/Stop/Conn 可从任意 goroutine 调用；loop 经 safeutil.GoSafe 运行。
+// 线程安全：Start/Stop 可从任意 goroutine 调用；loop 经 safeutil.GoSafe 运行。
 // 关联：手动重连须 Engine.Stop（等本 Stop 返回）后再 NewEngine.Start，见 clientgui/tray.go。
 type ReconnectClient struct {
 	cfg         Config
@@ -50,7 +50,7 @@ type ReconnectClient struct {
 // NewReconnectClient 创建带自动重连的客户端传输管理器。
 //
 // 参数：addr — 服务端地址；tlsCfg — 非 nil；cfg — 退避/拨号参数；onData/onConnect 可为 nil。
-// 返回：*ReconnectClient 须调用 Start 启动 loop；未 Start 前 Conn 恒为 nil。
+// 返回：*ReconnectClient 须调用 Start 启动 loop。
 // 副作用：无；不发起网络连接。
 // 并发：返回后单实例仅应 Start 一次（重复 Start 被忽略）。
 func NewReconnectClient(addr string, tlsCfg *tls.Config, cfg Config, onData func([]byte), onConnect func(*Conn)) *ReconnectClient {
@@ -150,6 +150,12 @@ func (r *ReconnectClient) loop() {
 			r.conn = nil
 		}
 		r.mu.Unlock()
+		// Stop 已发出：禁止再打「将重连」并进入下一轮 Dial（HardRestart 竞态日志根因）
+		select {
+		case <-r.stop:
+			return
+		default:
+		}
 		// --- 阶段 4：断线后短暂停顿再重拨 ---
 		pause := AfterDisconnectPause()
 		logger.Info("将重连 addr=%s pause=%s dial_timeout=%s", r.addr, pause, dialTO)
@@ -207,13 +213,3 @@ func (r *ReconnectClient) Stop() {
 	}
 }
 
-// Conn 返回当前活跃连接；重连间隙或 Stop 后可能为 nil。
-//
-// 返回：*Conn 快照；调用方不应长期持有指针（重连后可能失效）。
-// 副作用：无；持 mu 短暂加锁。
-// 并发：可与 loop 并发调用。
-func (r *ReconnectClient) Conn() *Conn {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.conn
-}

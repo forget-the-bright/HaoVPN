@@ -98,27 +98,24 @@ func openPlatform(cfg Config) (Device, error) {
 	return d, nil
 }
 
-// assignIPv4 为 TUN 配置 IPv4；已存在则跳过；netsh 失败时回退 PowerShell。
+// AdapterReused 报告本次 Open 是否复用已有 Wintun 适配器（供 policy_apply adapter= 日志）。
+func (d *winDevice) AdapterReused() bool {
+	return d.reused
+}
+
+// assignIPv4 为 TUN 配置 IPv4（替换式：删掉其它单播，保证只要 want）。
+//
+// 禁止「已有新 IP 就跳过」：Wintun Close 保留适配器，在线改 VPN IP 后旧地址会残留。
+// 同 IP 重入时 Replace 删除集为空，仍是快路径。netsh/iphlp 失败时回退 PowerShell（整表替换）。
 func (d *winDevice) assignIPv4(ip net.IP, ipNet *net.IPNet) error {
 	ones, bits := ipNet.Mask.Size()
 	if bits != 32 {
 		return fmt.Errorf("仅支持 IPv4: bits=%d", bits)
 	}
-	mask := net.IP(ipNet.Mask).String()
-	_ = mask // 回退 netsh 路径由 SetInterfaceIPv4OnIndex 内部按 prefix 计算
 	ifName := winnet.ResolveInterfaceAlias(d.name)
 
-	// 复用适配器时才配前 probe（可能已有同 VPN IP）；首次/新 IP 直接 netsh，避免无谓探测。
-	if d.reused {
-		probeStart := time.Now()
-		has := winnet.InterfaceHasIPv4(d.name, d.ifIndex, ip.String())
-		logger.Info("tun_open stage=assign_ip_probe elapsed=%s name=%s has=%v ifIndex=%d", time.Since(probeStart), d.name, has, d.ifIndex)
-		if has {
-			logger.Info("windows TUN IP 已就绪，跳过重复配置: %s ifIndex=%d", ip, d.ifIndex)
-			return nil
-		}
-	} else {
-		logger.Info("tun_open stage=assign_ip_probe skipped reason=not_reused name=%s", d.name)
+	if before, err := winnet.ListUnicastIPv4OnIfIndex(d.ifIndex); err == nil {
+		logger.Info("tun_addrs_before ifIndex=%d addrs=%v want=%s/%d", d.ifIndex, winnet.FormatUnicastIPv4Entries(before), ip, ones)
 	}
 
 	netshStart := time.Now()
@@ -130,19 +127,20 @@ func (d *winDevice) assignIPv4(ip net.IP, ipNet *net.IPNet) error {
 		has := winnet.InterfaceHasIPv4(d.name, d.ifIndex, ip.String())
 		logger.Info("tun_open stage=assign_ip_probe_after_set elapsed=%s has=%v", time.Since(checkStart), has)
 		if has {
-			logger.Warn("配 IP 返回错误但地址已存在，跳过 PowerShell: %v", err)
+			// 仍可能残留旧 IP：强制走 PS 整表替换（Remove 全部再 New）
+			logger.Warn("配 IP 返回错误但目标已存在，仍尝试 PowerShell 收敛: %v", err)
 		} else {
-			psStart := time.Now()
 			logger.Warn("配 IP 失败，尝试 PowerShell: %v", err)
-			if err2 := winnet.AssignIPv4PowerShell(d.name, ip.String(), ones); err2 != nil {
-				logger.Info("tun_open stage=assign_ip_ps elapsed=%s name=%s err=%v", time.Since(psStart), d.name, err2)
-				if !winnet.InterfaceHasIPv4(d.name, d.ifIndex, ip.String()) {
-					return fmt.Errorf("set: %v; powershell: %w", err, err2)
-				}
-				logger.Warn("TUN IP 配置命令失败但系统已存在 %s，继续启动: set=%v ps=%v", ip, err, err2)
-			} else {
-				logger.Info("tun_open stage=assign_ip_ps elapsed=%s name=%s err=<nil>", time.Since(psStart), d.name)
+		}
+		psStart := time.Now()
+		if err2 := winnet.AssignIPv4PowerShell(d.name, ip.String(), ones); err2 != nil {
+			logger.Info("tun_open stage=assign_ip_ps elapsed=%s name=%s err=%v", time.Since(psStart), d.name, err2)
+			if !winnet.InterfaceHasIPv4(d.name, d.ifIndex, ip.String()) {
+				return fmt.Errorf("set: %v; powershell: %w", err, err2)
 			}
+			logger.Warn("TUN IP 配置命令失败但系统已存在 %s，继续启动: set=%v ps=%v", ip, err, err2)
+		} else {
+			logger.Info("tun_open stage=assign_ip_ps elapsed=%s name=%s err=<nil>", time.Since(psStart), d.name)
 		}
 	}
 	waitStart := time.Now()
@@ -152,6 +150,9 @@ func (d *winDevice) assignIPv4(ip net.IP, ipNet *net.IPNet) error {
 		logger.Warn("tun_open stage=assign_ip_wait elapsed=%s name=%s err=%v（配置已提交，继续）", time.Since(waitStart), d.name, err)
 	} else {
 		logger.Info("tun_open stage=assign_ip_wait elapsed=%s name=%s", time.Since(waitStart), d.name)
+	}
+	if after, err := winnet.ListUnicastIPv4OnIfIndex(d.ifIndex); err == nil {
+		logger.Info("tun_addrs_after ifIndex=%d addrs=%v", d.ifIndex, winnet.FormatUnicastIPv4Entries(after))
 	}
 	if !d.reused {
 		d.disableIPv6BestEffort(ifName)

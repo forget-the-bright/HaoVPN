@@ -26,7 +26,7 @@ func enableIPForwardPlatform() error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return platform.CommandOutputError("reg IPEnableRouter", out, err)
 	}
-	ps := `Get-NetIPInterface -AddressFamily IPv4 | Where-Object {$_.ConnectionState -eq 'Connected'} | ForEach-Object { Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex -Forwarding Enabled -ErrorAction SilentlyContinue }`
+	ps := winnet.PSSnippetEnableIPv4Forwarding()
 	winnet.RunPSBestEffort(ps, "Set-NetIPInterface-Forwarding")
 	logger.Info("windows: IPEnableRouter=1，已尝试启用网卡 Forwarding")
 	return nil

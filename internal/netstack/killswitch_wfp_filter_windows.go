@@ -81,10 +81,6 @@ func addBlockFilter(cidr string, idx int) (uint64, error) {
 	return filterID, nil
 }
 
-func removeFiltersLocked() error {
-	return removeAllProductFiltersLocked()
-}
-
 // removeAllProductFiltersLocked 按子层 GUID 枚举并删除本产品全部过滤器（含进程外残留）。
 func removeAllProductFiltersLocked() error {
 	if killEngine == 0 {

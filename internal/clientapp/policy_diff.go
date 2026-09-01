@@ -75,8 +75,11 @@ func routeSetDiff(installed, desired []string) (add, del []string) {
 }
 
 // viaFingerprint 标识 via/ICS 出口配置；相同则无需 teardown/Setup。
-// lans 会经 ValidLANCIDRs；空 lans 返回空串表示 via 关闭。
+//
+// 仅含 local_lans + vpn_subnet。tunIP 参数保留兼容调用方，但不参与指纹——
+// 在线改 VPN IP 时勿因主机地址变化拆 ICS（改 IP 走 Soft Replace + PreferVPN）。
 func viaFingerprint(lans []string, vpnSubnet, tunIP string) string {
+	_ = tunIP
 	valid := netutil.ValidLANCIDRs(lans)
 	if len(valid) == 0 {
 		return ""
@@ -84,11 +87,26 @@ func viaFingerprint(lans []string, vpnSubnet, tunIP string) string {
 	sorted := append([]string{}, valid...)
 	sort.Strings(sorted)
 	subnet := strings.TrimSpace(vpnSubnet)
-	ip := strings.TrimSpace(tunIP)
-	if norm, err := netutil.NormalizeIPv4(ip); err == nil {
-		ip = norm
+	return strings.Join(sorted, ",") + "|" + subnet
+}
+
+// routeListsEqual 比较两套路由 CIDR 是否相同（规范化后集合相等）。
+func routeListsEqual(a, b []string) bool {
+	na := normalizeRouteList(a)
+	nb := normalizeRouteList(b)
+	if len(na) != len(nb) {
+		return false
 	}
-	return strings.Join(sorted, ",") + "|" + subnet + "|" + ip
+	set := make(map[string]struct{}, len(na))
+	for _, c := range na {
+		set[c] = struct{}{}
+	}
+	for _, c := range nb {
+		if _, ok := set[c]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // dnsServersEqual 比较 DNS 列表（去空白后顺序敏感）；委托 netutil.StringSlicesEqualTrimmed。

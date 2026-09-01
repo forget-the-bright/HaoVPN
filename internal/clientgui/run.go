@@ -27,15 +27,9 @@ func Run(configPath string, elevHint string) {
 	ui.ensureConfigLoaded()
 	ui.installTray()
 
-	// 后台预热 Wintun（与拨号/鉴权重叠）；勿 Wait 后再 auto_connect，否则 UI 空等数秒。
+	// 后台预热 Wintun（与拨号/鉴权重叠）；经 clientapp 薄封装，禁止 GUI 直接 import tun。
 	if ui.cfg != nil {
-		tunName := ui.cfg.Tun.Name
-		safeutil.GoSafe("gui-tun-warmup", func() {
-			// 经 clientapp 门面预热，禁止 GUI 直接 import tun（分层）。
-			if err := clientapp.WarmupTun(tunName); err != nil {
-				logger.Warn("tun_warmup fail name=%s: %v（登录时仍会 Open/Create）", tunName, err)
-			}
-		})
+		clientapp.StartWarmupAsync(ui.cfg.Tun.Name)
 	}
 
 	minimized := ui.cfg != nil && ui.cfg.GUI.StartMinimized

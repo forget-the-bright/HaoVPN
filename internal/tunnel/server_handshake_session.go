@@ -43,6 +43,9 @@ func (h *ServerHandler) handshakeSession(conn *transport.Conn, authOK handshakeA
 		return
 	}
 	allowed := clientPol.AllowedIPs
+	dnsServers := h.resolveDNSServers()
+	// TUN DNS 须进隧道：把 DNS /32 并入 AllowedIPs（会话 dstAllowed + 客户端路由/上送）
+	allowed = netutil.MergeDNSIntoAllowedIPs(allowed, dnsServers)
 	peerReg := sessionmgr.PeerReg{
 		PeerAccessIDs: clientPol.PeerAccessIDs,
 		ViaUserIDs:    clientPol.ViaUserIDs,
@@ -88,7 +91,7 @@ func (h *ServerHandler) handshakeSession(conn *transport.Conn, authOK handshakeA
 		VPNIP:      vpnIP,
 		GatewayIP:  h.GatewayIP,
 		AllowedIPs: allowed,
-		DNSServers: h.resolveDNSServers(),
+		DNSServers: dnsServers,
 		MTU:        mtu,
 		IPMode:     user.IPMode,
 		PolicyVer:  user.PolicyVer,
@@ -114,9 +117,14 @@ func (h *ServerHandler) handshakeSession(conn *transport.Conn, authOK handshakeA
 		return
 	}
 
-	// --- 阶段 7：切换为 IP 包双向转发 ---
+	// --- 阶段 7：切换为 IP 包双向转发；Handshake 回调兼容旧客户端 post-auth lan_registry ---
+	conn.SetOnHandshake(func(payload []byte) {
+		h.handlePostAuthHandshake(userID, vpnIP, payload)
+	})
+	// 闭包捕获本连接：HandleInbound 用 conn 身份拒绝顶替后旧 readLoop 的迟到包，
+	// 避免同钥密文灌进新 Crypto 防重放窗口（local_lans/ICS 软重连现场）。
 	conn.SetOnData(func(payload []byte) {
-		_ = h.SessMgr.HandleInbound(userID, payload, func(pkt []byte) error {
+		_ = h.SessMgr.HandleInbound(userID, conn, payload, func(pkt []byte) error {
 			if h.TunDev == nil {
 				logger.Warn("TUN 未就绪，丢弃入站包 user_id=%d len=%d", userID, len(pkt))
 				return nil

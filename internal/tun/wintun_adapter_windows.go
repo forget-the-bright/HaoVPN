@@ -38,11 +38,16 @@ var haovpnWintunGUID = windows.GUID{
 // prepareWintunAdapter 启动前清理 Windows 上因重名产生的 Wintun 孤儿网卡（如 haovpn0 1）。
 //
 // 参数：configName — yaml tun.name，须与 Wintun OpenAdapter 名一致。
-// 返回：PowerShell 执行失败时 error；无孤儿网卡时 nil。
-// 副作用：可能 Remove-NetAdapter 删除后缀名网卡；写 Info/Debug 日志。
+// 返回：PowerShell 执行失败时 error；无孤儿或清理成功时 nil。
+// 优化：先 HasWintunOrphanAdapters（GAA）；无孤儿则跳过冷启 PS（公司机可省数秒）。
 // 脚本唯一源：winnet.BuildPrepareWintunOrphanScript（禁止本包再维护第二套 PS）。
 func prepareWintunAdapter(configName string) error {
 	if configName == "" {
+		return nil
+	}
+	start := time.Now()
+	if !winnet.HasWintunOrphanAdapters(configName) {
+		logger.Info("tun_open stage=prepare_orphan skipped reason=no_orphan elapsed=%s name=%s", time.Since(start), configName)
 		return nil
 	}
 	ps := winnet.BuildPrepareWintunOrphanScript(configName)
@@ -51,6 +56,7 @@ func prepareWintunAdapter(configName string) error {
 	if trimmed != "" {
 		logger.Info("Wintun 启动前清理: %s", trimmed)
 	}
+	logger.Info("tun_open stage=prepare_orphan elapsed=%s name=%s ran_ps=true", time.Since(start), configName)
 	if err != nil {
 		return fmt.Errorf("清理 Wintun 孤儿网卡: %w", err)
 	}
@@ -135,9 +141,11 @@ func openWintunAdapterLocked(name string) (*wintun.Adapter, bool, error) {
 // 正式 Open 经 takeWarmedAdapterLocked 接管；登录应看到 reuse from_warmup。
 func warmupPlatform(name string) error {
 	start := time.Now()
+	ensureStart := time.Now()
 	if err := wintundll.Ensure(); err != nil {
 		return err
 	}
+	logger.Info("tun_warmup stage=ensure_dll elapsed=%s", time.Since(ensureStart))
 	if name == "" {
 		name = brand.DefaultTunName
 	}
@@ -156,11 +164,22 @@ func warmupPlatform(name string) error {
 		logger.Warn("tun_warmup 替换预热槽位 old=%s new=%s（旧句柄已 Close）", old, name)
 	}
 
+	openStart := time.Now()
 	adapter, reused, err := openWintunAdapterLocked(name)
 	if err != nil {
 		return err
 	}
+	logger.Info("tun_warmup stage=create_or_open elapsed=%s reused=%v", time.Since(openStart), reused)
 	winnet.RegisterFromLUID(name, adapter.LUID())
+	// 新建适配器时在预热阶段禁用 IPv6，避免正式 Open reused=true 跳过 disable_v6。
+	if !reused {
+		v6Start := time.Now()
+		if err := winnet.DisableInterfaceIPv6(name); err != nil {
+			logger.Debug("tun_warmup disable_v6 fail name=%s elapsed=%s: %v", name, time.Since(v6Start), err)
+		} else {
+			logger.Info("tun_warmup stage=disable_v6 elapsed=%s name=%s", time.Since(v6Start), name)
+		}
+	}
 	warmedName = name
 	warmedAdapter = adapter
 	stage := "create"

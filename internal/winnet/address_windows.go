@@ -3,9 +3,12 @@
 package winnet
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	"haovpn/internal/logger"
 	"haovpn/internal/platform"
 )
 
@@ -35,58 +38,45 @@ func DisableInterfaceIPv6(ifName string) error {
 //   prefix — 前缀长度（如 24）。
 // 返回：找不到网卡或 PowerShell 报错时 error。
 func AssignIPv4PowerShell(configName, ip string, prefix int) error {
-	ps := fmt.Sprintf(`
-%s
-if (-not $if) { throw '未找到 Wintun 网卡' }
-Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
-New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress '%s' -PrefixLength %d -ErrorAction Stop | Out-Null
-`, PSSnippetAssignAdapterIf(configName), EscapeSingleQuoted(ip), prefix)
+	ps := PSSnippetAssignIPv4(configName, ip, prefix)
 	_, err := RunPSOneShot(ps)
 	return err
 }
 
-// PreferVPNSourceWithICS 在保留 ICS 私网地址（常 192.168.137.1）的前提下，强制本机发包源为 VPN IP。
+// PreferVPNSourceWithICSContext 在保留 ICS 私网地址的前提下，强制本机发包源为 VPN IP；ctx 取消时 Kill PowerShell。
 //
-// 根因：ICS 在 TUN 上另挂 192.168.137.1 后，Windows 源地址选择可能不用 10.88.x.x，
-// 导致本机经隧道访问服务端 AllowedIPs（如 192.168.3.1）超时；对 ICS 地址设 SkipAsSource=$true。
-//
-// 参数：configName — TUN 配置名；vpnIP — 须保留为发包源的 VPN IPv4。
-// 关联：netstack setupICSPlatform、clientapp via_exit；与 RemoveICSAddressesKeepVPN 互补（彼删地址、此保地址改 SkipAsSource）。
-func PreferVPNSourceWithICS(configName, vpnIP string) error {
+// 根因（错源，不是 soft 重连）：ICS 在 TUN 上另挂 192.168.137.1 后，Windows 源地址选择可能不用
+// 10.88.x.x，导致本机经隧道访问服务端 AllowedIPs（如 192.168.3.1）超时；对 ICS 地址设 SkipAsSource=$true。
+// 热路径：ICS Enable 同脚本内嵌 PSSnippetPreferVPNAfterICS；本函数供回退/单测。
+func PreferVPNSourceWithICSContext(ctx context.Context, configName, vpnIP string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	vpnIP = strings.TrimSpace(vpnIP)
 	if configName == "" || vpnIP == "" {
 		return fmt.Errorf("PreferVPNSourceWithICS: configName/vpnIP 为空")
 	}
-	ps := fmt.Sprintf(`
-$ErrorActionPreference = 'Stop'
-$vpn = '%s'
-%s
-if (-not $if) { throw '未找到 Wintun 网卡' }
-$idx = $if.ifIndex
-# 确保 VPN IP 仍在（ICS 有时冲掉 /32）
-$hasVpn = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Where-Object { $_.IPAddress -eq $vpn }
-if (-not $hasVpn) {
-  New-NetIPAddress -InterfaceIndex $idx -IPAddress $vpn -PrefixLength 32 -ErrorAction SilentlyContinue | Out-Null
-}
-# VPN IP 可作为源；其余地址（含 ICS 192.168.137.x）禁止作本机发包源
-Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object {
-  if ($_.IPAddress -eq $vpn) {
-    Set-NetIPAddress -InterfaceIndex $idx -IPAddress $_.IPAddress -SkipAsSource $false -ErrorAction SilentlyContinue
-  } else {
-    Set-NetIPAddress -InterfaceIndex $idx -IPAddress $_.IPAddress -SkipAsSource $true -ErrorAction SilentlyContinue
-  }
-}
-`, EscapeSingleQuoted(vpnIP), PSSnippetAssignAdapterIf(configName))
-	out, err := RunPSOneShot(ps)
+	start := time.Now()
+	ps := PSAssignAdapterAndPreferVPN(configName, vpnIP, 0)
+	out, err := RunPSOneShotContext(ctx, ps)
+	logger.Info("ics_prefer_vpn embedded=false method=standalone elapsed=%s err=%v", time.Since(start), err)
 	if err != nil {
 		return platform.CommandOutputError("PreferVPNSourceWithICS", out, err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "ics_src_diag "),
+			strings.HasPrefix(line, "ics_prefix_fix "),
+			strings.HasPrefix(line, "ics_default_route_scrubbed "),
+			strings.HasPrefix(line, "ics_prefer_vpn "):
+			logger.Info("windows: %s", line)
+		}
 	}
 	return nil
 }
 
-// RemoveICSAddressesKeepVPN 关闭 ICS 后删除 192.168.137.x 等 ICS 地址，保留 VPN IP。
+// RemoveICSAddressesKeepVPN 关闭 ICS 后删除所有非 VPN 地址（含 137 与旧 VPN IP），保留 vpnIP。
 //
 // 参数：configName — TUN 名；vpnIP — 须保留的地址。
 // 关联：via Teardown / cleanupTUNAfterViaDisabled(hadVia)；有残留且需关共享时优先 CleanupICSResidue（一次 PS）。
@@ -95,19 +85,7 @@ func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
 	if configName == "" || vpnIP == "" {
 		return fmt.Errorf("RemoveICSAddressesKeepVPN: configName/vpnIP 为空")
 	}
-	ps := fmt.Sprintf(`
-$ErrorActionPreference = 'SilentlyContinue'
-$vpn = '%s'
-%s
-if (-not $if) { throw '未找到 Wintun 网卡' }
-Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 |
-  Where-Object { $_.IPAddress -ne $vpn -and $_.IPAddress -like '192.168.137.*' } |
-  ForEach-Object { Remove-NetIPAddress -InterfaceIndex $_.InterfaceIndex -IPAddress $_.IPAddress -Confirm:$false -ErrorAction SilentlyContinue }
-$has = Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq $vpn }
-if (-not $has) {
-  New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress $vpn -PrefixLength 32 -ErrorAction SilentlyContinue | Out-Null
-}
-`, EscapeSingleQuoted(vpnIP), PSSnippetAssignAdapterIf(configName))
+	ps := PSSnippetRemoveNonVPNKeepVPN(vpnIP, PSSnippetAssignAdapterIf(configName))
 	_, err := RunPSOneShot(ps)
 	return err
 }

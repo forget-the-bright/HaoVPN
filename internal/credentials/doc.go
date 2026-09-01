@@ -1,5 +1,7 @@
 // Package credentials 封装 Windows 服务账号 DPAPI 凭据存取（LocalMachine）。
 //
+// 关键文件：windows.go — SaveService / LoadService（写后 RestrictToAdminsOnly）。
+//
 // 上游：clientapp ResolveCredentials（Windows 服务无交互启动）。
 // 下游：fileutil、Windows DPAPI API。
 // 并发：Load/Save 文件级；服务安装路径单进程写入。

@@ -18,3 +18,17 @@ type PacketConn interface {
 type PeerActivityConn interface {
 	LastPeerActivity() time.Time
 }
+
+// DrainableConn 可选接口：Close 后关闭的完成信号，供 RegisterVPN 等待旧 readLoop 退出。
+//
+// *transport.Conn.Done 在 Close 时关闭；不等待则旧回调仍可能在新 Crypto 挂上后入站。
+type DrainableConn interface {
+	Done() <-chan struct{}
+}
+
+// DataCallbackConn 可选接口：动态设置/清空 Data 帧回调。
+//
+// 顶替旧会话时先 SetOnData(nil)，缩小 Close 与 readLoop 退出之间的迟到包窗口。
+type DataCallbackConn interface {
+	SetOnData(fn func([]byte))
+}

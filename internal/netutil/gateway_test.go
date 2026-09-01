@@ -40,14 +40,14 @@ func TestTrimLower(t *testing.T) {
 }
 
 func TestResolveGatewayPriority(t *testing.T) {
-	if got := netutil.ResolveGateway("10.1.0.1", "10.2.0.1", "10.88.0.5"); got != "10.1.0.1" {
+	if got := netutil.ResolveGateway("10.1.0.1", "10.88.0.5"); got != "10.1.0.1" {
 		t.Fatalf("handshake wins: %s", got)
 	}
-	if got := netutil.ResolveGateway("", "10.2.0.1", "10.88.0.5"); got != "10.2.0.1" {
-		t.Fatalf("yaml wins: %s", got)
-	}
-	if got := netutil.ResolveGateway("", "", "10.88.0.5"); got != "10.88.0.1" {
+	if got := netutil.ResolveGateway("", "10.88.0.5"); got != "10.88.0.1" {
 		t.Fatalf("infer: %s", got)
+	}
+	if got := netutil.ResolveGateway("  ", "10.88.0.5"); got != "10.88.0.1" {
+		t.Fatalf("blank handshake → infer: %s", got)
 	}
 }
 

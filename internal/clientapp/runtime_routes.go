@@ -103,6 +103,15 @@ func (rt *runtime) clearRoutes() {
 }
 
 func (rt *runtime) clearRoutesLocked() {
+	poison := []string{}
+	if rt.vpnIP != "" {
+		poison = append(poison, rt.vpnIP)
+	}
+	rt.clearRoutesLockedWithDNSPoison(poison...)
+}
+
+// clearRoutesLockedWithDNSPoison 同 clearRoutesLocked，RestoreDNS 时传入 poison（旧/新 VPN IP）。
+func (rt *runtime) clearRoutesLockedWithDNSPoison(poisonIPs ...string) {
 	// Teardown：仅本会话曾 Setup via（rt.via != nil）时才会 DisableAllICS。
 	// 空 local_lans 的慢清理不在这里：在 setupViaExitLocked → cleanupTUNAfterViaDisabled，
 	// 且须先 HasICSResidue；无残留跳过（公司机常见路径）。
@@ -114,10 +123,10 @@ func (rt *runtime) clearRoutesLocked() {
 	rt.viaFPKnown = false
 	if rt.tunDev != nil {
 		dnsStart := time.Now()
-		if err := netstack.RestoreDNS(rt.tunDev.Name()); err != nil {
+		if err := netstack.RestoreDNS(rt.tunDev.Name(), poisonIPs...); err != nil {
 			logger.Warn("RestoreDNS 失败 adapter=%s elapsed=%s: %v", rt.tunDev.Name(), time.Since(dnsStart), err)
 		} else {
-			logger.Info("RestoreDNS ok adapter=%s elapsed=%s", rt.tunDev.Name(), time.Since(dnsStart))
+			logger.Info("RestoreDNS ok adapter=%s elapsed=%s poison=%v", rt.tunDev.Name(), time.Since(dnsStart), poisonIPs)
 		}
 	}
 	rt.appliedDNS = nil
@@ -131,7 +140,7 @@ func (rt *runtime) clearRoutesOnlyLocked() {
 	tunName := rt.tunDev.Name()
 	gw := rt.gateway
 	if gw == "" {
-		gw = netutil.ResolveGateway("", "", rt.vpnIP)
+		gw = netutil.ResolveGateway("", rt.vpnIP)
 	}
 	for _, cidr := range rt.routes {
 		if err := netstack.DelClientRoute(cidr, tunName, gw); err != nil {

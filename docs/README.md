@@ -6,6 +6,17 @@
 
 ---
 
+## 文档权威层级
+
+| 层级 | 文档 | 职责 |
+|------|------|------|
+| 1 | [architecture.md](architecture.md) | **CODEMAP / FAQ 唯一权威**（包边界、改代码去哪） |
+| 2 | [codebase-guide.md](codebase-guide.md) | 导读叙事（链接 architecture，不重复大表/调用链） |
+| 3 | [../internal/README.md](../internal/README.md) | 任务捷径（clientapp/clientgui 文件簇） |
+| — | [dev-log.md](dev-log.md) | **唯一进度来源**（轮次摘要不写进 architecture 正文） |
+
+---
+
 ## 放置规则（新增文档必读）
 
 | 类型 | 放哪 |
@@ -74,4 +85,4 @@
 3. 改行为（配置项、安全默认、自启、API）时同步：`deploy` / `security-hardening` / `troubleshooting` 中相关节。
 4. 新增文档遵守上方「放置规则」；活文档尽量留在根目录，避免打断代码里的 `docs/deploy.md` 等硬路径。
 
-*最后更新：2026-08-31 · VERSION 0.1.3 · 文档治理（对齐第 24 轮）*
+*最后更新：2026-09-01 · VERSION 0.1.3 · 架构审计第 29 轮*

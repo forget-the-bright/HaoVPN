@@ -2,16 +2,13 @@
 
 package winnet
 
-import "net"
+import (
+	"context"
+)
 
 // ResolveInterfaceAlias 非 Windows 无 netsh 别名差异，直接返回配置名。
 func ResolveInterfaceAlias(configName string) string {
 	return configName
-}
-
-// FindAdapterIfIndex 非 Windows 不提供 Wintun ifIndex 解析。
-func FindAdapterIfIndex(name string) (int, error) {
-	return InterfaceIndex(name)
 }
 
 // InterfaceIndex 非 Windows 不提供 Wintun ifIndex 解析。
@@ -29,9 +26,45 @@ func InterfaceHasIPv4(configName string, ifIndex int, ip string) bool {
 	return false
 }
 
-// PreferVPNSourceWithICS 非 Windows 无操作。
-func PreferVPNSourceWithICS(configName, vpnIP string) error {
-	_, _ = configName, vpnIP
+// ListUnicastIPv4OnIfIndex 非 Windows 返回空。
+func ListUnicastIPv4OnIfIndex(ifIndex int) ([]UnicastIPv4Entry, error) {
+	_ = ifIndex
+	return nil, nil
+}
+
+// ReplaceInterfaceIPv4 非 Windows 不支持。
+func ReplaceInterfaceIPv4(ifIndex int, wantIP string, prefixLen int) (removed []string, kept string, err error) {
+	_, _, _ = ifIndex, wantIP, prefixLen
+	return nil, "", ErrNotSupported
+}
+
+// ReplaceInterfaceIPv4KeepICS 非 Windows 不支持。
+func ReplaceInterfaceIPv4KeepICS(ifIndex int, wantIP string, prefixLen int) (removed []string, kept string, err error) {
+	_, _, _ = ifIndex, wantIP, prefixLen
+	return nil, "", ErrNotSupported
+}
+
+// DeleteDefaultRouteOnInterface 非 Windows 无操作。
+func DeleteDefaultRouteOnInterface(ifIndex int, mode DefaultRouteScrubMode) (removed bool, err error) {
+	_, _ = ifIndex, mode
+	return false, nil
+}
+
+// PreferVPNAfterSoftIPReplace 非 Windows 无操作。
+func PreferVPNAfterSoftIPReplace(ctx context.Context, configName string, ifIndex int, vpnIP string) error {
+	_, _, _, _ = ctx, configName, ifIndex, vpnIP
+	return nil
+}
+
+// ApplyPreferVPNSkipAsSource 非 Windows 无操作。
+func ApplyPreferVPNSkipAsSource(ifIndex int, vpnIP string) (method string, err error) {
+	_, _ = ifIndex, vpnIP
+	return "noop", nil
+}
+
+// PreferVPNSourceWithICSContext 非 Windows 无操作。
+func PreferVPNSourceWithICSContext(ctx context.Context, configName, vpnIP string) error {
+	_, _, _ = ctx, configName, vpnIP
 	return nil
 }
 
@@ -41,15 +74,22 @@ func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
 	return nil
 }
 
-// DisableAllICS 非 Windows 无操作。
-func DisableAllICS() {}
+// DisableAllICSContext 非 Windows 无操作。
+func DisableAllICSContext(ctx context.Context) { _ = ctx }
 
-// DisableICSPair 非 Windows 无操作。
-func DisableICSPair(public, private string) { _, _ = public, private }
+// DisableICSPairContext 非 Windows 无操作。
+func DisableICSPairContext(ctx context.Context, public, private string) {
+	_, _, _ = ctx, public, private
+}
 
 // RunPSBestEffort 非 Windows 无操作（无 PowerShell）。
 func RunPSBestEffort(script, opName string) {
 	_, _ = script, opName
+}
+
+// RunPSBestEffortContext 非 Windows 无操作。
+func RunPSBestEffortContext(ctx context.Context, script, opName string) {
+	_, _, _ = ctx, script, opName
 }
 
 // RunPSOneShot 非 Windows 返回 ErrNotSupported。
@@ -58,13 +98,10 @@ func RunPSOneShot(script string) ([]byte, error) {
 	return nil, ErrNotSupported
 }
 
-// IPv4IsICSPrivate 非 Windows 仍提供纯函数判定（单测/跨平台共用）。
-func IPv4IsICSPrivate(ip net.IP) bool {
-	v4 := ip.To4()
-	if v4 == nil {
-		return false
-	}
-	return v4[0] == 192 && v4[1] == 168 && v4[2] == 137
+// RunPSOneShotContext 非 Windows 返回 ErrNotSupported。
+func RunPSOneShotContext(ctx context.Context, script string) ([]byte, error) {
+	_, _ = ctx, script
+	return nil, ErrNotSupported
 }
 
 // HasICSResidue 非 Windows 恒 false（无 ICS）。
@@ -76,6 +113,21 @@ func HasICSResidue(configName string) bool {
 // CleanupICSResidue 非 Windows 无操作。
 func CleanupICSResidue(configName, vpnIP string) error {
 	_, _ = configName, vpnIP
+	return nil
+}
+
+// CleanupICSResidueContext 非 Windows 无操作。
+func CleanupICSResidueContext(ctx context.Context, configName, vpnIP string) error {
+	_, _, _ = ctx, configName, vpnIP
+	return nil
+}
+
+// DisableICSSessionContext 非 Windows 无操作。
+func DisableICSSessionContext(ctx context.Context) { _ = ctx }
+
+// RestoreInterfaceDNSDHCP 非 Windows 无操作。
+func RestoreInterfaceDNSDHCP(ifName string) error {
+	_ = ifName
 	return nil
 }
 

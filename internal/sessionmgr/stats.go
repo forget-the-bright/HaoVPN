@@ -5,6 +5,7 @@ import (
 
 	"haovpn/internal/logger"
 	"haovpn/internal/persist"
+	"haovpn/internal/safeutil"
 )
 
 // stats.go：在线会话查询与 session_stats 节流刷新。
@@ -60,18 +61,15 @@ type AccessError struct{ Msg string }
 
 func (e *AccessError) Error() string { return e.Msg }
 
-// noteInboundRx 累加入站字节并节流刷新 session_stats。
+// noteInboundRx 累加入站字节并节流刷新 session_stats（≥5s 一次，经 safeutil.AllowEvery）。
 func (m *Manager) noteInboundRx(ps *AccountSession, userID int64, n int) {
 	if ps == nil || n <= 0 {
 		return
 	}
 	ps.RxBytes.Add(int64(n))
 	now := time.Now()
-	last := ps.lastStatFlush.Load()
-	if now.UnixNano()-last < int64(5*time.Second) {
-		return
-	}
-	if !ps.lastStatFlush.CompareAndSwap(last, now.UnixNano()) || m.store == nil {
+	// 与 WARN 限频同一 CAS 语义；此处驱动 DB 写而非日志。
+	if !safeutil.AllowEvery(&ps.lastStatFlush, 5*time.Second) || m.store == nil {
 		return
 	}
 	m.flushSessionStat(userID, &ps.ConnectedAt, &now, ps.RxBytes.Load(), ps.TxBytes.Load(), ps.RemoteAddr)

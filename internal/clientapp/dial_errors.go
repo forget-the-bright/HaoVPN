@@ -37,10 +37,10 @@ func FormatDialError(err error) string {
 	}
 }
 
-// IsFatalDialError 拨号阶段应停止重连并提示用户的错误。
+// ShouldStopReconnectOnDial 拨号阶段应停止重连并提示用户的错误。
 //
-// 组合 dialerr 致命拨号哨兵与 autherr 源拒绝/致命握手；封禁判定请直接用 autherr.IsIPBanned。
-func IsFatalDialError(err error) bool {
+// 组合 dialerr.IsFatalDialError 与 autherr 源拒绝/致命握手；勿与 dialerr 包同名函数混淆。
+func ShouldStopReconnectOnDial(err error) bool {
 	if err == nil {
 		return false
 	}

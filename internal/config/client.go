@@ -43,6 +43,9 @@ type ClientConfig struct {
 type ClientWindowsSection struct {
 	// UseIPHelper 地址探测/ICS/配 IP/路由/DNS 优先 IP Helper；失败回退 netsh/route/PS。nil=默认 true。
 	UseIPHelper *bool `yaml:"use_ip_helper"`
+	// OutboundInterface via 出口回退 ICS 时的公网侧网卡名；空则自动（本机同网段→路由→默认网关）。
+	// 仅 Windows ICS 路径读取；WinNAT 成功时忽略。与服务端 nat.outbound_interface 语义一致。
+	OutboundInterface string `yaml:"outbound_interface"`
 }
 
 // UseIPHelperEnabled 是否启用 IP Helper 优先路径（未配置时默认 true）。
@@ -196,6 +199,12 @@ func (c *ClientConfig) Validate() error {
 	}
 	if err := ValidateTunName(c.Tun.Name); err != nil {
 		return fmt.Errorf("配置错误: %w", err)
+	}
+	if normalized, err := netutil.ValidateLocalLANsList(c.LocalLANs); err != nil {
+		return fmt.Errorf("配置错误: %w", err)
+	} else if len(c.LocalLANs) > 0 {
+		// 规范化写回，后续握手/via 用干净列表（空白行已去掉）
+		c.LocalLANs = normalized
 	}
 	return nil
 }

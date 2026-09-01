@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"haovpn/internal/auth"
 	"haovpn/internal/config"
 	"haovpn/internal/crypto"
 	"haovpn/internal/persist"
@@ -27,7 +28,7 @@ func TestRegisterVPNRejectSecond(t *testing.T) {
 		t.Fatalf("首连应成功: %v", err)
 	}
 	err := m.RegisterVPN(u, []string{"10.88.0.0/24"}, c2, sess, "2.2.2.2:2", sessionmgr.PeerReg{})
-	if !errors.Is(err, sessionmgr.ErrAccountAlreadyOnline) {
+	if !errors.Is(err, auth.ErrAccountAlreadyOnline) {
 		t.Fatalf("第二端应 ErrAccountAlreadyOnline，got %v", err)
 	}
 	if m.OnlineCount() != 1 {

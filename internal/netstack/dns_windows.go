@@ -4,7 +4,6 @@ package netstack
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -46,8 +45,10 @@ func ApplyDNS(adapterName string, servers []string) error {
 		return nil
 	}
 	if _, ok := dnsSaved[resolved]; !ok {
-		dhcp, prior, _ := readDNS(resolved)
-		dnsSaved[resolved] = dnsState{dhcp: dhcp, servers: append([]string{}, prior...)}
+		// 新建/空 TUN：无静态 DNS 可还原，跳过整表 GAA（公司机可省 ~0.8s）
+		snapStart := time.Now()
+		dnsSaved[resolved] = dnsState{dhcp: true, servers: nil}
+		logger.Info("dns_snapshot method=skip_empty elapsed=%s adapter=%s reason=fresh_tun", time.Since(snapStart), adapterName)
 	}
 	if err := applyStaticDNS(adapterName, resolved, servers); err != nil {
 		logger.Warn("dns_apply elapsed=%s adapter=%s err=%v", time.Since(start), adapterName, err)
@@ -60,10 +61,13 @@ func ApplyDNS(adapterName string, servers []string) error {
 
 // RestoreDNS 断开或 Teardown 时按快照恢复 TUN 适配器 DNS。
 //
-// 参数：adapterName — 与 ApplyDNS 相同的 TUN 配置名。
+// 参数：adapterName — 与 ApplyDNS 相同的 TUN 配置名；
+//
+//	poisonIPs — 旧/新 VPN IP 等；若快照 servers 与之相交则强制 DHCP（防毒化写回）。
+//
 // 返回：netsh 恢复 DHCP/静态 DNS 失败时 error；无快照时 nil。
 // 副作用：清除 dnsSaved/dnsApplied 中该适配器条目；不经过 ApplyDNS 以免污染快照。
-func RestoreDNS(adapterName string) error {
+func RestoreDNS(adapterName string, poisonIPs ...string) error {
 	if adapterName == "" {
 		return nil
 	}
@@ -78,13 +82,26 @@ func RestoreDNS(adapterName string) error {
 	if !ok {
 		return nil
 	}
-	if st.dhcp || len(st.servers) == 0 {
+	forceDHCP := st.dhcp || len(st.servers) == 0
+	if !forceDHCP && netutil.DNSServersPoisoned(st.servers, poisonIPs) {
+		logger.Warn("dns_restore poisoned→dhcp adapter=%s servers=%v poison=%v", adapterName, st.servers, poisonIPs)
+		forceDHCP = true
+	}
+	if forceDHCP {
 		if err := winnet.RestoreInterfaceDNSDHCP(resolved); err != nil {
 			return fmt.Errorf("netsh dhcp dns: %w", err)
 		}
 		return nil
 	}
-	return applyStaticDNS(adapterName, resolved, st.servers)
+	filtered := netutil.FilterDNSServersPoison(st.servers, poisonIPs)
+	if len(filtered) == 0 {
+		logger.Warn("dns_restore filtered_empty→dhcp adapter=%s was=%v", adapterName, st.servers)
+		if err := winnet.RestoreInterfaceDNSDHCP(resolved); err != nil {
+			return fmt.Errorf("netsh dhcp dns: %w", err)
+		}
+		return nil
+	}
+	return applyStaticDNS(adapterName, resolved, filtered)
 }
 
 func dnsServersEqual(a, b []string) bool {
@@ -107,19 +124,6 @@ func applyStaticDNS(configName, ifName string, servers []string) error {
 		}
 	}
 	return winnet.SetInterfaceDNSServers(ifName, idx, servers)
-}
-
-func readDNS(adapterName string) (dhcp bool, servers []string, err error) {
-	out, err := winnet.ShowInterfaceDNS(adapterName)
-	if err != nil {
-		return true, nil, err
-	}
-	text := string(out)
-	if strings.Contains(text, "DNS servers configured through DHCP") ||
-		(strings.Contains(text, "DHCP") && strings.Contains(text, "DNS")) {
-		return true, nil, nil
-	}
-	return false, winnet.ParseDNSShowOutput(out), nil
 }
 
 // DNSSavedCount 返回当前尚未 Restore 的 DNS 快照条目数。

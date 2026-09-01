@@ -27,7 +27,7 @@ func RunServiceCommand(args []string) bool {
 	}
 	defer lock.Release()
 	cfgPath := config.ResolveClientConfigPath()
-	if err := RunCLI(cfgPath, Credentials{}); err != nil {
+	if err := RunServiceLoop(cfgPath, Credentials{}); err != nil {
 		fmt.Println("服务运行失败:", err)
 		os.Exit(1)
 	}

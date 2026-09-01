@@ -48,7 +48,7 @@ func (e *Engine) ShouldFailFastHandshake(err error) bool {
 		logger.Info("账号已在线，有限重试 %d/%d（等待 grace 顶替或旧会话释放）", n, accountOnlineMaxRetries)
 		return false
 	}
-	if IsFatalDialError(err) {
+	if ShouldStopReconnectOnDial(err) {
 		return true
 	}
 	return IsFatalHandshakeError(err)

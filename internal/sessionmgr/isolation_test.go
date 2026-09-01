@@ -37,7 +37,7 @@ func TestLateralVPNIPBlocked(t *testing.T) {
 	copy(pkt[16:20], net.ParseIP("10.88.0.3").To4())
 
 	written := false
-	err = m.HandleInbound(1, mustEncrypt(t, sess, pkt), func(b []byte) error {
+	err = m.HandleInbound(1, nil, mustEncrypt(t, sess, pkt), func(b []byte) error {
 		written = true
 		return nil
 	})
@@ -66,7 +66,7 @@ func TestSpoofedSourceIPBlocked(t *testing.T) {
 	copy(pkt[16:20], net.ParseIP("192.168.1.1").To4())
 
 	written := false
-	_ = m.HandleInbound(1, mustEncrypt(t, sess, pkt), func(b []byte) error {
+	_ = m.HandleInbound(1, nil, mustEncrypt(t, sess, pkt), func(b []byte) error {
 		written = true
 		return nil
 	})
@@ -92,7 +92,7 @@ func TestDstOutsideAllowedBlocked(t *testing.T) {
 	copy(pkt[16:20], net.ParseIP("8.8.8.8").To4())
 
 	written := false
-	_ = m.HandleInbound(1, mustEncrypt(t, sess, pkt), func(b []byte) error {
+	_ = m.HandleInbound(1, nil, mustEncrypt(t, sess, pkt), func(b []byte) error {
 		written = true
 		return nil
 	})
@@ -111,12 +111,13 @@ func TestExitLANSourceForwardsToPeer(t *testing.T) {
 	sess2, _ := crypto.NewSession(kp2.PrivateKey, kp2.PublicKey)
 	_, lan, _ := net.ParseCIDR("192.168.3.0/24")
 	_, allowed, _ := net.ParseCIDR("10.0.0.0/8") // 故意不含对端 VPN，验证回程不走 dstAllowed
+	conn3 := &captureConn{}
 	conn2 := &captureConn{}
 	m.mu.Lock()
 	m.sessions[3] = &AccountSession{
 		UserID: 3, VPNIP: "10.88.0.2", Crypto: sess3,
 		AllowedIPs: []*net.IPNet{allowed}, ExitLANs: []*net.IPNet{lan},
-		Conn: &captureConn{},
+		Conn: conn3,
 	}
 	m.sessions[2] = &AccountSession{
 		UserID: 2, VPNIP: "10.88.0.87", Crypto: sess2, Conn: conn2,
@@ -131,7 +132,7 @@ func TestExitLANSourceForwardsToPeer(t *testing.T) {
 	copy(pkt[12:16], net.ParseIP("192.168.3.1").To4())
 	copy(pkt[16:20], net.ParseIP("10.88.0.87").To4())
 	wroteTUN := false
-	_ = m.HandleInbound(3, mustEncrypt(t, sess3, pkt), func(b []byte) error {
+	_ = m.HandleInbound(3, conn3, mustEncrypt(t, sess3, pkt), func(b []byte) error {
 		wroteTUN = true
 		return nil
 	})
@@ -153,12 +154,13 @@ func TestExitLANNonViaCannotBypassPeerIsolation(t *testing.T) {
 	sess2, _ := crypto.NewSession(kp2.PrivateKey, kp2.PublicKey)
 	_, lan, _ := net.ParseCIDR("192.168.3.0/24")
 	_, allowed, _ := net.ParseCIDR("10.0.0.0/8")
+	conn1 := &captureConn{}
 	conn2 := &captureConn{}
 	m.mu.Lock()
 	m.sessions[1] = &AccountSession{
 		UserID: 1, VPNIP: "10.88.0.2", Crypto: sess1,
 		AllowedIPs: []*net.IPNet{allowed}, ExitLANs: []*net.IPNet{lan},
-		Conn: &captureConn{},
+		Conn: conn1,
 	}
 	m.sessions[2] = &AccountSession{
 		UserID: 2, VPNIP: "10.88.0.3", Crypto: sess2, Conn: conn2,
@@ -173,7 +175,7 @@ func TestExitLANNonViaCannotBypassPeerIsolation(t *testing.T) {
 	copy(pkt[12:16], net.ParseIP("192.168.3.1").To4())
 	copy(pkt[16:20], net.ParseIP("10.88.0.3").To4())
 	wroteTUN := false
-	_ = m.HandleInbound(1, mustEncrypt(t, sess1, pkt), func(b []byte) error {
+	_ = m.HandleInbound(1, conn1, mustEncrypt(t, sess1, pkt), func(b []byte) error {
 		wroteTUN = true
 		return nil
 	})
@@ -204,7 +206,7 @@ func TestICSSourceStillBlocked(t *testing.T) {
 	copy(pkt[12:16], net.ParseIP("192.168.137.1").To4())
 	copy(pkt[16:20], net.ParseIP("192.168.3.10").To4())
 	written := false
-	_ = m.HandleInbound(1, mustEncrypt(t, sess, pkt), func(b []byte) error {
+	_ = m.HandleInbound(1, nil, mustEncrypt(t, sess, pkt), func(b []byte) error {
 		written = true
 		return nil
 	})
@@ -228,7 +230,7 @@ func TestLimitedBroadcastDstDebugOnly(t *testing.T) {
 	copy(pkt[12:16], net.ParseIP("10.88.0.2").To4())
 	copy(pkt[16:20], net.ParseIP("255.255.255.255").To4())
 	written := false
-	_ = m.HandleInbound(1, mustEncrypt(t, sess, pkt), func(b []byte) error {
+	_ = m.HandleInbound(1, nil, mustEncrypt(t, sess, pkt), func(b []byte) error {
 		written = true
 		return nil
 	})

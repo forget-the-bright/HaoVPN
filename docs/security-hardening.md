@@ -195,8 +195,10 @@ WebUI 探针页预设：1 小时～5 年、永久、自定义（月按 30 天、
 ### 4.3 ExitLAN / local_lans 信任边界
 
 - 客户端可上报 `local_lans`（须 **RFC1918** 且前缀 **≥ /16**，禁 `0.0.0.0/0`）；写入 `client_lan_registry` 并进入会话 `ExitLANs`（允许该源入站回程校验）。
+- **Windows ICS 与注册表**：新客户端**仅握手**上报 `local_lans`（**已确认**：post-auth `lan_registry_sync` 曾导致 decrypt/replay，已去除）。多 LAN `skipped` 靠 `icsHint`。旧客户端若仍发 sync：服务端限速 + prune，**勿 Kick via 自己**。纵深：Conn 绑定 / Done / Decrypt commit / TUN Connected 前静默上送。PreferVPN/SkipAsSource 仅 ICS Setup 内一次（嵌同 PS），纠正错源而非 replay。
 - **禁止与 VPN 地址池重叠**：`local_lans` 不得与 `vpn.subnet`（及同池前缀）相交。否则 via 可把 VPN 网段广告为 ExitLAN，再经 hub 旁路 `peer_access` 伪造他户 VPN 源。服务端握手用 `netutil.ValidateAdvertisedLANNotForbidden` 拒绝；过宽/重叠记 `lan_cidr_reject`，不入库。
 - **ExitLAN → 其他账号 VPN IP 的 hub 直转**仅当该会话是「已应用托管路由」中的 **via**（`sessionmgr.viaIndex`）。非 via 即使广告了 LAN，也不得绕过 `peer_access`。
+- **软重连 / replay**：顶替须 Conn 身份绑定入站 + Close 后排空 `Done`；Decrypt 仅 Open 成功后提交防重放；客户端 Connected 前不上送 TUN。见 [troubleshooting.md](troubleshooting.md) replay 行。
 - **应用生效语义**：托管路由/互访变更只写库并打 dirty；须点「应用生效」才 `IncrementPolicyVer`+踢线。成员收窄时 dirty=**旧∪新**（被移除访问方也须踢）。apply 仅清除**本次成功**的 dirty；失败或并发新增保留 pending，避免 UI 伪「已应用」。
 
 ### 4.4 管理审计动作 / 目标字典
@@ -301,7 +303,7 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 
 ---
 
-## 8. Windows 服务凭据（DPAPI）
+## 10. Windows 服务凭据（DPAPI）
 
 客户端 `--service` 可将账号密码存入本机凭据文件（`credentials` 包，`CRYPTPROTECT_LOCAL_MACHINE`）。
 
@@ -311,16 +313,17 @@ WebUI `/audit` 展示 `英文码（中文）`；用户目标为 `用户名 (#id)
 | 为何如此 | 服务账户无交互桌面，须 LocalMachine 才能在开机自启时读密 |
 | 运维建议 | 凭据文件写后 `RestrictToAdminsOnly`；生产机勿开共享登录；勿把凭据文件拷到非受信主机 |
 | GUI 托盘服务自启 | 启用前 `clientapp.SaveServiceCredentials`；与 CLI `--service` 共用服务名 `HaoVPNClient` |
-| yaml 明文密码 | `remember_password` / `gui.auto_connect` 依赖 `client.yaml` 明文；限制文件 ACL（**User DPAPI 仍听安排，第 24 轮未做**） |
+| yaml 明文密码 | `remember_password` / `gui.auto_connect` 依赖 `client.yaml` 明文；限制文件 ACL（**User DPAPI 仍听安排；架构第 26～29 轮明确未做**） |
 | TUN 名 | `config.ValidateTunName`：仅 `[A-Za-z0-9_-]{1,64}`，降低 netsh/PS 注入面 |
-| PS `-match` | `winnet.EscapeRegex` 后再 `EscapeSingleQuoted`；模板见 `ps_snippets.go` |
+| PS 嵌入转义 | `-match`：`EscapeRegex` 再 `EscapeSingleQuoted`；`-eq`/NetNat Name·prefix：仅 `EscapeSingleQuoted`（见 `nat_windows.go`、`ps_snippets.go`） |
+| 可取消 PowerShell | Stop/HardRestart：`RunPSOneShotContext` / `RunPSBestEffortContext` / `Setup(ctx)`；日志键 `ps_kill`、`ics_abort` |
 | 静态资源 | `handleStatic` 对路径 `path.Clean` 并拒绝 `..` |
 
 `ResolveCredentials`：YAML 已有 `username` 但密码空时，仍可从服务凭据库补密码。
 
 ---
 
-## 8.1 客户端 Windows 网卡加速（`windows` 段）
+## 10.1 客户端 Windows 网卡加速（`windows` 段）
 
 ```yaml
 windows:
@@ -353,4 +356,4 @@ api:
 
 ---
 
-*最后更新：2026-08-31 · 架构解耦第 24 轮 / VERSION 0.1.3*
+*最后更新：2026-09-01 · replay/lan_registry 正确性 + 文档治理 / VERSION 0.1.3*

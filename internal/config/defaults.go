@@ -186,6 +186,7 @@ auth:
   # password: ""
 
 # 可选：本机后面的局域网段。非空则登录上报注册表并开启 via 出口（作托管路由出口机）
+# 须 RFC1918 且前缀 ≥/16；非法项连接前 Validate 直接失败（不再静默丢弃）
 # 未配置或空列表 = 关闭。勿写入服务端账号 AllowedIPs（那是经网关 NAT 的工控段）
 # 示例：
 # local_lans:
@@ -204,8 +205,10 @@ security:
 
 # Windows 专用网卡加速（其它平台忽略本段）
 # use_ip_helper：地址/ICS/配 IP/路由/DNS 优先 IP Helper，失败回退 netsh/route（默认 true）
+# outbound_interface：via 出口走 ICS 时指定公网侧网卡；留空则本机同网段→路由→默认网关。WinNAT 忽略本项
 windows:
   # use_ip_helper: true
+  # outbound_interface: "Ethernet"
 
 # 桌面 GUI 行为（CLI/Windows 服务可忽略本段）
 gui:

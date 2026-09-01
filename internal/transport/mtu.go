@@ -1,14 +1,10 @@
 package transport
 
-import (
-	"errors"
-
-	"haovpn/internal/logger"
-)
+import "errors"
 
 // ProbeMTU 发送 MTU 探测帧（FrameTypeMTUProbe），用于路径 MTU 发现。
 //
-// 参数：size — 探测载荷字节数；队列满时返回 error 并打 Warn 日志。
+// 参数：size — 探测载荷字节数；队列满时返回 error（WARN 经 noteSendQueueFull 限频）。
 func (c *Conn) ProbeMTU(size int) error {
 	payload := make([]byte, size)
 	frame, err := EncodeFrame(FrameTypeMTUProbe, payload)
@@ -19,7 +15,7 @@ func (c *Conn) ProbeMTU(size int) error {
 	case c.sendQ <- frame:
 		return nil
 	default:
-		logger.Warn("transport MTU probe dropped: send queue full (max=%d)", c.cfg.MaxQueueSize)
+		c.noteSendQueueFull(FrameTypeMTUProbe)
 		return errors.New("send queue full")
 	}
 }

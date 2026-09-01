@@ -17,10 +17,11 @@
 
 ## cmd/client
 
-- **单实例**：`singleinstance`（127.0.0.1 TCP 协调）；重复启动打印 `AlreadyRunningMessage` 后退出。
+- **单实例**：`singleinstance`（127.0.0.1 TCP 协调）；冲突时 `clientapp.SingleInstanceHint`（服务占用会提示 `--service stop` 或 GUI 接管）。
+- **非管理员**：stderr 警告 + 日志 `cli_not_admin=true`（不自动 UAC，与 GUI 区分）。
 - **Windows 服务**：`--service install|uninstall|start|stop` → `clientapp.RunServiceCommand`（CLI 薄封装；**SCM 安装/启停实现在 `internal/autostart`**，与 GUI 托盘共用）。
-- **无界面运行**：argv `service`（SCM/systemd/launchd 启动）→ VPN 主循环，无 Fyne。
-- **拨号**：`clientapp.RunCLI` / `Engine`。
+- **无界面运行**：argv `service`（SCM/systemd/launchd 启动）→ `RunServiceLoop`（预热、无 FailFast、持续重连）。
+- **拨号**：`clientapp.RunCLI`（预热 + 首连 FailFast 45s + ICS 告警 stderr）/ 共用 `Engine`。
 
 ## cmd/client-gui
 
@@ -34,8 +35,8 @@
 流程概要：
 
 1. 解析 `-c` / `-version`；非管理员可 `platform.RelaunchElevated()`。
-2. UAC 前/后 `ClientAlreadyRunning`；冲突则 `ShowAlreadyRunning` + `os.Exit`。
-3. `clientgui.Run`：托盘、登录窗、主窗；拨号共用 `clientapp.Engine`。
+2. UAC 前/后 `ClientAlreadyRunning`；**服务占用** → `handleOccupiedInstance`（`AskServiceTakeover` 对话框，经 `clientapp.ServiceAutostartStatus`）；**CLI/GUI 互斥** → `ShowAlreadyRunning` + `clientapp.SingleInstanceUserMessage`。
+3. `clientgui.Run`：托盘、登录窗、主窗；拨号经 `PrepareEngine` + 共用 `clientapp.Engine`。
 
 ## cmd/server
 

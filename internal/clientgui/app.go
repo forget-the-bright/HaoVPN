@@ -53,12 +53,21 @@ type uiApp struct {
 	// engOpBusy：登出/手动重连等正在后台 Stop，防连点卡死与竞态
 	engOpMu   sync.Mutex
 	engOpBusy bool
+	// opGen：每次抢占（再点重连/登出/退出）递增；HardRestart abort 对照
+	opGen uint64
+	// pendingIntent：busy 期间排队的后续动作（logout/quit 优先于 reconnect）
+	pendingIntent engineIntent
+	pendingCreds  clientapp.Credentials
 
 	// 托盘当前种类（SetSystemTrayMenu 会冲掉图标，须随后 forceTrayIcon）
-	trayMu      sync.Mutex
-	trayKind    trayKind
-	trayMenuKey string // 已连接时含 VPN IP，变化则重建菜单
-	lastTooltip string // 上次悬停文案，避免无意义 SetTooltip
+	trayMu        sync.Mutex
+	trayKind      trayKind
+	trayMenuKey   string // 已连接时含 VPN IP，变化则重建菜单
+	lastTooltip   string // 上次悬停文案，避免无意义 SetTooltip
+	trayStickyErr string // 无 Engine 时仍展示的登录失败文案（Stop 已清 eng）
+
+	// pendingLogoutMsg：doLogout 异步完成后写回登录页/托盘（如数据面失败）
+	pendingLogoutMsg string
 }
 
 // newUI 构造 UI 控制器并注册 logger sink，将日志行转发到 appendLog。
@@ -137,24 +146,34 @@ func (u *uiApp) showMain() {
 	u.startPoll()
 }
 
+// requestLogoutWithMessage 退出登录并在完成后把 msg 留在登录页与托盘（数据面失败等）。
+func (u *uiApp) requestLogoutWithMessage(msg string) {
+	u.pendingLogoutMsg = strings.TrimSpace(msg)
+	u.doLogout()
+}
+
 // doLogout 停止 VPN、关闭主窗并回到登录窗。
 //
 // Stop（含 ICS 清理）在后台执行，避免 UI 线程卡死；完成后切回登录窗。
+// 若已有 HardRestart/Stop 在忙：排队 intentLogout 并 bump opGen，打断后续拨号。
 func (u *uiApp) doLogout() {
 	if !u.beginEngineOp() {
+		if u.setPendingIntent(intentLogout, clientapp.Credentials{}) {
+			u.appendLog("将在当前清理完成后退出登录…")
+			logger.Info("gui_logout deferred")
+			return
+		}
 		u.appendLog("正在断开，请稍候…")
 		return
 	}
-	u.stopPoll()
-	if u.statusLbl != nil {
-		u.statusLbl.SetText("状态: 正在断开…")
-	}
-	u.applyTray(trayKindDisconnecting, true)
-	u.appendLog("正在退出登录（清理网络可能需数秒）…")
-	eng := u.takeEngine()
+	eng := u.beginNetworkOp(networkOpLogout)
 	u.stopEngineAsync(eng, func() {
-		u.finishLogoutUI()
+		if u.applyPendingAfterEngineOp() {
+			return
+		}
+		// 先清 busy，再刷登录/托盘，否则 tip 仍被 refreshTrayTooltip 锁成「正在断开」
 		u.endEngineOp()
+		u.finishLogoutUI()
 	})
 }
 
@@ -178,11 +197,38 @@ func (u *uiApp) finishLogoutUI() {
 	} else {
 		u.showLogin("")
 	}
+	u.applyLogoutFeedback()
+}
+
+// applyLogoutFeedback 登出完成后刷新登录页错误与托盘（可单测，不依赖 Fyne 窗体）。
+//
+// 主动退出：idle「未连接」。带 pendingLogoutMsg（数据面失败等）：红字 + sticky tip。
+func (u *uiApp) applyLogoutFeedback() {
+	msg := strings.TrimSpace(u.pendingLogoutMsg)
+	u.pendingLogoutMsg = ""
 	u.trayMu.Lock()
 	u.trayMenuKey = ""
 	u.lastTooltip = ""
+	u.trayStickyErr = ""
 	u.trayMu.Unlock()
+	if msg != "" {
+		u.setTrayStickyErr(msg)
+		if u.errLbl != nil {
+			u.errLbl.SetText(msg)
+		}
+		u.applyTray(trayKindError, true)
+		return
+	}
 	u.applyTray(trayKindIdle, true)
+}
+
+// finishQuitApp 退出程序收尾：关日志 sink 并 Quit（须在 UI 线程、Stop 完成后调用）。
+func (u *uiApp) finishQuitApp() {
+	logger.Info("gui_quit done")
+	logger.SetSink(nil)
+	_ = logger.Close()
+	u.endEngineOp()
+	u.app.Quit()
 }
 
 // startPoll 后台定时刷新连接状态、VPN IP 与托盘图标（500ms）。

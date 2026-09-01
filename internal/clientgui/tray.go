@@ -1,7 +1,6 @@
 package clientgui
 
 import (
-	"fmt"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -43,16 +42,21 @@ func (u *uiApp) installTray() {
 }
 
 // applyTray 按种类更新托盘图标；forceMenu 时重建菜单（登录/登出/连接成功时）。
+//
+// 即使非 desktop.App（单测/无托盘环境）也更新 trayKind 并刷 tip 输入态，
+// 保证状态机与 sticky 逻辑可验证、与有托盘时一致。
 func (u *uiApp) applyTray(kind trayKind, forceMenu bool) {
-	desk, ok := u.app.(desktop.App)
-	if !ok {
-		return
-	}
 	u.trayMu.Lock()
 	changed := u.trayKind != kind
 	u.trayKind = kind
 	needMenu := forceMenu || changed
 	u.trayMu.Unlock()
+
+	desk, ok := u.app.(desktop.App)
+	if !ok {
+		u.refreshTrayTooltip()
+		return
+	}
 
 	if needMenu {
 		if u.getEngine() != nil {
@@ -89,58 +93,20 @@ func (u *uiApp) forceTrayIcon(kind trayKind) {
 
 // syncTrayFromEngine 根据 Engine 状态刷新托盘（登录中 eng 已有、主窗轮询共用）。
 func (u *uiApp) syncTrayFromEngine(forceMenu bool) {
-	kind := trayKindIdle
-	menuKey := ""
-	eng := u.getEngine()
-	if eng == nil {
-		u.applyTray(kind, forceMenu)
-		return
-	}
-	st := eng.State()
-	errMsg := eng.LastError()
-	switch {
-	case st == clientapp.StateConnected:
-		kind = trayKindConnected
-		// 含分流/托管数量，策略热更新后也能刷菜单
-		menuKey = fmt.Sprintf("up:%s:a%d:m%d", eng.VPNIP(), len(eng.AllowedIPs()), len(eng.ManagedRoutes()))
-	case st == clientapp.StateConnecting || st == clientapp.StateReconnecting:
-		kind = trayKindConnecting
-		menuKey = "connecting"
-	case errMsg != "" && st == clientapp.StateIdle:
-		kind = trayKindError
-		menuKey = "err"
-	default:
-		kind = trayKindIdle
-		menuKey = "idle"
-	}
+	pres := trayPresentationFromEngine(u.getEngine())
 	u.trayMu.Lock()
-	if menuKey != u.trayMenuKey {
+	if pres.MenuKey != u.trayMenuKey {
 		forceMenu = true
-		u.trayMenuKey = menuKey
+		u.trayMenuKey = pres.MenuKey
 	}
 	u.trayMu.Unlock()
-	u.applyTray(kind, forceMenu)
+	u.applyTray(pres.Kind, forceMenu)
 }
 
 // refreshTrayTooltip 按 Engine/配置刷新悬停气泡（Fyne 无官方 API，经 fyne.io/systray）。
 // engOpBusy（正在 Stop）时强制「正在断开…」，避免残留「正在连接」。
 func (u *uiApp) refreshTrayTooltip() {
-	in := trayTooltipInput{State: clientapp.StateIdle}
-	if u.isEngineOpBusy() {
-		in.Phase = trayTipDisconnecting
-	} else {
-		if u.cfg != nil {
-			in.Server = strings.TrimSpace(u.cfg.Server.Address)
-		}
-		eng := u.getEngine()
-		if eng != nil {
-			in.State = eng.State()
-			in.VPNIP = eng.VPNIP()
-			in.Since = eng.ConnectedSince()
-			in.LastError = eng.LastError()
-		}
-	}
-	tip := formatTrayTooltip(in)
+	tip := formatTrayTooltip(u.trayTooltipInputNow())
 	u.trayMu.Lock()
 	if tip == u.lastTooltip {
 		u.trayMu.Unlock()
@@ -149,6 +115,55 @@ func (u *uiApp) refreshTrayTooltip() {
 	u.lastTooltip = tip
 	u.trayMu.Unlock()
 	systray.SetTooltip(tip)
+}
+
+// trayTooltipInputNow 组装当前 tip 输入（纯逻辑，便于单测；不碰 systray）。
+//
+// 优先级：
+//  1. engOpBusy 且无 sticky →「正在断开」（登出/退出/手动重连清理）；
+//  2. engOpBusy 且有 sticky → 仍展示错误（登录失败清理中，勿盖掉原因）；
+//  3. 有 Engine → State/LastError；
+//  4. 否则 trayStickyErr（eng 已清、Stop 可能仍在跑）。
+func (u *uiApp) trayTooltipInputNow() trayTooltipInput {
+	in := trayTooltipInput{State: clientapp.StateIdle}
+	u.trayMu.Lock()
+	sticky := u.trayStickyErr
+	u.trayMu.Unlock()
+	if u.isEngineOpBusy() {
+		if sticky != "" {
+			in.LastError = sticky
+			return in
+		}
+		in.Phase = trayTipDisconnecting
+		return in
+	}
+	if u.cfg != nil {
+		in.Server = strings.TrimSpace(u.cfg.Server.Address)
+	}
+	eng := u.getEngine()
+	if eng != nil {
+		in.State = eng.State()
+		in.VPNIP = eng.VPNIP()
+		in.Since = eng.ConnectedSince()
+		in.LastError = eng.LastError()
+		return in
+	}
+	in.LastError = sticky
+	return in
+}
+
+// setTrayStickyErr 在无 Engine 时仍让托盘 tip 显示登录失败原因。
+func (u *uiApp) setTrayStickyErr(msg string) {
+	u.trayMu.Lock()
+	u.trayStickyErr = strings.TrimSpace(msg)
+	u.trayMu.Unlock()
+}
+
+// clearTrayStickyErr 开始新连接或主动退出登录时清掉残留失败 tip。
+func (u *uiApp) clearTrayStickyErr() {
+	u.trayMu.Lock()
+	u.trayStickyErr = ""
+	u.trayMu.Unlock()
 }
 
 // refreshTrayMenu 强制重建托盘菜单并恢复当前状态图标。
@@ -228,47 +243,40 @@ func (u *uiApp) showMainWindow() {
 }
 
 func (u *uiApp) reconnectVPN() {
-	if u.getEngine() == nil {
-		return
-	}
-	if !u.beginEngineOp() {
-		u.appendLog("正在处理网络，请稍候…")
-		return
-	}
 	creds := clientapp.Credentials{
 		Username: strings.TrimSpace(u.userEntry.Text),
 		Password: u.passEntry.Text,
 	}
-	u.stopPoll()
-	if u.statusLbl != nil {
-		u.statusLbl.SetText("状态: 正在重新连接…")
+	if !u.beginEngineOp() {
+		// busy：排队重连并 bump opGen，打断进行中 HardRestart 的 DNS/Start
+		if u.setPendingIntent(intentReconnect, creds) {
+			u.appendLog("将中断当前网络操作并重新连接…")
+			logger.Info("gui_reconnect deferred")
+			return
+		}
+		u.appendLog("正在处理网络，请稍候…")
+		return
 	}
-	// Stop 期间 tip 为「正在断开」；清理完成后再标连接中
-	u.applyTray(trayKindDisconnecting, true)
-	u.appendLog("手动重新连接（清理后重拨，可能需数秒）…")
-	old := u.takeEngine()
+	old := u.beginNetworkOp(networkOpReconnect)
 	// HardRestart 内含 Stop；勿再 stopEngineAsync，避免双重 Stop / onDone 竞态。
 	u.reconnectVPNAfterStop(old, creds)
 }
 
 func (u *uiApp) quitApp() {
 	if !u.beginEngineOp() {
+		if u.setPendingIntent(intentQuit, clientapp.Credentials{}) {
+			u.appendLog("将在当前清理完成后退出…")
+			logger.Info("gui_quit deferred")
+			return
+		}
 		u.appendLog("正在退出，请稍候…")
 		return
 	}
-	u.stopPoll()
-	if u.statusLbl != nil {
-		u.statusLbl.SetText("状态: 正在退出（清理网络）…")
-	}
-	u.applyTray(trayKindDisconnecting, true)
-	u.appendLog("正在退出（清理网络可能需数秒）…")
-	logger.Info("gui_quit begin")
-	eng := u.takeEngine()
+	eng := u.beginNetworkOp(networkOpQuit)
 	u.stopEngineAsync(eng, func() {
-		logger.Info("gui_quit done")
-		logger.SetSink(nil)
-		_ = logger.Close()
-		u.endEngineOp()
-		u.app.Quit()
+		if u.applyPendingAfterEngineOp() {
+			return
+		}
+		u.finishQuitApp()
 	})
 }

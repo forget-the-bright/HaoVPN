@@ -28,17 +28,6 @@ func GoSafe(name string, fn func()) {
 	}()
 }
 
-// GoSafeCtx 在 GoSafe 包装下运行 fn(ctx)，直至 fn 返回或 ctx 取消（fn 须自行监听 ctx）。
-//
-// 参数：ctx 传入 fn；name 同 GoSafe。
-// 返回：无；异步执行。
-// 副作用：同 GoSafe；不自动在 ctx 取消时中断 fn。
-func GoSafeCtx(ctx context.Context, name string, fn func(context.Context)) {
-	GoSafe(name, func() {
-		fn(ctx)
-	})
-}
-
 // Shutdown 协调 SIGINT/SIGTERM 与组件 goroutine 的优雅退出。
 //
 // 字段：

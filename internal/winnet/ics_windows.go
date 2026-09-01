@@ -3,51 +3,45 @@
 package winnet
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
 	"time"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netutil"
+	"haovpn/internal/safeutil"
 )
 
-// DisableAllICS 关闭本机全部 ICS 共享（via Teardown 或有残留清理时）。
-//
-// 通过 PowerShell COM 枚举连接并 DisableSharing，常见耗时数秒；调用方勿在 UI 线程同步执行。
-// 空 local_lans 登录路径应先 HasICSResidue，无残留勿调用（见 CleanupICSResidue）。
-// 本会话刚启用过 ICS 时优先 DisableICSPair（见 RememberICSPair），本函数作兜底。
-func DisableAllICS() {
+// DisableAllICSContext 关闭本机全部 ICS 共享；ctx 取消时 Kill PowerShell（日志 ics_abort）。
+func DisableAllICSContext(ctx context.Context) {
 	start := time.Now()
+	if err := safeutil.Check(ctx); err != nil {
+		logger.Info("ics_abort stage=DisableAllICS_before err=%v elapsed=%s", err, time.Since(start))
+		return
+	}
 	ps := "$ErrorActionPreference = 'SilentlyContinue'\n" + PSSnippetICSDisableAll()
-	// 尽力关闭：COM 在部分环境会失败，不能阻断 Teardown；失败见 RunPSBestEffort 的 Warn。
-	RunPSBestEffort(ps, "DisableAllICS")
+	RunPSBestEffortContext(ctx, ps, "DisableAllICS")
 	logger.Info("DisableAllICS elapsed=%s", time.Since(start))
 }
 
-// DisableICSPair 仅关闭本会话 public/private 两块网卡上的 ICS 共享（快于全机枚举逐个 Disable）。
-//
-// 参数：public — 出站侧（如 WLAN）；private — TUN 侧（如 haovpn_client）。
-// 空参数时无操作。失败只打 Warn（BestEffort）。
-func DisableICSPair(public, private string) {
+// DisableICSPairContext 仅关闭本会话 public/private 两块网卡上的 ICS 共享；ctx 取消时 Kill。
+func DisableICSPairContext(ctx context.Context, public, private string) {
 	public = strings.TrimSpace(public)
 	private = strings.TrimSpace(private)
 	if public == "" && private == "" {
 		return
 	}
 	start := time.Now()
+	if err := safeutil.Check(ctx); err != nil {
+		logger.Info("ics_abort stage=DisableICSPair_before err=%v elapsed=%s", err, time.Since(start))
+		return
+	}
 	// 脚本模板唯一源：PSSnippetICSDisablePair（与 netstack 清共享片段同源风格）。
 	ps := PSSnippetICSDisablePair(public, private)
-	RunPSBestEffort(ps, "DisableICSPair")
+	RunPSBestEffortContext(ctx, ps, "DisableICSPair")
 	logger.Info("DisableICSPair elapsed=%s public=%s private=%s", time.Since(start), public, private)
-}
-
-// IPv4IsICSPrivate 判断是否为 ICS 默认私网地址（192.168.137.0/24）。
-func IPv4IsICSPrivate(ip net.IP) bool {
-	v4 := ip.To4()
-	if v4 == nil {
-		return false
-	}
-	return v4[0] == 192 && v4[1] == 168 && v4[2] == 137
 }
 
 // HasICSResidue 便宜探测 TUN/Wintun 上是否仍有 ICS 私网地址（192.168.137.*）。
@@ -105,7 +99,7 @@ func hasICSResidueNative(configName string) (hit bool, ok bool, stage string) {
 	matched := false
 	for i := range ifaces {
 		iface := &ifaces[i]
-		if !ifaceNameLooksLikeTUN(iface.Name, configName) {
+		if !netutil.InterfaceNameLooksLikeTUN(iface.Name, configName) {
 			continue
 		}
 		matched = true
@@ -116,18 +110,6 @@ func hasICSResidueNative(configName string) (hit bool, ok bool, stage string) {
 	}
 	logger.Debug("HasICSResidue stage=scan_ifaces elapsed=%s hit=false matched=%v", time.Since(stageStart), matched)
 	return false, matched, "scan_ifaces"
-}
-
-func ifaceNameLooksLikeTUN(name, configName string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return false
-	}
-	if configName != "" && (name == configName || strings.HasPrefix(name, configName+" ")) {
-		return true
-	}
-	lower := strings.ToLower(name)
-	return strings.Contains(lower, "wintun") || strings.Contains(lower, "haovpn")
 }
 
 func interfaceHasICSPrivateByIndex(ifIndex int) bool {
@@ -169,7 +151,7 @@ func interfaceAddrsHaveICSPrivate(iface *net.Interface) bool {
 		case *net.IPAddr:
 			ip = v.IP
 		}
-		if IPv4IsICSPrivate(ip) {
+		if netutil.IPv4IsICSPrivate(ip) {
 			return true
 		}
 	}
@@ -178,15 +160,7 @@ func interfaceAddrsHaveICSPrivate(iface *net.Interface) bool {
 
 // hasICSResiduePS 极端回退：冷启 powershell 在公司机可能十余秒，仅 native 找不到网卡时使用。
 func hasICSResiduePS(configName string) bool {
-	ps := "$ErrorActionPreference = 'SilentlyContinue'\n" +
-		PSSnippetAssignAdapterIf(configName) + `
-if (-not $if) { Write-Output '0' }
-else {
-$hit = Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Where-Object { $_.IPAddress -like '192.168.137.*' } | Select-Object -First 1
-if ($hit) { Write-Output '1' } else { Write-Output '0' }
-}
-`
+	ps := PSSnippetProbeICSResidue(configName)
 	out, err := RunPSOneShot(ps)
 	if err != nil {
 		logger.Debug("HasICSResidue probe fail tun=%s: %v", configName, err)
@@ -202,26 +176,68 @@ if ($hit) { Write-Output '1' } else { Write-Output '0' }
 // 为何合并：空 local_lans 有残留时原先 DisableAllICS + RemoveICSAddresses 各起一次进程，白白加倍开销。
 // 关联：仅在 HasICSResidue 为 true 或调用方确认有残留时调用；Teardown 仍可单独 DisableAllICS。
 func CleanupICSResidue(configName, vpnIP string) error {
+	return CleanupICSResidueContext(context.Background(), configName, vpnIP)
+}
+
+// CleanupICSResidueContext 同 CleanupICSResidue，ctx 取消时 Kill（返回 ctx.Err()）。
+func CleanupICSResidueContext(ctx context.Context, configName, vpnIP string) error {
 	vpnIP = strings.TrimSpace(vpnIP)
 	if configName == "" || vpnIP == "" {
 		return fmt.Errorf("CleanupICSResidue: configName/vpnIP 为空")
 	}
 	start := time.Now()
+	if err := safeutil.Check(ctx); err != nil {
+		logger.Info("ics_abort stage=CleanupICSResidue_before err=%v elapsed=%s", err, time.Since(start))
+		return err
+	}
 	ps := fmt.Sprintf(`
 $ErrorActionPreference = 'SilentlyContinue'
 %s
-$vpn = '%s'
 %s
-if (-not $if) { throw '未找到 Wintun 网卡' }
-Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 |
-  Where-Object { $_.IPAddress -ne $vpn -and $_.IPAddress -like '192.168.137.*' } |
-  ForEach-Object { Remove-NetIPAddress -InterfaceIndex $_.InterfaceIndex -IPAddress $_.IPAddress -Confirm:$false -ErrorAction SilentlyContinue }
-$has = Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq $vpn }
-if (-not $has) {
-  New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress $vpn -PrefixLength 32 -ErrorAction SilentlyContinue | Out-Null
-}
-`, PSSnippetICSDisableAll(), EscapeSingleQuoted(vpnIP), PSSnippetAssignAdapterIf(configName))
-	_, err := RunPSOneShot(ps)
+`, PSSnippetICSDisableAll(), PSSnippetRemoveNonVPNKeepVPN(vpnIP, PSSnippetAssignAdapterIf(configName)))
+	_, err := RunPSOneShotContext(ctx, ps)
+	if safeutil.IsCanceled(err) {
+		logger.Info("ics_abort stage=CleanupICSResidue err=%v elapsed=%s", err, time.Since(start))
+		return err
+	}
 	logger.Info("CleanupICSResidue elapsed=%s tun=%s keep=%s err=%v", time.Since(start), configName, vpnIP, err)
 	return err
+}
+
+// DisableICSSessionContext 本会话 ICS 智能关闭：Pair → 残留探测 → 必要时 DisableAll。
+//
+// 策略（与 clientapp cleanupTUNAfterViaDisabled 互补，勿混用）：
+//   - 有 RememberICSPair：先 DisableICSPairContext（快）；
+//   - Pair 后仍有 192.168.137.* → DisableAllICSContext 兜底；
+//   - Pair 后无残留 → 绝不再跑 DisableAll（避免双倍 COM）；
+//   - 无 Pair：直接 DisableAllICSContext。
+//
+// 参数：ctx — 取消时 Kill PowerShell；正常 Teardown 传 Background 以确保清完。
+// 关联：netstack.disableICSPlatform；via Teardown。空 local_lans 残留清理仍走 CleanupICSResidue。
+func DisableICSSessionContext(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	start := time.Now()
+	pub, prv, ok := TakeICSPair()
+	if ok {
+		DisableICSPairContext(ctx, pub, prv)
+		if safeutil.Check(ctx) != nil {
+			logger.Info("ics_abort stage=DisableICSSession_after_pair elapsed=%s", time.Since(start))
+			return
+		}
+		tun := prv
+		if tun == "" {
+			tun = pub
+		}
+		if HasICSResidue(tun) {
+			logger.Info("windows: DisableICSPair 后仍有 ICS 残留，DisableAllICS 兜底 tun=%s", tun)
+			DisableAllICSContext(ctx)
+		} else {
+			logger.Info("windows: DisableICSPair 后无残留，跳过 DisableAllICS tun=%s", tun)
+		}
+	} else {
+		DisableAllICSContext(ctx)
+	}
+	logger.Info("DisableICSSession elapsed=%s pair=%v", time.Since(start), ok)
 }

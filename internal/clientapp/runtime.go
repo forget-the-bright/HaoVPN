@@ -21,6 +21,7 @@ import (
 //   tunDev — 已打开的 TUN 设备；vpnIP 变化时可能关闭并重建。
 //   routes — 已通过 netstack 添加的路由 CIDR 列表（规范化），断线临时重连时保留。
 //   allowedCIDRs — 最近一次握手策略中的 AllowedIPs，供杀开关前缀使用。
+//   allowedNets — 同上解析为 IPNet，供 TUN 上送 dst 过滤（与服务端 dstAllowed 对齐）。
 //   vpnIP — 当前 TUN 绑定的虚拟 IP。
 //   policyVer — 服务端策略版本号，变更时打日志。
 //   gateway — 当前用于 AddClientRoute 的下一跳网关 IP。
@@ -34,6 +35,7 @@ type runtime struct {
 	tunDev       tun.Device
 	routes       []string
 	allowedCIDRs []string
+	allowedNets  []*net.IPNet
 	vpnIP        string
 	policyVer    int
 	gateway      string
@@ -44,6 +46,8 @@ type runtime struct {
 	exitLANNets  []*net.IPNet
 	// routeWarn 最近一次 applyPolicy 部分装路由失败的用户可见文案（takeRouteWarn 取出）。
 	routeWarn string
+	// icsHint 确定走 ICS 且有跳过/多段提示时的用户可见文案（takeICSHint 取出）。
+	icsHint string
 }
 
 // allowedIPs 返回 AllowedIPs 副本，供杀开关 Enable 使用。
@@ -64,6 +68,7 @@ func (rt *runtime) close() {
 		rt.tunDev = nil
 	}
 	rt.allowedCIDRs = nil
+	rt.allowedNets = nil
 	logger.Info("dataplane_clear done elapsed=%s", time.Since(start))
 }
 

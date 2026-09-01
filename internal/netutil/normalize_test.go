@@ -116,6 +116,34 @@ func TestValidLANCIDRs(t *testing.T) {
 	}
 }
 
+// TestValidateLocalLANsList 硬校验：非法挡过；合法规范化去重。
+func TestValidateLocalLANsList(t *testing.T) {
+	got, err := netutil.ValidateLocalLANsList(nil)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("empty: got=%v err=%v", got, err)
+	}
+	got, err = netutil.ValidateLocalLANsList([]string{"", "  "})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("blank: got=%v err=%v", got, err)
+	}
+	got, err = netutil.ValidateLocalLANsList([]string{"192.168.31.0/24", "192.168.31.0/24"})
+	if err != nil || len(got) != 1 || got[0] != "192.168.31.0/24" {
+		t.Fatalf("dedup: got=%v err=%v", got, err)
+	}
+	_, err = netutil.ValidateLocalLANsList([]string{"192.168.1.0/24", "not-a-cidr"})
+	if err == nil {
+		t.Fatal("非法应失败")
+	}
+	_, err = netutil.ValidateLocalLANsList([]string{"0.0.0.0/0"})
+	if err == nil {
+		t.Fatal("默认路由应失败")
+	}
+	_, err = netutil.ValidateLocalLANsList([]string{"8.8.8.0/24"})
+	if err == nil {
+		t.Fatal("公网应失败")
+	}
+}
+
 // TestNormalizeCIDRList 规范化、去重、排序。
 func TestNormalizeCIDRList(t *testing.T) {
 	got := netutil.NormalizeCIDRList([]string{"10.88.0.5", "10.88.0.0/24", "10.88.0.5/32", "bad"}, netutil.NormalizeCIDRListOpts{Sort: true})

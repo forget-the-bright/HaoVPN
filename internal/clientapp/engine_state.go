@@ -3,6 +3,7 @@ package clientapp
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"haovpn/internal/config"
@@ -101,6 +102,9 @@ type Engine struct {
 	// onDataplaneFailed 鉴权成功进主窗后，TUN/路由失败时回调（GUI 回登录）；CLI 可为空。
 	onDataplaneFailed func(msg string)
 
+	// userWarnSink 连接成功后的 ICS/部分路由等用户告警；CLI 写 stderr；GUI 可为空（走 LastError 托盘）。
+	userWarnSink func(warn string)
+
 	// firstResult 首次鉴权结果通道；WaitConnected 等待；容量 1，只通知一次。
 	// nil 表示鉴权成功（非数据面就绪）；数据面失败走 OnDataplaneFailed。
 	firstResultOnce sync.Once
@@ -108,6 +112,12 @@ type Engine struct {
 
 	// connectedAt 进入 StateConnected 的本地时间；未连接为零值（托盘「连接自」）。
 	connectedAt time.Time
+
+	// stopping Stop 已开始：applyPolicy 应尽快 abort；勿走 soft 重连 / dataplaneFailed。
+	stopping bool
+
+	// lastQuiesceLog TUN 上送静默日志节流时间戳（UnixNano）；避免 ICS 期间刷屏。
+	lastQuiesceLog atomic.Int64
 }
 
 // NewEngine 创建尚未连接的客户端 VPN 引擎实例。
@@ -144,13 +154,29 @@ func (e *Engine) SetFailFast(v bool) {
 	e.mu.Unlock()
 }
 
-// SetOnDataplaneFailed 注册鉴权成功后 TUN/路由失败回调（须在 Start 前调用）。
+// setOnDataplaneFailed 注册鉴权成功后 TUN/路由失败回调（须在 Start 前调用）。
 //
-// GUI 应回登录窗并显示 msg；CLI 可不设。回调可能在非 UI 线程触发。
-func (e *Engine) SetOnDataplaneFailed(fn func(msg string)) {
+// 外部请经 AttachDataplaneHook；GUI 应回登录窗；CLI 可不设。回调可能在非 UI 线程触发。
+func (e *Engine) setOnDataplaneFailed(fn func(msg string)) {
 	e.mu.Lock()
 	e.onDataplaneFailed = fn
 	e.mu.Unlock()
+}
+
+// SetUserWarnSink 注册连接成功后的用户可见告警（ICS 多网卡、部分路由失败等）。
+//
+// CLI bootstrap 写入 stderr；GUI 通常不设（托盘读 LastError）。须在 Start 前调用。
+func (e *Engine) SetUserWarnSink(fn func(warn string)) {
+	e.mu.Lock()
+	e.userWarnSink = fn
+	e.mu.Unlock()
+}
+
+func (e *Engine) userWarnSinkFn() func(string) {
+	e.mu.Lock()
+	fn := e.userWarnSink
+	e.mu.Unlock()
+	return fn
 }
 
 func (e *Engine) dataplaneFailedCallback() func(string) {
@@ -314,6 +340,23 @@ func (e *Engine) hasAuthOKOnce() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.authOKOnce
+}
+
+// isStopping 是否已进入 Stop（HardRestart/登出）：policy 应 abort，勿 soft 重连。
+func (e *Engine) isStopping() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopping
+}
+
+// runContext 返回 Start 时的 runCtx；Stop 后可能已取消（applyPolicy 轮询用）。
+func (e *Engine) runContext() context.Context {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.runCtx == nil {
+		return context.Background()
+	}
+	return e.runCtx
 }
 
 // isReconnecting 是否处于断线重连态（用于 account_online 持续重试）。

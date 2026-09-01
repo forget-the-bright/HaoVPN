@@ -14,7 +14,7 @@ func TestDataplaneFailedInvokesCallback(t *testing.T) {
 	var mu sync.Mutex
 	var got string
 	done := make(chan struct{})
-	eng.SetOnDataplaneFailed(func(msg string) {
+	AttachDataplaneHook(eng, func(msg string) {
 		mu.Lock()
 		got = msg
 		mu.Unlock()

@@ -8,13 +8,35 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"haovpn/internal/netutil"
 )
+
+// ListUnicastIPv4OnIfIndex 列出 ifIndex 上全部 IPv4（IP Helper MIB）。
+//
+// 用途：assign 前后 tun_addrs 埋点；ReplaceInterfaceIPv4 决策删除集。
+func ListUnicastIPv4OnIfIndex(ifIndex int) ([]UnicastIPv4Entry, error) {
+	return unicastIPv4EntriesOnIfIndex(ifIndex)
+}
 
 // unicastIPv4OnIfIndex 用 GetUnicastIpAddressTable(AF_INET) 列出指定 ifIndex 上的 IPv4。
 //
 // 比 net.InterfaceByIndex+Addrs 快：后者每次全表 GetAdaptersAddresses（公司机可数秒）。
 // 调用方须 FreeMibTable；本函数已释放。
 func unicastIPv4OnIfIndex(ifIndex int) ([]net.IP, error) {
+	ents, err := unicastIPv4EntriesOnIfIndex(ifIndex)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]net.IP, 0, len(ents))
+	for _, e := range ents {
+		out = append(out, e.IP)
+	}
+	return out, nil
+}
+
+// unicastIPv4EntriesOnIfIndex 列出 ifIndex 上 IPv4 及 OnLinkPrefixLength。
+func unicastIPv4EntriesOnIfIndex(ifIndex int) ([]UnicastIPv4Entry, error) {
 	if ifIndex <= 0 {
 		return nil, fmt.Errorf("unicastIPv4OnIfIndex: invalid ifIndex=%d", ifIndex)
 	}
@@ -24,7 +46,7 @@ func unicastIPv4OnIfIndex(ifIndex int) ([]net.IP, error) {
 	}
 	defer windows.FreeMibTable(unsafe.Pointer(table))
 
-	out := make([]net.IP, 0, 4)
+	out := make([]UnicastIPv4Entry, 0, 4)
 	n := int(table.NumEntries)
 	// Table 为变长数组首元素；按 NumEntries 用 unsafe 切片
 	rows := unsafe.Slice(&table.Table[0], n)
@@ -35,7 +57,11 @@ func unicastIPv4OnIfIndex(ifIndex int) ([]net.IP, error) {
 		}
 		ip := ipv4FromSockaddrInet(&row.Address)
 		if ip != nil {
-			out = append(out, ip)
+			out = append(out, UnicastIPv4Entry{
+				IP:           ip,
+				PrefixLen:    int(row.OnLinkPrefixLength),
+				SkipAsSource: row.SkipAsSource != 0,
+			})
 		}
 	}
 	return out, nil
@@ -84,7 +110,7 @@ func interfaceHasICSPrivateByIPHelper(ifIndex int) (bool, error) {
 		return false, err
 	}
 	for _, ip := range ips {
-		if IPv4IsICSPrivate(ip) {
+		if netutil.IPv4IsICSPrivate(ip) {
 			return true, nil
 		}
 	}

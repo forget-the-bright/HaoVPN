@@ -9,6 +9,7 @@ import (
 	"haovpn/internal/brand"
 	"haovpn/internal/fileutil"
 	"haovpn/internal/logger"
+	"haovpn/internal/safeutil"
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -199,17 +200,16 @@ func waitServiceStopped(s *mgr.Service, timeout time.Duration) error {
 		// 可能已在停止中；继续轮询
 		logger.Debug("autostart service Control(Stop): %v", err)
 	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	ok := safeutil.PollUntil(time.Now().Add(timeout), 100*time.Millisecond, nil, func() bool {
 		st, err := s.Query()
 		if err != nil {
 			// 查询失败（服务可能已删）视为已停
-			return nil
+			return true
 		}
-		if st.State == svc.Stopped {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
+		return st.State == svc.Stopped
+	})
+	if ok {
+		return nil
 	}
 	return fmt.Errorf("等待服务停止超时（%s）", timeout)
 }

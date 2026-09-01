@@ -11,7 +11,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"haovpn/internal/brand"
-	"haovpn/internal/singleinstance"
+	"haovpn/internal/clientapp"
 )
 
 // skipFatalDialog 单测子进程用：跳过 Fyne 对话框直接退出。
@@ -33,7 +33,7 @@ func skipFatalDialog(title, message string, err error) bool {
 // ShowAlreadyRunning 单实例冲突：自定义提示小窗，点确定后退出进程。
 func ShowAlreadyRunning(message string) {
 	if message == "" {
-		message = singleinstance.AlreadyRunningMessage()
+		message = clientapp.SingleInstanceUserMessage(false)
 	}
 	ShowFatalNotice("无法启动", message)
 }
@@ -47,19 +47,6 @@ func ShowFatalNotice(title, message string) {
 	}
 	a := newNoticeApp()
 	runNoticeWindow(a, title, message)
-	os.Exit(0)
-}
-
-// ShowFatalError 展示阻塞式错误提示窗，用户确认后关闭进程。
-func ShowFatalError(err error) {
-	if err == nil {
-		return
-	}
-	if skipFatalDialog("无法启动", "", err) {
-		return
-	}
-	a := newNoticeApp()
-	runNoticeWindow(a, "无法启动", err.Error())
 	os.Exit(0)
 }
 

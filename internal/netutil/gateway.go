@@ -51,12 +51,11 @@ func InferVPNSubnetHint(vpnIP string) string {
 
 // ResolveGateway 解析客户端路由下一跳网关地址。
 //
-// 优先级：握手 gateway_ip > InferGatewayFromVPNIP(vpnIP)。yamlGW 参数保留供兼容调用，客户端 yaml 不再使用。
-func ResolveGateway(handshakeGW, yamlGW, vpnIP string) string {
+// 优先级：握手 gateway_ip（非空）> InferGatewayFromVPNIP(vpnIP)。
+// 客户端 yaml 已废除 peer.gateway；勿再加第三参数「yaml 回退」。
+// 关联：clientapp/runtime_policy、runtime_routes。
+func ResolveGateway(handshakeGW, vpnIP string) string {
 	if g := strings.TrimSpace(handshakeGW); g != "" {
-		return g
-	}
-	if g := strings.TrimSpace(yamlGW); g != "" {
 		return g
 	}
 	return InferGatewayFromVPNIP(vpnIP)

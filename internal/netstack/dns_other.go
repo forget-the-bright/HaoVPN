@@ -16,7 +16,8 @@ func ApplyDNS(adapterName string, servers []string) error {
 }
 
 // RestoreDNS 非 Windows 平台无 DNS 快照机制，恒为无操作。
-func RestoreDNS(adapterName string) error {
+func RestoreDNS(adapterName string, poisonIPs ...string) error {
+	_, _ = adapterName, poisonIPs
 	return nil
 }
 
