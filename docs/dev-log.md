@@ -6,6 +6,31 @@
 
 ---
 
+## 2026-09-01 · 软换 VPN IP 不通：ICS 在场禁止强制 /32
+
+根因：冷启 PreferVPN 用 ics_prefix_keep 保住 ICS 扩成的主机 /24；pn_ip_inplace 却 ReplaceTUNIPv4KeepICS(..., 32)，等于再做一次 prefix_fix，NAT 死。Soft 路径也不应 Restart（会冲 137）。
+
+修复：有 has_137 时软换用 prefix **24** + SkipAsSource；日志 pn_ip_inplace keep_ics_prefix=24。
+
+---
+
+## 2026-09-01 · ICS：回滚叠料；每次共享无条件 Force Restart
+
+现场：Soft/KeepICS/restart_only 等检测常绕开真正有效的一步。手工 `Restart-Service SharedAccess -Force` 即可通；有无 137 无关。
+
+### 改动（相对 HEAD 仅两刀）
+
+1. `PSSnippetICSEnableSharing`：**无条件** `Restart-Service SharedAccess -Force` → Enable → PreferVPN；删除 Soft `already_paired` / Ensure-first
+2. PreferVPN：`ics_prefix_keep`（禁 `prefix_fix`）
+
+HardRestart 仍全清再冷启（无 KeepICS）。每次 ICS 日志必有 `ics_sharedaccess action=restart`。
+
+### 验收
+
+公司 ping 家 LAN；HardRestart 后仍通（可接受 15–25s）；**不得** `already_paired` 跳过 Restart。
+
+---
+
 ## 2026-09-01 · 架构审计第 29 轮（PS 集中 / cmd 门面 / 死代码 / 文档）
 
 ### 结论

@@ -96,7 +96,8 @@ func (rt *runtime) applyPolicy(ctx context.Context, policy tunnel.HandshakePolic
 
 	case ipChanged:
 		// 在线仅改 VPN IP：不关 TUN、不拆 via/ICS、不清 viaFP（指纹不含 tunIP）。
-		// KeepICS Replace → PreferVPN（/32 + 清默认路由）→ DNS poison 后重装 AllowedIPs。
+		// ICS 在场时必须保留主机 /24（冷启 PreferVPN ics_prefix_keep）；强制 /32 = 变相 prefix_fix，NAT 立刻死。
+		// Soft 路径不 Restart SharedAccess（Restart 会冲掉 137）；只换地址 + SkipAsSource。
 		oldIP := rt.vpnIP
 		logger.Info("vpn_ip_replace_inplace old=%s new=%s dataplane_keep=true", oldIP, policy.VPNIP)
 		if err := abort("before_vpn_ip_inplace"); err != nil {
@@ -113,11 +114,16 @@ func (rt *runtime) applyPolicy(ctx context.Context, policy tunnel.HandshakePolic
 		if rt.cfg.Tun.DNSFromPolicyEnabled() && len(policy.DNSServers) > 0 && !dnsServersEqual(rt.appliedDNS, policy.DNSServers) {
 			rt.appliedDNS = nil
 		}
-		removed, kept, err := netstack.ReplaceTUNIPv4KeepICS(tunName, policy.VPNIP, 32)
+		prefixLen := 32
+		if netstack.HasICSResidue(tunName) {
+			prefixLen = 24
+			logger.Info("vpn_ip_inplace keep_ics_prefix=24 reason=has_137")
+		}
+		removed, kept, err := netstack.ReplaceTUNIPv4KeepICS(tunName, policy.VPNIP, prefixLen)
 		if err != nil {
 			return fmt.Errorf("vpn_ip_inplace ReplaceTUNIPv4KeepICS: %w", err)
 		}
-		logger.Info("vpn_ip_inplace replace removed=%v kept=%s", removed, kept)
+		logger.Info("vpn_ip_inplace replace removed=%v kept=%s/%d", removed, kept, prefixLen)
 		if err := netstack.PreferVPNAfterSoftIPReplace(ctx, tunName, policy.VPNIP); err != nil {
 			logger.Warn("vpn_ip_inplace PreferVPN light: %v", err)
 		}

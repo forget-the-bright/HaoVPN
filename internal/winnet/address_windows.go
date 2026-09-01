@@ -67,6 +67,7 @@ func PreferVPNSourceWithICSContext(ctx context.Context, configName, vpnIP string
 		line = strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, "ics_src_diag "),
+			strings.HasPrefix(line, "ics_prefix_keep "),
 			strings.HasPrefix(line, "ics_prefix_fix "),
 			strings.HasPrefix(line, "ics_default_route_scrubbed "),
 			strings.HasPrefix(line, "ics_prefer_vpn "):

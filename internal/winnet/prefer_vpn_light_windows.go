@@ -13,9 +13,10 @@ import (
 	"haovpn/internal/platform"
 )
 
-// PreferVPNAfterSoftIPReplace 在线软换 VPN IP 后的轻量 PreferVPN（ICS 仍在、Replace 已做 /32）。
+// PreferVPNAfterSoftIPReplace 在线软换 VPN IP 后的轻量 PreferVPN（ICS 仍在）。
 //
 // 主路径：iphlp 清默认路由 → iphlp SkipAsSource（noop/iphlp）；失败或无 137 才 PS/完整 PreferVPN。
+// ICS 在场时 VPN 主机前缀常为 /24（与冷启 ics_prefix_keep 一致）；勿再强制改回 /32。
 func PreferVPNAfterSoftIPReplace(ctx context.Context, configName string, ifIndex int, vpnIP string) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -28,8 +29,8 @@ func PreferVPNAfterSoftIPReplace(ctx context.Context, configName string, ifIndex
 
 	if ents, err := ListUnicastIPv4OnIfIndex(ifIndex); err == nil {
 		for _, e := range ents {
-			if e.IP.String() == vpnIP && e.PrefixLen != 32 {
-				logger.Warn("prefer_vpn_light vpn=%s prefix=%d want=32", vpnIP, e.PrefixLen)
+			if e.IP.String() == vpnIP {
+				logger.Info("prefer_vpn_light vpn=%s prefix=%d", vpnIP, e.PrefixLen)
 			}
 		}
 	}

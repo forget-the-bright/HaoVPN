@@ -39,9 +39,9 @@ if ($sa -and $sa.Status -eq 'Running') {
 }`
 }
 
-// PSSnippetSharedAccessRestart 强制重启 SharedAccess（仅 EnableSharing 失败后的补救路径）。
+// PSSnippetSharedAccessRestart 强制重启 SharedAccess（ICS Enable 前必跑；无条件）。
 //
-// 会抖网卡；禁止作默认路径。输出 ics_sharedaccess action=restart。
+// 现场：手工 Restart 即通；禁止 Soft/Ensure 跳过。输出 ics_sharedaccess action=restart。
 func PSSnippetSharedAccessRestart() string {
 	return `Set-Service SharedAccess -StartupType Manual -ErrorAction SilentlyContinue
 Restart-Service SharedAccess -Force -ErrorAction SilentlyContinue
@@ -92,16 +92,15 @@ foreach ($c in @($net.EnumEveryConnection())) {
 `, EscapeSingleQuoted(public), EscapeSingleQuoted(private))
 }
 
-// PSSnippetPreferVPNAfterICS 嵌入 ICS Enable 成功后的 PreferVPN：短轮询 137 → 恢复主机 /32 → SkipAsSource → 清 TUN 默认路由。
+// PSSnippetPreferVPNAfterICS 嵌入 ICS Enable 成功后的 PreferVPN：短轮询 137 → SkipAsSource → 清 TUN 默认路由。
 //
 // 参数：vpnIP — TUN VPN 地址；tunIfIndex — TUN ifIndex（>0 优先，否则用调用方已设的 $prvIdx）。
 // 假定脚本中 $prvIdx 已设（与 setupICSWithPublicIf 一致）；本片段用 $vpn/$idx。
 //
-// 为何恢复 /32：ICS EnableSharing 可能把网卡主机地址从 Open/assign 的 vpn_ip/32 扩成 /24；
-// 这不是握手 AllowedIPs（分流路由仍按握手装）。主机 /24 会触发 Windows 连接路由副作用，并常伴随
-// TUN 上 0.0.0.0/0 跃点 5。本片段只纠正主机前缀并清该 ifIndex 的默认路由，不动物理网关。
+// 禁止 ics_prefix_fix：ICS 常把 VPN 扩成 /24，立刻 Remove+New /32 会打断 NAT。保留 ICS 前缀（ics_prefix_keep）。
+// 仍清本 ifIndex 的 0.0.0.0/0（ICS 注入跃点 5），不动物理网关。
 //
-// 输出：ics_prefer_vpn wait_ms=…；ics_prefix_fix（若曾扩前缀）；ics_default_route_scrubbed count=…；ics_src_diag…
+// 输出：ics_prefer_vpn wait_ms=…；ics_prefix_keep；ics_default_route_scrubbed；ics_src_diag…
 func PSSnippetPreferVPNAfterICS(vpnIP string, tunIfIndex int) string {
 	icsWild := EscapeSingleQuoted(netutil.ICSPrivateIPv4Wildcard())
 	return fmt.Sprintf(`
@@ -121,11 +120,9 @@ $hasVpn = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction
   Where-Object { $_.IPAddress -eq $vpn } | Select-Object -First 1
 if (-not $hasVpn) {
   New-NetIPAddress -InterfaceIndex $idx -IPAddress $vpn -PrefixLength 32 -ErrorAction SilentlyContinue | Out-Null
+  Write-Output ('ics_prefix_keep action=new_missing prefix=32 ip=' + $vpn)
 } elseif ([int]$hasVpn.PrefixLength -ne 32) {
-  $oldPrefix = [int]$hasVpn.PrefixLength
-  Remove-NetIPAddress -InterfaceIndex $idx -IPAddress $vpn -Confirm:$false -ErrorAction SilentlyContinue
-  New-NetIPAddress -InterfaceIndex $idx -IPAddress $vpn -PrefixLength 32 -ErrorAction SilentlyContinue | Out-Null
-  Write-Output ('ics_prefix_fix old=' + $oldPrefix + ' new=32 ip=' + $vpn)
+  Write-Output ('ics_prefix_keep old=' + [int]$hasVpn.PrefixLength + ' note=preserve_ics_nat ip=' + $vpn)
 }
 # 纵深：非 vpn 且非 ICS 137 的残留（如在线改 VPN IP 留下的旧地址）直接删除，禁止仅 SkipAsSource 掩盖
 Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object {
@@ -170,32 +167,6 @@ Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyC
   Write-Output ('ics_src_diag ip=' + $_.IPAddress + ' prefix=' + $_.PrefixLength + ' skip=' + $_.SkipAsSource)
 }
 `, EscapeSingleQuoted(vpnIP), tunIfIndex, icsWild)
-}
-
-// PSSnippetICSAlreadyPairedCheck 在已解析 $pub/$prv 且拿到 $pubCfg/$prvCfg 后，
-// 若 public=共享因特网(0)、private=专用(1) 均已启用，则置 $ok=true 并输出 already_paired。
-//
-// 嵌入位置：取得 cfg 之后、Try-EnableICS 之前。不匹配时 $ok 保持 false，走完整 Enable。
-// 属性名：部分系统为 SharingType，部分为 SharingConnectionType——两者都试。
-func PSSnippetICSAlreadyPairedCheck() string {
-	return `
-$script:ok = $false
-function Get-IcsShareType($cfg) {
-  try { return [int]$cfg.SharingType } catch {}
-  try { return [int]$cfg.SharingConnectionType } catch {}
-  return -1
-}
-try {
-  if ($pubCfg.SharingEnabled -and $prvCfg.SharingEnabled) {
-    $pt = Get-IcsShareType $pubCfg
-    $vt = Get-IcsShareType $prvCfg
-    if ($pt -eq 0 -and $vt -eq 1) {
-      $script:ok = $true
-      Write-Output 'ics_enable action=already_paired'
-    }
-  }
-} catch {}
-`
 }
 
 // BuildPrepareWintunOrphanScript 生成清理「同名前缀孤儿 Wintun 网卡」的 PowerShell（如 haovpn0 1）。
@@ -336,17 +307,15 @@ Write-Output ('count=' + $n)
 
 // PSSnippetICSEnableSharing COM EnableSharing 主脚本（TUN 私网 + 公网侧 ICS）。
 //
-// 参数 preClear / alreadyPairedCheck / preferSnippet 为调用方拼好的片段（可为空）。
-// sharedAccessEnsure / disableLoop / sharedAccessRestart 由本函数内嵌固定 snippet。
-func PSSnippetICSEnableSharing(pubName, prvName string, tunIfIndex int, tunAlias, preClear, alreadyPairedCheck, preferSnippet string) string {
+// 无条件：Restart-Service SharedAccess -Force → Try-Enable → PreferVPN。
+// 禁止 Soft/already_paired / Ensure-first 跳过 Restart（有无 137 无关）。
+// 参数 preClear / preferSnippet 为调用方拼好的片段（可为空）。
+func PSSnippetICSEnableSharing(pubName, prvName string, tunIfIndex int, tunAlias, preClear, preferSnippet string) string {
 	return fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 regsvr32 /s hnetcfg.dll
-Get-CimInstance -Namespace ROOT/Microsoft/HomeNet -ClassName HNet_ConnectionProperties -ErrorAction SilentlyContinue |
-  ForEach-Object { if ($_.IsIcsPrivate) { Set-CimInstance -InputObject $_ -Property @{ IsIcsPrivate = $false } -ErrorAction SilentlyContinue } }
 $net = New-Object -ComObject HNetCfg.HNetShare
 %s
-netsh wlan stop hostednetwork 2>$null | Out-Null
 %s
 $pubName = '%s'
 $prvName = '%s'
@@ -371,33 +340,26 @@ if (-not $pub) { throw "ICS: 未找到出站网卡 $pubName" }
 if (-not $prv) { throw "ICS: 未找到 TUN 网卡 $prvName（Wintun 须已创建）" }
 $pubCfg = $net.INetSharingConfigurationForINetConnection($pub)
 $prvCfg = $net.INetSharingConfigurationForINetConnection($prv)
-%s
-if (-not $ok) {
-  function Try-EnableICS {
-    $script:ok = $false
-    foreach ($order in @('privateFirst','publicFirst')) {
-      %s
-      try {
-        if ($order -eq 'privateFirst') { $prvCfg.EnableSharing(1); $pubCfg.EnableSharing(0) }
-        else { $pubCfg.EnableSharing(0); $prvCfg.EnableSharing(1) }
-        $script:ok = $true
-        break
-      } catch { }
-    }
-  }
-  Try-EnableICS
-  if (-not $ok) {
+$script:ok = $false
+function Try-EnableICS {
+  $script:ok = $false
+  foreach ($order in @('privateFirst','publicFirst')) {
     %s
-    Try-EnableICS
+    try {
+      if ($order -eq 'privateFirst') { $prvCfg.EnableSharing(1); $pubCfg.EnableSharing(0) }
+      else { $pubCfg.EnableSharing(0); $prvCfg.EnableSharing(1) }
+      $script:ok = $true
+      break
+    } catch { }
   }
 }
+Try-EnableICS
 if (-not $ok) { throw "ICS EnableSharing 失败（0x80040201 常见于 Win11 家庭版，可设 nat.forward_only: true 或手工在「网络连接→共享」启用一次）" }
 Write-Output 'ics_enable_ok'
 %s
-`, preClear, PSSnippetSharedAccessEnsure(),
+`, preClear, PSSnippetSharedAccessRestart(),
 		EscapeSingleQuoted(pubName), EscapeSingleQuoted(prvName), tunIfIndex, EscapeSingleQuoted(tunAlias),
-		alreadyPairedCheck,
-		PSSnippetICSDisableSharingLoop(), PSSnippetSharedAccessRestart(),
+		PSSnippetICSDisableSharingLoop(),
 		preferSnippet)
 }
 

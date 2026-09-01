@@ -4,6 +4,9 @@ package netstack
 
 // ics_enable_windows.go：ICS EnableSharing + PreferVPN 加固 + Teardown 关共享。
 // 出站挑选见 ics_egress_windows.go；多 LAN 规划见 ics_plan.go。
+//
+// 原则：每次开共享无条件 Restart-Service SharedAccess -Force → Enable；
+// 禁止 Soft/already_paired / 按 137 跳过 Restart。
 
 import (
 	"context"
@@ -50,7 +53,7 @@ func setupICSForLANs(ctx context.Context, tunName string, lanCIDRs []string, out
 
 // setupICSWithPublicIf 在已选定的公网侧网卡上启用 ICS（TUN 为私网侧）。
 // PreferVPN（SkipAsSource）嵌在同一 PS：省第二次冷启；无 ICS 残留时跳过开头全机 Disable 预清。
-// COM EnableSharing 脚本见 winnet.PSSnippetICSEnableSharing。
+// COM EnableSharing 脚本见 winnet.PSSnippetICSEnableSharing（内含无条件 SharedAccess Restart）。
 func setupICSWithPublicIf(ctx context.Context, tunName, lanIf string, tunIP net.IP) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -95,7 +98,6 @@ func setupICSWithPublicIf(ctx context.Context, tunName, lanIf string, tunIP net.
 	ps := winnet.PSSnippetICSEnableSharing(
 		lanIf, tunName, tunIfIndex, tunAlias,
 		preClear,
-		winnet.PSSnippetICSAlreadyPairedCheck(),
 		preferSnippet,
 	)
 
@@ -113,16 +115,15 @@ func setupICSWithPublicIf(ctx context.Context, tunName, lanIf string, tunIP net.
 		return fmt.Errorf("ICS 启用失败: %w（家庭版请确认 LAN 网卡名正确且 SharedAccess 服务可启动）", err)
 	}
 	preferEmbedded := false
-	alreadyPaired := false
 	preferWaitMS := ""
+	sawRestart := false
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "ics_sharedaccess ") {
 			logger.Info("windows: %s", line)
-		}
-		if line == "ics_enable action=already_paired" {
-			alreadyPaired = true
-			logger.Info("windows: %s", line)
+			if strings.Contains(line, "action=restart") {
+				sawRestart = true
+			}
 		}
 		if strings.HasPrefix(line, "ics_src_diag ") {
 			logger.Info("windows: %s", line)
@@ -133,21 +134,19 @@ func setupICSWithPublicIf(ctx context.Context, tunName, lanIf string, tunIP net.
 			preferEmbedded = true
 			preferWaitMS = strings.TrimPrefix(line, "ics_prefer_vpn ")
 		}
-		if strings.HasPrefix(line, "ics_prefix_fix ") || strings.HasPrefix(line, "ics_default_route_scrubbed ") {
+		if strings.HasPrefix(line, "ics_prefix_keep ") || strings.HasPrefix(line, "ics_default_route_scrubbed ") {
 			logger.Info("windows: %s", line)
 			preferEmbedded = true
 		}
 	}
-	logger.Info("ics_enable elapsed=%s public=%s private=%s prefer_embedded=%v already_paired=%v",
-		enableElapsed, lanIf, tunName, preferEmbedded, alreadyPaired)
+	if !sawRestart {
+		logger.Warn("windows: ics_enable 未见到 SharedAccess Restart 日志（脚本应无条件 Restart）")
+	}
+	logger.Info("ics_enable elapsed=%s public=%s private=%s prefer_embedded=%v sharedaccess_restart=%v",
+		enableElapsed, lanIf, tunName, preferEmbedded, sawRestart)
 	logger.Info("windows: ICS 已启用 public=%s private=%s（VPN→LAN NAT 回退）", lanIf, tunName)
 	winnet.RememberICSPair(lanIf, tunName)
-
-	if alreadyPaired {
-		logger.Info("windows: ics_link_risk public=%s note=already_paired_skip_enable", lanIf)
-	} else {
-		logger.Info("windows: ics_link_risk public=%s note=EnableSharing_may_drop_tunnel", lanIf)
-	}
+	logger.Info("windows: ics_link_risk public=%s note=EnableSharing_may_drop_tunnel", lanIf)
 
 	if vpn != "" && preferEmbedded {
 		logger.Info("ics_prefer_vpn embedded=true %s", preferWaitMS)
@@ -161,7 +160,6 @@ func setupICSWithPublicIf(ctx context.Context, tunName, lanIf string, tunIP net.
 			logger.Info("windows: ICS 后已 SkipAsSource 非 VPN 地址，本机发包源优先 %s", vpn)
 		}
 	}
-	// 纵深：嵌入 PreferVPN 已 PS 清过；Go 层 iphlp 快查+删，仅失败才 PS fallback
 	if tunIfIndex > 0 {
 		if _, e := winnet.DeleteDefaultRouteOnInterface(tunIfIndex, winnet.ScrubDefaultRouteLate); e != nil {
 			logger.Warn("tun_default_route_scrub after_ics ifIndex=%d: %v", tunIfIndex, e)

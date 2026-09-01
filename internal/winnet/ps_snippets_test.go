@@ -60,17 +60,20 @@ func TestPSSnippetSharedAccessRestart(t *testing.T) {
 	}
 }
 
-// TestPSSnippetPreferVPNAfterICS 钉死嵌入 PreferVPN：轮询 137、恢复 /32、清 TUN 默认路由、SkipAsSource、诊断。
+// TestPSSnippetPreferVPNAfterICS 钉死嵌入 PreferVPN：ics_prefix_keep、清 TUN 默认路由、SkipAsSource。
 func TestPSSnippetPreferVPNAfterICS(t *testing.T) {
 	ps := winnet.PSSnippetPreferVPNAfterICS("10.88.0.2", 23)
 	for _, frag := range []string{
 		"10.88.0.2", "192.168.137.", "SkipAsSource", "Remove-NetIPAddress",
 		"ics_src_diag", "ics_prefer_vpn", "TickCount64", "1500",
-		"PrefixLength -ne 32", "ics_prefix_fix", "0.0.0.0/0", "Remove-NetRoute", "ics_default_route_scrubbed",
+		"ics_prefix_keep", "preserve_ics_nat", "0.0.0.0/0", "Remove-NetRoute", "ics_default_route_scrubbed",
 	} {
 		if !strings.Contains(ps, frag) {
 			t.Fatalf("missing %q in:\n%s", frag, ps)
 		}
+	}
+	if strings.Contains(ps, "ics_prefix_fix") {
+		t.Fatal("PreferVPN 禁止 ics_prefix_fix")
 	}
 }
 
@@ -85,18 +88,6 @@ func TestPSSnippetSkipAsSourceOnly(t *testing.T) {
 	for _, absent := range []string{"PrefixLength -ne 32", "Remove-NetRoute", "Remove-NetIPAddress", "TickCount64"} {
 		if strings.Contains(ps, absent) {
 			t.Fatalf("轻量片段不应含 %q", absent)
-		}
-	}
-}
-
-// TestPSSnippetICSAlreadyPairedCheck 钉死已配对跳过 Enable 的关键字。
-func TestPSSnippetICSAlreadyPairedCheck(t *testing.T) {
-	ps := winnet.PSSnippetICSAlreadyPairedCheck()
-	for _, frag := range []string{
-		"SharingEnabled", "already_paired", "SharingType", "SharingConnectionType", "$script:ok",
-	} {
-		if !strings.Contains(ps, frag) {
-			t.Fatalf("missing %q in:\n%s", frag, ps)
 		}
 	}
 }
@@ -181,23 +172,27 @@ func TestPSSnippetScrubDefaultRoute(t *testing.T) {
 	}
 }
 
-// TestPSSnippetICSEnableSharing 钉死 ICS EnableSharing 主脚本关键片段与转义。
+// TestPSSnippetICSEnableSharing 钉死：无条件 Restart→Enable→prefix_keep；无 Soft。
 func TestPSSnippetICSEnableSharing(t *testing.T) {
 	ps := winnet.PSSnippetICSEnableSharing(
 		"Ethernet", "haovpn0", 23, "HaoVPN",
 		winnet.PSSnippetICSDisableSharingLoop(),
-		winnet.PSSnippetICSAlreadyPairedCheck(),
 		winnet.PSSnippetPreferVPNAfterICS("10.88.0.2", 23),
 	)
 	for _, frag := range []string{
 		"EnableSharing", "ics_enable_ok", "HNetCfg.HNetShare", "Ethernet", "haovpn0",
-		"SharedAccess", "already_paired", "10.88.0.2",
+		"Restart-Service SharedAccess", "ics_prefix_keep", "10.88.0.2",
 	} {
 		if !strings.Contains(ps, frag) {
 			t.Fatalf("missing %q in:\n%s", frag, ps)
 		}
 	}
-	psQ := winnet.PSSnippetICSEnableSharing("eth'0", "tun'1", 1, "a'b", "", "", "")
+	for _, absent := range []string{"already_paired", "ics_prefix_fix", "already_running"} {
+		if strings.Contains(ps, absent) {
+			t.Fatalf("Enable 不应含 %q（禁止跳过 Force Restart）", absent)
+		}
+	}
+	psQ := winnet.PSSnippetICSEnableSharing("eth'0", "tun'1", 1, "a'b", "", "")
 	if !strings.Contains(psQ, "eth''0") || !strings.Contains(psQ, "tun''1") || !strings.Contains(psQ, "a''b") {
 		t.Fatalf("names not escaped: %s", psQ)
 	}

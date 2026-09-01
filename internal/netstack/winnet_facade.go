@@ -73,6 +73,8 @@ func PreferVPNAfterSoftIPReplace(ctx context.Context, configName, vpnIP string) 
 }
 
 // ReplaceTUNIPv4KeepICS 在已打开的 TUN 上替换式配 VPN IP，保留 192.168.137.*（软换不拆 ICS）。
+//
+// prefixLen：无 ICS 时用 32；有 ICS（has_137）时应用 24，与冷启 ics_prefix_keep 一致，禁止软换强制 /32。
 func ReplaceTUNIPv4KeepICS(configName, wantIP string, prefixLen int) (removed []string, kept string, err error) {
 	idx, err := winnet.InterfaceIndex(configName)
 	if err != nil || idx <= 0 {
