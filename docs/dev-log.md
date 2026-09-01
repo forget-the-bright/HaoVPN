@@ -6,11 +6,42 @@
 
 ---
 
+## 2026-09-01 · 冷启再抠：去 Sleep 1 / 去重 HasICSResidue / 去 Late scrub
+
+- Restart 后不再 `Start-Sleep 1`（期望省固定 1s；验收 NAT）。
+- 冷启只探一次 137（有残留走 reuse；cold 不再二次 HasICSResidue）。
+- Prefer iphlp 已 scrub，去掉 applyPrefer 后再 Late scrub。
+- Restart→Go SCM 未做（墙钟仍约 5s）。
+
+验收：无 `ics_stage stage=sleep`；冷启仅一行 HasICSResidue；公司 ping 家 LAN。
+
+---
+
+## 2026-09-01 · 冷启 Prefer 提出：Enable 后 Go iphlp
+
+现场分段：`prefer ms≈2.4s` 全是嵌入 PS 的 Get/Set-NetIPAddress；`wait_ms=0` 说明非等 137。
+
+改：`PSSnippetICSEnableSharing` 冷启不再嵌 Prefer；Enable 成功后与 `reuse_live` 共用 `applyPreferVPNAfterICS` → `PreferVPNAfterSoftIPReplace`（iphlp）。期望 `ics_enable` 少约 2s，且见 `prefer_vpn_light` / `prefer=iphlp_after`。
+
+验收：冷登录公司 ping 家 LAN；日志无 `ics_stage stage=prefer`；有 `prefer_vpn_light`；`ics_enable elapsed` 较前次明显下降。
+
+---
+
+## 2026-09-01 · HardRestart KeepICS：有 137 秒级复用
+
+原则：有活 ICS（137）→ 不拆、不 Force Restart、VPN 主机 /24；无 137 → 冷启 Restart→Enable→prefix_keep。
+
+HardRestart：`StopKeepICS` → assign `keep_ics`+/24 → `ics_refresh action=reuse_live`（轻量 PreferVPN）。**禁止** Restart-only（会冲 137）。
+
+验收：HardRestart 见 `keep_ics=true` + `reuse_live`；无长 `ics_enable`；公司 ping 家 LAN。
+
+---
+
 ## 2026-09-01 · 软换 VPN IP 不通：ICS 在场禁止强制 /32
 
-根因：冷启 PreferVPN 用 ics_prefix_keep 保住 ICS 扩成的主机 /24；pn_ip_inplace 却 ReplaceTUNIPv4KeepICS(..., 32)，等于再做一次 prefix_fix，NAT 死。Soft 路径也不应 Restart（会冲 137）。
+根因：冷启 PreferVPN 用 ics_prefix_keep 保住 ICS 扩成的主机 /24；vpn_ip_inplace 却 ReplaceTUNIPv4KeepICS(..., 32)，等于再做一次 prefix_fix，NAT 死。Soft 路径也不应 Restart（会冲 137）。
 
-修复：有 has_137 时软换用 prefix **24** + SkipAsSource；日志 pn_ip_inplace keep_ics_prefix=24。
+修复：有 has_137 时软换用 prefix **24** + SkipAsSource；日志 vpn_ip_inplace keep_ics_prefix=24。
 
 ---
 

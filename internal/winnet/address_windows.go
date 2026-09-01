@@ -47,7 +47,7 @@ func AssignIPv4PowerShell(configName, ip string, prefix int) error {
 //
 // 根因（错源，不是 soft 重连）：ICS 在 TUN 上另挂 192.168.137.1 后，Windows 源地址选择可能不用
 // 10.88.x.x，导致本机经隧道访问服务端 AllowedIPs（如 192.168.3.1）超时；对 ICS 地址设 SkipAsSource=$true。
-// 热路径：ICS Enable 同脚本内嵌 PSSnippetPreferVPNAfterICS；本函数供回退/单测。
+// 热路径：冷启 Enable 后走 PreferVPNAfterSoftIPReplace（iphlp）；本函数供无 ifIndex / 回退 / 单测。
 func PreferVPNSourceWithICSContext(ctx context.Context, configName, vpnIP string) error {
 	if ctx == nil {
 		ctx = context.Background()

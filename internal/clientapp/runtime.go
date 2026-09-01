@@ -57,12 +57,12 @@ func (rt *runtime) allowedIPs() []string {
 	return append([]string{}, rt.allowedCIDRs...)
 }
 
-func (rt *runtime) close() {
+func (rt *runtime) close(keepICS bool) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	start := time.Now()
-	logger.Info("dataplane_clear reason=stop")
-	rt.clearRoutesLocked()
+	logger.Info("dataplane_clear reason=stop keep_ics=%v", keepICS)
+	rt.clearRoutesLocked(keepICS)
 	if rt.tunDev != nil {
 		_ = rt.tunDev.Close()
 		rt.tunDev = nil

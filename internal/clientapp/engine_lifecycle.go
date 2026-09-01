@@ -100,12 +100,22 @@ func (e *Engine) Start() error {
 	return nil
 }
 
-// Stop 停止重连循环、关闭 TUN/路由并拆除杀开关。
+// Stop 停止重连循环、关闭 TUN/路由并拆除杀开关（并关闭 ICS）。
+func (e *Engine) Stop() {
+	e.stop(false)
+}
+
+// StopKeepICS HardRestart 专用：清数据面但保留 Windows ICS（有 137 则下次秒级复用）。
+func (e *Engine) StopKeepICS() {
+	e.stop(true)
+}
+
+// stop keepICS=true 时 via TeardownKeepICS；Logout 等全清须 keepICS=false。
 //
 // 顺序关键（日志实测）：须先 cancel runCtx，再关 Conn/等 loop。
 // 旧顺序先 rc.Stop（关 Conn 并等 onConnect）后 cancel → applyPolicy 仍跑完 ICS（十余秒），
 // 再走 session_abandoned soft 重连，与 HardRestart 观感「清理和拨号并行」。
-func (e *Engine) Stop() {
+func (e *Engine) stop(keepICS bool) {
 	e.mu.Lock()
 	e.stopping = true
 	cancel := e.cancel
@@ -125,7 +135,7 @@ func (e *Engine) Stop() {
 	if cancel != nil {
 		cancel()
 	}
-	logger.Info("engine_stop begin")
+	logger.Info("engine_stop begin keep_ics=%v", keepICS)
 
 	e.activeMu.Lock()
 	e.activeConn = nil
@@ -138,7 +148,7 @@ func (e *Engine) Stop() {
 		rc.Stop()
 	}
 	// 传输已停后再清数据面（DNS/路由/TUN），禁止并行僵尸 Dial。
-	e.rt.close()
+	e.rt.close(keepICS)
 	if err := e.ks.Remove(); err != nil {
 		logger.Error("拆除杀开关失败: %v", err)
 		e.setKillSwitchStatus(false, fmt.Sprintf("拆除杀开关失败: %v", err))

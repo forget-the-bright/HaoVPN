@@ -204,7 +204,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 	return err
 }
 
-// DisableICSSessionContext 本会话 ICS 智能关闭：Pair → 残留探测 → 必要时 DisableAll。
+// DisableICSSessionContext 本会话 ICS 智能关闭（Logout / 显式全清；HardRestart 走 TeardownKeepICS 勿调用）。
 //
 // 策略（与 clientapp cleanupTUNAfterViaDisabled 互补，勿混用）：
 //   - 有 RememberICSPair：先 DisableICSPairContext（快）；

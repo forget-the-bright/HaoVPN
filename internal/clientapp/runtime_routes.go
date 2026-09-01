@@ -99,26 +99,22 @@ func gatewayHostRouteNeeded(gw string, allowed []string) bool {
 func (rt *runtime) clearRoutes() {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	rt.clearRoutesLocked()
+	rt.clearRoutesLocked(false)
 }
 
-func (rt *runtime) clearRoutesLocked() {
+func (rt *runtime) clearRoutesLocked(keepICS bool) {
 	poison := []string{}
 	if rt.vpnIP != "" {
 		poison = append(poison, rt.vpnIP)
 	}
-	rt.clearRoutesLockedWithDNSPoison(poison...)
+	rt.clearRoutesLockedWithDNSPoison(keepICS, poison...)
 }
 
 // clearRoutesLockedWithDNSPoison 同 clearRoutesLocked，RestoreDNS 时传入 poison（旧/新 VPN IP）。
-func (rt *runtime) clearRoutesLockedWithDNSPoison(poisonIPs ...string) {
-	// Teardown：仅本会话曾 Setup via（rt.via != nil）时才会 DisableAllICS。
-	// 空 local_lans 的慢清理不在这里：在 setupViaExitLocked → cleanupTUNAfterViaDisabled，
-	// 且须先 HasICSResidue；无残留跳过（公司机常见路径）。
-	//
-	// DNS 须先于删路由：若先删路由再 RestoreDNS，系统可能仍指向 VPN DNS 却无回程，
-	// 手动重连立刻 Dial 主机名会出现 lookup i/o timeout。
-	rt.teardownViaExitLocked()
+func (rt *runtime) clearRoutesLockedWithDNSPoison(keepICS bool, poisonIPs ...string) {
+	// Teardown：仅本会话曾 Setup via 时关 ICS（除非 keepICS）。
+	// DNS 须先于删路由：若先删路由再 RestoreDNS，系统可能仍指向 VPN DNS 却无回程。
+	rt.teardownViaExitLocked(keepICS)
 	rt.viaFP = ""
 	rt.viaFPKnown = false
 	if rt.tunDev != nil {

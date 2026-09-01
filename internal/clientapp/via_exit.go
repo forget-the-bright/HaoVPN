@@ -77,13 +77,13 @@ func (rt *runtime) setupViaExitLocked(ctx context.Context, vpnSubnet, tunName, t
 		logger.Warn("via_exit fingerprint set but stack missing，将重建")
 	}
 
-	// teardown 前记录：本轮若刚关过 via，Teardown 内已 DisableAllICS，空路径勿再全机关一次。
+	// teardown：即将重建 via → keepICS；关 via → 全清。
 	hadVia := rt.via != nil && rt.via.stack != nil
-	rt.teardownViaExitLocked()
+	lans := netutil.ValidLANCIDRs(localLANs)
+	rt.teardownViaExitLocked(len(lans) > 0)
 	rt.viaFP = ""
 	rt.viaFPKnown = false
 
-	lans := netutil.ValidLANCIDRs(localLANs)
 	if len(lans) == 0 {
 		// 关闭 via / 从未开 via：仅有 ICS 残留时才慢清理（公司机无 local_lans 常见无残留）
 		cleanupTUNAfterViaDisabled(ctx, tunName, tunIP, hadVia)
@@ -190,15 +190,19 @@ func cleanupTUNAfterViaDisabled(ctx context.Context, tunName, vpnIP string, hadV
 	logger.Info("via_exit 已清理 ICS 残留 reason=residue tun=%s keep=%s", tunName, vpnIP)
 }
 
-func (rt *runtime) teardownViaExitLocked() {
+func (rt *runtime) teardownViaExitLocked(keepICS bool) {
 	if rt.via == nil || rt.via.stack == nil {
 		rt.via = nil
 		return
 	}
 	start := time.Now()
 	// 正常清数据面用 Background：runCtx 在 Stop 时已取消，若传入会导致 Disable ICS 被立刻跳过留下残留。
-	_ = rt.via.stack.Teardown(context.Background())
-	logger.Info("via_exit_teardown done elapsed=%s", time.Since(start))
+	if keepICS {
+		_ = rt.via.stack.TeardownKeepICS(context.Background())
+	} else {
+		_ = rt.via.stack.Teardown(context.Background())
+	}
+	logger.Info("via_exit_teardown done elapsed=%s keep_ics=%v", time.Since(start), keepICS)
 	rt.via = nil
 }
 

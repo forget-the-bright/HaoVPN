@@ -41,11 +41,15 @@ if ($sa -and $sa.Status -eq 'Running') {
 
 // PSSnippetSharedAccessRestart 强制重启 SharedAccess（ICS Enable 前必跑；无条件）。
 //
-// 现场：手工 Restart 即通；禁止 Soft/Ensure 跳过。输出 ics_sharedaccess action=restart。
+// 现场：手工 Restart 即通；禁止 Soft/Ensure 跳过。
+// 输出：ics_stage stage=restart；ics_sharedaccess action=restart。
+// 已去掉 Restart 后的 Sleep 1（现场抠秒；Enable 紧接即可）。
+// 计时用 Stopwatch：WinPS 5.1/.NET Framework 无 Environment.TickCount64（会恒为 $null→ms=0）。
 func PSSnippetSharedAccessRestart() string {
-	return `Set-Service SharedAccess -StartupType Manual -ErrorAction SilentlyContinue
+	return `$swRestart = [Diagnostics.Stopwatch]::StartNew()
+Set-Service SharedAccess -StartupType Manual -ErrorAction SilentlyContinue
 Restart-Service SharedAccess -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 1
+Write-Output ('ics_stage stage=restart ms=' + $swRestart.ElapsedMilliseconds)
 Write-Output 'ics_sharedaccess action=restart'`
 }
 
@@ -92,7 +96,10 @@ foreach ($c in @($net.EnumEveryConnection())) {
 `, EscapeSingleQuoted(public), EscapeSingleQuoted(private))
 }
 
-// PSSnippetPreferVPNAfterICS 嵌入 ICS Enable 成功后的 PreferVPN：短轮询 137 → SkipAsSource → 清 TUN 默认路由。
+// PSSnippetPreferVPNAfterICS 独立/回退路径用的 PreferVPN（短轮询 137 → SkipAsSource → 清 TUN 默认路由）。
+//
+// 冷启 ICS Enable 主路径不再嵌入本片段（改 Go iphlp PreferVPNAfterSoftIPReplace）；
+// 仍供 PreferVPNSourceWithICSContext / PSAssignAdapterAndPreferVPN 回退。
 //
 // 参数：vpnIP — TUN VPN 地址；tunIfIndex — TUN ifIndex（>0 优先，否则用调用方已设的 $prvIdx）。
 // 假定脚本中 $prvIdx 已设（与 setupICSWithPublicIf 一致）；本片段用 $vpn/$idx。
@@ -100,16 +107,18 @@ foreach ($c in @($net.EnumEveryConnection())) {
 // 禁止 ics_prefix_fix：ICS 常把 VPN 扩成 /24，立刻 Remove+New /32 会打断 NAT。保留 ICS 前缀（ics_prefix_keep）。
 // 仍清本 ifIndex 的 0.0.0.0/0（ICS 注入跃点 5），不动物理网关。
 //
-// 输出：ics_prefer_vpn wait_ms=…；ics_prefix_keep；ics_default_route_scrubbed；ics_src_diag…
+// 输出：ics_stage stage=prefer；ics_prefer_vpn wait_ms=…；ics_prefix_keep；ics_default_route_scrubbed；ics_src_diag…
+// 计时/截止用 Stopwatch（勿用 TickCount64：WinPS 5.1 上不存在→毫秒恒 0）。
 func PSSnippetPreferVPNAfterICS(vpnIP string, tunIfIndex int) string {
 	icsWild := EscapeSingleQuoted(netutil.ICSPrivateIPv4Wildcard())
 	return fmt.Sprintf(`
+$swPrefer = [Diagnostics.Stopwatch]::StartNew()
 $vpn = '%s'
 $idx = %d
 if ($idx -le 0) { $idx = $prvIdx }
 $waitMs = 0
-$deadline = [Environment]::TickCount64 + 1500
-while ([Environment]::TickCount64 -lt $deadline) {
+$swWait = [Diagnostics.Stopwatch]::StartNew()
+while ($swWait.ElapsedMilliseconds -lt 1500) {
   $has137 = Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.IPAddress -like '%s' }
   if ($has137) { break }
@@ -145,6 +154,7 @@ Write-Output ('ics_default_route_scrubbed count=' + $scrubbed)
 Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object {
   Write-Output ('ics_src_diag ip=' + $_.IPAddress + ' prefix=' + $_.PrefixLength + ' skip=' + $_.SkipAsSource)
 }
+Write-Output ('ics_stage stage=prefer ms=' + $swPrefer.ElapsedMilliseconds)
 `, EscapeSingleQuoted(vpnIP), tunIfIndex, icsWild, icsWild)
 }
 
@@ -236,15 +246,25 @@ else { Write-Output 'DIFF' }
 `, EscapeSingleQuoted(name), EscapeSingleQuoted(prefix))
 }
 
-// PSSnippetAssignIPv4 为 Wintun 配置 IPv4（先清旧地址再 New-NetIPAddress）。
+// PSSnippetAssignIPv4 为 Wintun 配置 IPv4（清非 VPN；保留 192.168.137.* 以免拆 ICS）。
 func PSSnippetAssignIPv4(configName, ip string, prefix int) string {
+	icsWild := EscapeSingleQuoted(netutil.ICSPrivateIPv4Wildcard())
 	return fmt.Sprintf(`
 %s
 if (-not $if) { throw '未找到 Wintun 网卡' }
+$vpn = '%s'
 Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
-New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress '%s' -PrefixLength %d -ErrorAction Stop | Out-Null
-`, PSSnippetAssignAdapterIf(configName), EscapeSingleQuoted(ip), prefix)
+  Where-Object { $_.IPAddress -ne $vpn -and $_.IPAddress -notlike '%s' } |
+  ForEach-Object { Remove-NetIPAddress -InterfaceIndex $_.InterfaceIndex -IPAddress $_.IPAddress -Confirm:$false -ErrorAction SilentlyContinue }
+$has = Get-NetIPAddress -InterfaceIndex $if.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.IPAddress -eq $vpn } | Select-Object -First 1
+if (-not $has) {
+  New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress $vpn -PrefixLength %d -ErrorAction Stop | Out-Null
+} elseif ([int]$has.PrefixLength -ne %d) {
+  Remove-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress $vpn -Confirm:$false -ErrorAction SilentlyContinue
+  New-NetIPAddress -InterfaceIndex $if.ifIndex -IPAddress $vpn -PrefixLength %d -ErrorAction Stop | Out-Null
+}
+`, PSSnippetAssignAdapterIf(configName), EscapeSingleQuoted(ip), icsWild, prefix, prefix, prefix)
 }
 
 // PSSnippetRemoveNonVPNKeepVPN 删除 TUN 上除 vpnIP 外全部 IPv4，并确保 vpn /32 存在。
@@ -310,17 +330,23 @@ Write-Output ('count=' + $n)
 // 无条件：Restart-Service SharedAccess -Force → Try-Enable → PreferVPN。
 // 禁止 Soft/already_paired / Ensure-first 跳过 Restart（有无 137 无关）。
 // 参数 preClear / preferSnippet 为调用方拼好的片段（可为空）。
+// 冷启主路径 preferSnippet 应为空：Prefer 改由 Go PreferVPNAfterSoftIPReplace（iphlp）。
+// 分段抠秒：ics_stage stage=com_init|restart|enable（Go 侧原样 Info）。
+// 计时用 Diagnostics.Stopwatch（WinPS 5.1 无 TickCount64）。
 func PSSnippetICSEnableSharing(pubName, prvName string, tunIfIndex int, tunAlias, preClear, preferSnippet string) string {
 	return fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
+$swCom = [Diagnostics.Stopwatch]::StartNew()
 regsvr32 /s hnetcfg.dll
 $net = New-Object -ComObject HNetCfg.HNetShare
+Write-Output ('ics_stage stage=com_init ms=' + $swCom.ElapsedMilliseconds)
 %s
 %s
 $pubName = '%s'
 $prvName = '%s'
 $prvIdx = %d
 $prvAlias = '%s'
+$swEnable = [Diagnostics.Stopwatch]::StartNew()
 $pub = $null
 $prv = $null
 foreach ($c in @($net.EnumEveryConnection())) {
@@ -341,6 +367,7 @@ if (-not $prv) { throw "ICS: 未找到 TUN 网卡 $prvName（Wintun 须已创建
 $pubCfg = $net.INetSharingConfigurationForINetConnection($pub)
 $prvCfg = $net.INetSharingConfigurationForINetConnection($prv)
 $script:ok = $false
+$script:enableOrder = ''
 function Try-EnableICS {
   $script:ok = $false
   foreach ($order in @('privateFirst','publicFirst')) {
@@ -349,12 +376,14 @@ function Try-EnableICS {
       if ($order -eq 'privateFirst') { $prvCfg.EnableSharing(1); $pubCfg.EnableSharing(0) }
       else { $pubCfg.EnableSharing(0); $prvCfg.EnableSharing(1) }
       $script:ok = $true
+      $script:enableOrder = $order
       break
     } catch { }
   }
 }
 Try-EnableICS
 if (-not $ok) { throw "ICS EnableSharing 失败（0x80040201 常见于 Win11 家庭版，可设 nat.forward_only: true 或手工在「网络连接→共享」启用一次）" }
+Write-Output ('ics_stage stage=enable ms=' + $swEnable.ElapsedMilliseconds + ' order=' + $script:enableOrder)
 Write-Output 'ics_enable_ok'
 %s
 `, preClear, PSSnippetSharedAccessRestart(),

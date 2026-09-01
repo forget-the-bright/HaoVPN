@@ -180,8 +180,19 @@ func (s *Stack) Setup(ctx context.Context) error {
 //	快速退出/抢占路径可传可取消 ctx。
 //
 // 返回：Enabled=false 时 nil；个别规则删除失败不阻断整体返回。
-// 副作用：删除 iptables/NetNat；Windows 上 ICS 仅关闭一次（避免多 LAN 重复 COM 卡顿）。
+// 副作用：删除 iptables/NetNat；Windows 上 ICS 关闭一次。
 func (s *Stack) Teardown(ctx context.Context) error {
+	return s.teardown(ctx, false)
+}
+
+// TeardownKeepICS 拆除 WinNAT 等，但保留 Windows ICS（HardRestart：有 137 则秒级复用）。
+//
+// 不 Disable；保留 RememberICSPair 与 TUN 上 192.168.137.*。禁止随后 Force Restart（会冲 137）。
+func (s *Stack) TeardownKeepICS(ctx context.Context) error {
+	return s.teardown(ctx, true)
+}
+
+func (s *Stack) teardown(ctx context.Context, keepICS bool) error {
 	if !s.cfg.Enabled {
 		return nil
 	}
@@ -194,11 +205,14 @@ func (s *Stack) Teardown(ctx context.Context) error {
 			logger.Warn("netstack teardown NAT %s: %v", lan, err)
 		}
 	}
-	// ICS 关闭与 LAN 条数无关，只做一次（每条 LAN 调一次会卡数秒×N）
 	icsStart := time.Now()
-	disableICSPlatform(ctx)
-	logger.Info("netstack teardown 完成 elapsed=%s ics_elapsed=%s lans=%d",
-		time.Since(start), time.Since(icsStart), len(s.cfg.LanCIDRs))
+	if keepICS {
+		logger.Info("netstack teardown keep_ics=true（有 137 则复用；勿 Restart SharedAccess）")
+	} else {
+		disableICSPlatform(ctx)
+	}
+	logger.Info("netstack teardown 完成 elapsed=%s ics_elapsed=%s lans=%d keep_ics=%v",
+		time.Since(start), time.Since(icsStart), len(s.cfg.LanCIDRs), keepICS)
 	return nil
 }
 

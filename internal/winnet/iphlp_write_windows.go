@@ -33,16 +33,37 @@ const errorNotFound windows.Errno = 1168
 // SetInterfaceIPv4OnIndex 优先替换式配 IP（删旧加新）；失败回退 netsh set address。
 //
 // 为何替换：Wintun Close 保留适配器，仅 Create 会导致在线改 VPN IP 后双地址残留。
+// 有活 137：KeepICS + 强制 VPN 主机前缀 /24（对齐 ics_prefix_keep；禁止 /32 打死 NAT）。
 func SetInterfaceIPv4OnIndex(ifIndex int, ifName, ip string, prefixLen int) error {
 	start := time.Now()
 	if UseIPHelperEnabled() && ifIndex > 0 {
-		removed, kept, err := ReplaceInterfaceIPv4(ifIndex, ip, prefixLen)
+		keepICS := false
+		if ents, err := ListUnicastIPv4OnIfIndex(ifIndex); err == nil {
+			for _, e := range ents {
+				if netutil.IPv4IsICSPrivate(e.IP) {
+					keepICS = true
+					break
+				}
+			}
+		}
+		usePrefix := prefixLen
+		if keepICS {
+			usePrefix = 24
+		}
+		var removed []string
+		var kept string
+		var err error
+		if keepICS {
+			removed, kept, err = ReplaceInterfaceIPv4KeepICS(ifIndex, ip, usePrefix)
+		} else {
+			removed, kept, err = ReplaceInterfaceIPv4(ifIndex, ip, usePrefix)
+		}
 		if err == nil {
-			logger.Info("assign_ip method=iphlp replace removed=%v kept=%s/%d elapsed=%s ifIndex=%d",
-				removed, kept, prefixLen, time.Since(start), ifIndex)
+			logger.Info("assign_ip method=iphlp replace removed=%v kept=%s/%d elapsed=%s ifIndex=%d keep_ics=%v",
+				removed, kept, usePrefix, time.Since(start), ifIndex, keepICS)
 			return nil
 		}
-		logger.Warn("assign_ip method=iphlp replace fail elapsed=%s: %v，回退 netsh", time.Since(start), err)
+		logger.Warn("assign_ip method=iphlp replace fail elapsed=%s keep_ics=%v: %v，回退 netsh", time.Since(start), keepICS, err)
 	}
 	mask := prefixLenToMask(prefixLen)
 	err := SetInterfaceIPv4(ifName, ip, mask)

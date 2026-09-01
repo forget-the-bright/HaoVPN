@@ -53,14 +53,14 @@ func waitDNSReadyAbort(addr string, timeout time.Duration, abort func() bool) bo
 	return false
 }
 
-// HardRestart 手动全量重连契约：Stop（等 reconnect loop）→ DNS settle → 新 Engine 拨号。
+// HardRestart 手动重连：StopKeepICS（保留活 ICS）→ DNS settle → 新 Engine 拨号。
 //
 // 与 Soft 重连对比：
 //   - Soft：transport.ReconnectClient + protectForReconnect（保留 TUN/路由/DNS/via）
-//   - Hard：本函数（全清数据面后再拨）；GUI/CLI 禁止再发明第三套编排
+//   - Hard：清数据面但 KeepICS；有 137 则下次配 IP /24 + 轻量 PreferVPN，跳过 Restart/Enable
 //
 // 参数：
-//   old — 可为 nil（无旧引擎时仅 settle+新建）；非 nil 时先 Stop。
+//   old — 可为 nil（无旧引擎时仅 settle+新建）；非 nil 时先 StopKeepICS。
 //   cfg — 客户端配置（须非 nil，取 Server.Address 做 settle）。
 //   creds — 隧道凭据。
 //   abort — 可选；在 Stop 后、DNS settle 轮询中、DNS 后、Start 前若返回 true，则返回 ErrHardRestartAborted（eng 为 nil）。
@@ -77,7 +77,7 @@ func HardRestart(old *Engine, cfg *config.ClientConfig, creds Credentials, abort
 	start := time.Now()
 	logger.Info("hard_restart begin")
 	if old != nil {
-		old.Stop()
+		old.StopKeepICS()
 	}
 	if aborted() {
 		logger.Info("hard_restart aborted after_stop elapsed=%s", time.Since(start))
