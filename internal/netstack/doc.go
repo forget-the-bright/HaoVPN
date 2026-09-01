@@ -3,8 +3,9 @@
 // 关键文件（Windows）：
 //   forward_windows.go — IP 转发（注册表 + Set-NetIPInterface）
 //   nat_windows.go — WinNAT；家庭版 sku_home 直进 ICS；Get-NetNat/New-NetNat 仅 RunPSOneShot
+//   ics_lifecycle.go — ICSDisable / ICSPreserve（拆除时是否关共享）
 //   ics_egress_windows.go — ICS 出站网卡解析（IP Helper / PS）
-//   ics_enable_windows.go — ICS EnableSharing + PreferVPN；disable → winnet.DisableICSSessionContext
+//   ics_enable_windows.go — 有 137→reuse_live；无→Restart+Enable→Go iphlp Prefer
 //   ics_plan.go — 多 local_lans 出站网卡规划（纯函数，无 COM）
 //   nat_outcome.go — Setup 结果（ActiveCIDRs / SkipCIDRs / ICS hint）
 //   route_ops_windows.go — 客户端 on-link 路由 ADD/DELETE
@@ -14,7 +15,7 @@
 //   killswitch_wfp_enum_windows.go — 按层枚举产品子层
 //   common.go — WFPFilterRef / SelectProductFilterIDs（跨平台）
 //   winnet_facade.go — ConfigureWindows / HasICSResidue / CleanupICSResidue(Context) /
-//                      RemoveICSAddressesKeepVPN / ScrubTUNDefaultRoute(Fast) /
+//                      RemoveICSAddressesKeepVPN / ScrubTUNDefaultRouteFast /
 //                      PreferVPNAfterSoftIPReplace / ReplaceTUNIPv4KeepICS
 //
 // 上游：clientapp runtime、serverapp TUN/NAT Setup。

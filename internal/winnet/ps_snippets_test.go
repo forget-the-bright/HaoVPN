@@ -37,20 +37,7 @@ func TestPSSnippetICSDisableAll(t *testing.T) {
 	}
 }
 
-// TestPSSnippetSharedAccessEnsure 默认路径须 Start/already_running，禁止无条件 Restart-Force。
-func TestPSSnippetSharedAccessEnsure(t *testing.T) {
-	ps := winnet.PSSnippetSharedAccessEnsure()
-	for _, frag := range []string{"SharedAccess", "already_running", "Start-Service", "ics_sharedaccess"} {
-		if !strings.Contains(ps, frag) {
-			t.Fatalf("missing %q in:\n%s", frag, ps)
-		}
-	}
-	if strings.Contains(ps, "Restart-Service") {
-		t.Fatal("Ensure 路径不得含 Restart-Service（抖网卡）")
-	}
-}
-
-// TestPSSnippetSharedAccessRestart 补救路径才允许 Restart-Force；无 Sleep 1。
+// TestPSSnippetSharedAccessRestart 冷启 Force Restart；无 Sleep 1；无 Ensure Soft。
 func TestPSSnippetSharedAccessRestart(t *testing.T) {
 	ps := winnet.PSSnippetSharedAccessRestart()
 	for _, frag := range []string{
@@ -61,9 +48,9 @@ func TestPSSnippetSharedAccessRestart(t *testing.T) {
 			t.Fatalf("missing %q", frag)
 		}
 	}
-	for _, absent := range []string{"Start-Sleep", "ics_stage stage=sleep"} {
+	for _, absent := range []string{"Start-Sleep", "ics_stage stage=sleep", "already_running"} {
 		if strings.Contains(ps, absent) {
-			t.Fatalf("Restart 后不应再 Sleep: %q", absent)
+			t.Fatalf("Restart 不应含 %q", absent)
 		}
 	}
 }
@@ -184,13 +171,9 @@ func TestPSSnippetScrubDefaultRoute(t *testing.T) {
 	}
 }
 
-// TestPSSnippetICSEnableSharing 钉死：无条件 Restart→Enable；Prefer 由 Go iphlp，脚本可不嵌。
+// TestPSSnippetICSEnableSharing 钉死：无条件 Restart→Enable；Prefer 不嵌 PS。
 func TestPSSnippetICSEnableSharing(t *testing.T) {
-	ps := winnet.PSSnippetICSEnableSharing(
-		"Ethernet", "haovpn0", 23, "HaoVPN",
-		winnet.PSSnippetICSDisableSharingLoop(),
-		"", // 冷启主路径不嵌 Prefer
-	)
+	ps := winnet.PSSnippetICSEnableSharing("Ethernet", "haovpn0", 23, "HaoVPN")
 	for _, frag := range []string{
 		"EnableSharing", "ics_enable_ok", "HNetCfg.HNetShare", "Ethernet", "haovpn0",
 		"Restart-Service SharedAccess",
@@ -205,7 +188,7 @@ func TestPSSnippetICSEnableSharing(t *testing.T) {
 			t.Fatalf("Enable 不应含 %q", absent)
 		}
 	}
-	psQ := winnet.PSSnippetICSEnableSharing("eth'0", "tun'1", 1, "a'b", "", "")
+	psQ := winnet.PSSnippetICSEnableSharing("eth'0", "tun'1", 1, "a'b")
 	if !strings.Contains(psQ, "eth''0") || !strings.Contains(psQ, "tun''1") || !strings.Contains(psQ, "a''b") {
 		t.Fatalf("names not escaped: %s", psQ)
 	}

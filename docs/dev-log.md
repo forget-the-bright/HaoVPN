@@ -6,6 +6,20 @@
 
 ---
 
+## 2026-09-01 · 架构第 30 轮：ICSLifecycle + 死代码收口 + 文档对齐
+
+抽取与去耦：
+- `netstack.ICSLifecycle`（Disable/Preserve）替换裸 `keepICS bool`
+- `winnet.InterfaceHasICSPrivate` / `LogICSPowerShellLines`
+- 删除 `PSSnippetSharedAccessEnsure`、`ScrubDefaultRouteLate`；Enable 脚本去掉 preClear/preferSnippet 参数
+- Prefer 主路径统一 iphlp；PS Prefer 仅回退
+
+文档：architecture / troubleshooting / codebase-guide / 记忆 / internal/README / security / traffic-routing 去掉 already_paired、嵌同 PS Prefer、HardRestart 全清、`ics_prefix_fix` 现行建议。
+
+验收：`go test ./internal/winnet/... ./internal/netstack/... ./internal/clientapp/...`；冷启 `prefer=iphlp_after`；HardRestart `ics=preserve` + `reuse_live`。
+
+---
+
 ## 2026-09-01 · 冷启再抠：去 Sleep 1 / 去重 HasICSResidue / 去 Late scrub
 
 - Restart 后不再 `Start-Sleep 1`（期望省固定 1s；验收 NAT）。

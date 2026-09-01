@@ -75,7 +75,7 @@
 | `route_view.go` | **`ManagedRouteView`** 展示 DTO（供 GUI 托盘） |
 | `fatal_auth.go` / `dial_errors.go` | 封禁 / 鉴权致命错误 UX（直接 `autherr`/`dialerr`，无薄 Is* re-export） |
 
-**重连双路径**：Soft = `transport.ReconnectClient` + 保 dataplane；Hard = `HardRestart`（全清后再拨）。GUI/CLI 禁止第三套编排。
+**重连双路径**：Soft = `transport.ReconnectClient` + 保 dataplane；Hard = `HardRestart`→`StopKeepICS`（有 137→`reuse_live`）。GUI/CLI 禁止第三套编排。
 
 ### CLI vs GUI（入口层对照）
 
@@ -129,7 +129,9 @@ Stop 打断配网 → cancel runCtx → policy_apply aborted；已进 ICS → Se
 HardRestart DNS settle → safeutil.PollUntil（约 3s，中段 logout/quit 可 abort）
 鉴权后 → Engine 早写 vpnIP；applyPolicy 后才 StateConnected（此前 tun_upload_quiesced）
 软重连 → sessionmgr HandleInbound 绑 Conn；RegisterVPN Close+Done；crypto Open 成功后 commit replay
-冷启动：CLI/GUI 均 `StartWarmupAsync`；warmup Create 后 `disable_v6`；DNS 在 ICS 前（`skip_empty`）；PreferVPN 嵌 ICS 同 PS；iphlp scrub Fast/Late；软换 iphlp SkipAsSource（`iphlp_skipas_windows.go`）
+冷启动：CLI/GUI 均 `StartWarmupAsync`；warmup Create 后 `disable_v6`；DNS 在 ICS 前（`skip_empty`）；有 137→`reuse_live`，无→Restart+Enable 后 **Go iphlp Prefer**；软换 iphlp SkipAsSource（`iphlp_skipas_windows.go`）
+HardRestart → `ICSPreserve`；Logout → `ICSDisable`（`netstack/ics_lifecycle.go`）
+ICS PS 日志统一 → `winnet.LogICSPowerShellLines`；137 探测 → `InterfaceHasICSPrivate` / `HasICSResidue`
 托盘悬停 → trayTooltipInputNow（busy；sticky 优先）→ systray.SetTooltip
 登录失败 → finishLoginFailure（红字+sticky → 串行 Stop / busy 则 pending logout）
 ```

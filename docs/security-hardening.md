@@ -195,7 +195,7 @@ WebUI 探针页预设：1 小时～5 年、永久、自定义（月按 30 天、
 ### 4.3 ExitLAN / local_lans 信任边界
 
 - 客户端可上报 `local_lans`（须 **RFC1918** 且前缀 **≥ /16**，禁 `0.0.0.0/0`）；写入 `client_lan_registry` 并进入会话 `ExitLANs`（允许该源入站回程校验）。
-- **Windows ICS 与注册表**：新客户端**仅握手**上报 `local_lans`（**已确认**：post-auth `lan_registry_sync` 曾导致 decrypt/replay，已去除）。多 LAN `skipped` 靠 `icsHint`。旧客户端若仍发 sync：服务端限速 + prune，**勿 Kick via 自己**。纵深：Conn 绑定 / Done / Decrypt commit / TUN Connected 前静默上送。PreferVPN/SkipAsSource 仅 ICS Setup 内一次（嵌同 PS），纠正错源而非 replay。
+- **Windows ICS 与注册表**：新客户端**仅握手**上报 `local_lans`（**已确认**：post-auth `lan_registry_sync` 曾导致 decrypt/replay，已去除）。多 LAN `skipped` 靠 `icsHint`。旧客户端若仍发 sync：服务端限速 + prune，**勿 Kick via 自己**。纵深：Conn 绑定 / Done / Decrypt commit / TUN Connected 前静默上送。PreferVPN/SkipAsSource：冷启/复用主路径为 Go iphlp（`PreferVPNAfterSoftIPReplace`），**保留主机 /24**；纠正错源而非 replay。
 - **禁止与 VPN 地址池重叠**：`local_lans` 不得与 `vpn.subnet`（及同池前缀）相交。否则 via 可把 VPN 网段广告为 ExitLAN，再经 hub 旁路 `peer_access` 伪造他户 VPN 源。服务端握手用 `netutil.ValidateAdvertisedLANNotForbidden` 拒绝；过宽/重叠记 `lan_cidr_reject`，不入库。
 - **ExitLAN → 其他账号 VPN IP 的 hub 直转**仅当该会话是「已应用托管路由」中的 **via**（`sessionmgr.viaIndex`）。非 via 即使广告了 LAN，也不得绕过 `peer_access`。
 - **软重连 / replay**：顶替须 Conn 身份绑定入站 + Close 后排空 `Done`；Decrypt 仅 Open 成功后提交防重放；客户端 Connected 前不上送 TUN。见 [troubleshooting.md](troubleshooting.md) replay 行。

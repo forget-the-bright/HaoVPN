@@ -45,8 +45,8 @@ func ReplaceInterfaceIPv4KeepICS(ifIndex int, wantIP string, prefixLen int) (rem
 }
 
 // DeleteDefaultRouteOnInterface 非 Windows 无操作。
-func DeleteDefaultRouteOnInterface(ifIndex int, mode DefaultRouteScrubMode) (removed bool, err error) {
-	_, _ = ifIndex, mode
+func DeleteDefaultRouteOnInterface(ifIndex int) (removed bool, err error) {
+	_ = ifIndex
 	return false, nil
 }
 

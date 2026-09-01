@@ -21,27 +21,9 @@ if (-not $if) {
 }`, EscapeSingleQuoted(configName), EscapeSingleQuoted(EscapeRegex("Wintun")), EscapeSingleQuoted(EscapeRegex(brand.WintunPool)))
 }
 
-// PSSnippetSharedAccessEnsure 确保 SharedAccess 在跑，且已在跑时不 Restart-Force。
-//
-// 为何：旧脚本无条件 Restart-Service -Force，会抖 public 网卡上的 TCP（家用 WLAN+隧道同卡
-// → ICS 窗口 soft 重连 / 服务端 replay）。服务已 Running 时只需保证 Manual，勿重启。
-// EnableSharing 仍失败时由调用方再 Restart 一次（见 setupICSWithPublicIf 重试环）。
-// 输出：ics_sharedaccess action=start|already_running（供 Go 侧 Info 日志）。
-func PSSnippetSharedAccessEnsure() string {
-	return `Set-Service SharedAccess -StartupType Manual -ErrorAction SilentlyContinue
-$sa = Get-Service SharedAccess -ErrorAction SilentlyContinue
-if ($sa -and $sa.Status -eq 'Running') {
-  Write-Output 'ics_sharedaccess action=already_running'
-} else {
-  Start-Service SharedAccess -ErrorAction SilentlyContinue
-  Start-Sleep -Seconds 1
-  Write-Output 'ics_sharedaccess action=start'
-}`
-}
-
 // PSSnippetSharedAccessRestart 强制重启 SharedAccess（ICS Enable 前必跑；无条件）。
 //
-// 现场：手工 Restart 即通；禁止 Soft/Ensure 跳过。
+// 现场：手工 Restart 即通；禁止 Soft/Ensure/already_paired 跳过（已删除 Ensure 片段）。
 // 输出：ics_stage stage=restart；ics_sharedaccess action=restart。
 // 已去掉 Restart 后的 Sleep 1（现场抠秒；Enable 紧接即可）。
 // 计时用 Stopwatch：WinPS 5.1/.NET Framework 无 Environment.TickCount64（会恒为 $null→ms=0）。
@@ -327,20 +309,20 @@ Write-Output ('count=' + $n)
 
 // PSSnippetICSEnableSharing COM EnableSharing 主脚本（TUN 私网 + 公网侧 ICS）。
 //
-// 无条件：Restart-Service SharedAccess -Force → Try-Enable → PreferVPN。
-// 禁止 Soft/already_paired / Ensure-first 跳过 Restart（有无 137 无关）。
-// 参数 preClear / preferSnippet 为调用方拼好的片段（可为空）。
-// 冷启主路径 preferSnippet 应为空：Prefer 改由 Go PreferVPNAfterSoftIPReplace（iphlp）。
-// 分段抠秒：ics_stage stage=com_init|restart|enable（Go 侧原样 Info）。
+// 无条件：Restart-Service SharedAccess -Force → Try-Enable → ics_enable_ok。
+// PreferVPN **不**嵌在本脚本：冷启/复用均由 Go PreferVPNAfterSoftIPReplace（iphlp）。
+// 禁止 Soft/already_paired / Ensure-first 跳过 Restart。
+//
+// 参数：pubName/prvName — 出站/TUN 友好名；tunIfIndex/tunAlias — 辅助找 TUN COM 连接。
+// 分段抠秒：ics_stage stage=com_init|restart|enable（经 LogICSPowerShellLines 打 Info）。
 // 计时用 Diagnostics.Stopwatch（WinPS 5.1 无 TickCount64）。
-func PSSnippetICSEnableSharing(pubName, prvName string, tunIfIndex int, tunAlias, preClear, preferSnippet string) string {
+func PSSnippetICSEnableSharing(pubName, prvName string, tunIfIndex int, tunAlias string) string {
 	return fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 $swCom = [Diagnostics.Stopwatch]::StartNew()
 regsvr32 /s hnetcfg.dll
 $net = New-Object -ComObject HNetCfg.HNetShare
 Write-Output ('ics_stage stage=com_init ms=' + $swCom.ElapsedMilliseconds)
-%s
 %s
 $pubName = '%s'
 $prvName = '%s'
@@ -385,11 +367,9 @@ Try-EnableICS
 if (-not $ok) { throw "ICS EnableSharing 失败（0x80040201 常见于 Win11 家庭版，可设 nat.forward_only: true 或手工在「网络连接→共享」启用一次）" }
 Write-Output ('ics_stage stage=enable ms=' + $swEnable.ElapsedMilliseconds + ' order=' + $script:enableOrder)
 Write-Output 'ics_enable_ok'
-%s
-`, preClear, PSSnippetSharedAccessRestart(),
+`, PSSnippetSharedAccessRestart(),
 		EscapeSingleQuoted(pubName), EscapeSingleQuoted(prvName), tunIfIndex, EscapeSingleQuoted(tunAlias),
-		PSSnippetICSDisableSharingLoop(),
-		preferSnippet)
+		PSSnippetICSDisableSharingLoop())
 }
 
 // PSSnippetFindInterfaceInCIDR 在 PS 回退路径中查找本机有指定网段 IP 的网卡别名。

@@ -110,8 +110,6 @@ func enableICSCold(ctx context.Context, tunName, lanIf, vpn string, tunIfIndex i
 	// preferSnippet 留空：Enable 后走 PreferVPNAfterSoftIPReplace（iphlp），与 reuse_live 对齐。
 	ps := winnet.PSSnippetICSEnableSharing(
 		lanIf, tunName, tunIfIndex, tunAlias,
-		"",
-		"",
 	)
 
 	out, err := winnet.RunPSOneShotContext(ctx, ps)
@@ -127,26 +125,12 @@ func enableICSCold(ctx context.Context, tunName, lanIf, vpn string, tunIfIndex i
 		}
 		return fmt.Errorf("ICS 启用失败: %w（家庭版请确认 LAN 网卡名正确且 SharedAccess 服务可启动）", err)
 	}
-	sawRestart := false
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		// 脚本内分段耗时（com_init/restart/enable）；不含 powershell.exe 进程冷启与后续 iphlp Prefer。
-		if strings.HasPrefix(line, "ics_stage ") {
-			logger.Info("windows: %s", line)
-			continue
-		}
-		if strings.HasPrefix(line, "ics_sharedaccess ") {
-			logger.Info("windows: %s", line)
-			if strings.Contains(line, "action=restart") {
-				sawRestart = true
-			}
-		}
-	}
-	if !sawRestart {
+	psInfo := winnet.LogICSPowerShellLines(out)
+	if !psInfo.SawSharedAccessRestart {
 		logger.Warn("windows: ics_enable 未见到 SharedAccess Restart 日志（脚本应无条件 Restart）")
 	}
 	logger.Info("ics_enable elapsed=%s public=%s private=%s prefer=iphlp_after sharedaccess_restart=%v",
-		enableElapsed, lanIf, tunName, sawRestart)
+		enableElapsed, lanIf, tunName, psInfo.SawSharedAccessRestart)
 	logger.Info("windows: ICS 已启用 public=%s private=%s（VPN→LAN NAT 回退）", lanIf, tunName)
 	winnet.RememberICSPair(lanIf, tunName)
 	logger.Info("windows: ics_link_risk public=%s note=EnableSharing_may_drop_tunnel", lanIf)

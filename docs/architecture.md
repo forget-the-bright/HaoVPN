@@ -96,14 +96,14 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | 源 IP 白名单共用 | `netutil/source_ip.go`（`CheckSourceIPAllowed` wrap `dialerr.ErrSourceDenied`）；`tunnel`/`probedefense` 直接调用，无薄包装 |
 | 客户端策略差分 / via 指纹 | `clientapp/policy_diff.go`、`runtime.go`（`applyPolicy`）、`via_exit.go` |
 | 空 local_lans 与 ICS 清理 | `clientapp/via_exit.go`：`HasICSResidue` → 无残留跳过；hadVia 只 `RemoveICSAddressesKeepVPN`；否则 `CleanupICSResidueContext`（可取消） |
-| WinNAT / ICS | `nat_windows.go` + `sku_home`；`ics_egress_windows.go`（出站）+ `ics_enable_windows.go`（Enable/PreferVPN）；无残留预清；**already_paired 跳过 Enable**；注册表仅握手 |
+| WinNAT / ICS | `nat_windows.go` + `sku_home`；`ics_egress` + `ics_enable`：有 137→`reuse_live`；无→Force Restart→Enable→**Go iphlp Prefer**；`ICSLifecycle` Disable/Preserve；注册表仅握手 |
 | 家庭版 NAT | `winnet.IsWindowsHomeSKU` → 跳过 WinNAT 直进 ICS |
-| 启动耗时埋点 | `prepare_orphan skipped` / `dns_snapshot skip_empty` / `ics_egress` / `ics_enable already_paired=` / `ics_prefer_vpn wait_ms=` |
+| 启动耗时埋点 | `prepare_orphan skipped` / `dns_snapshot skip_empty` / `ics_egress` / `ics_stage stage=restart\|enable` / `prefer_vpn_light` / `ics=preserve\|disable` |
 | Wintun 孤儿 | `winnet.HasWintunOrphanAdapters` + `IsWintunOrphanAdapterName`；有孤儿才 PS Remove |
 | GUI 防连点 / Stop 串行 | `clientgui` `beginEngineOp` + `beginNetworkOp` + 按钮 Disable；`stopEnginesSerial`；busy 时 `pendingIntent`+`opGen`（`engine_op_queue.go`）；login_fail busy→排队 logout |
 | Fyne.Do 迁移 | 构建 `-tags migrated_fynedo`（`Invoke-GoBuildGui`）+ `clientgui/fyne_meta.go` SetMetadata；仅改 `FyneApp.toml` 对 go build 无效 |
 | 配网时心跳 / Stop 打断 policy | `applyPolicy(ctx)`；`Stack.Setup(ctx)` + `RunPS*Context` Kill；**abort 不得 forward_only 吞成功** |
-| 手动重连 / Soft vs Hard | Soft：`transport/reconnect.go` + `protectForReconnect`；Hard：`HardRestart` / `waitDNSReadyAbort`（settle 中可 abort）；GUI：`reconnect_dns.go` + `engine_intent.go`；登录页仍 FailFast |
+| 手动重连 / Soft vs Hard | Soft：`transport/reconnect.go` + `protectForReconnect`；Hard：`HardRestart`→`StopKeepICS`（`ICSPreserve`）→有 137 则 `reuse_live`；GUI：`reconnect_dns.go`；登录页仍 FailFast |
 | GUI 服务接管 | `clientgui/service_takeover.go` + `clientapp/autostart_facade`（ServiceStopAndWait）；`cmd/client-gui` `handleOccupiedInstance` |
 | Stop 时 DNS/路由顺序 | `runtime_routes.go`：先 `RestoreDNS(poison…)` 再删路由；`Engine.Stop`：先 `cancel(runCtx)` 再 `rc.Stop`/清数据面 |
 | 分流路由部分失败 | `route_install` 日志；零成功硬失败；部分成功 → `LastError` + `partial_routes=true` |
@@ -112,7 +112,7 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | 配 TUN IPv4 / wait | `tun/tun_windows.go` `assignIPv4`（禁止「已有则跳过」）；`winnet.ReplaceInterfaceIPv4` / `ReplaceInterfaceIPv4KeepICS`；埋点 `tun_addrs_before/after` |
 | 分流路由 / DNS 写入 | `route_ops_windows.go`（add/del 优先 iphlp）；`dns_windows.go`→首次 `skip_empty`；`RestoreDNS(poison…)` 防旧 VPN IP 写回 |
 | Windows 出站快照 | `winnet/egress.go` + `egress_windows.go`（一次 GAA+路由表） |
-| PreferVPN / SkipAsSource | 四层：① ICS 嵌入 PS ② iphlp Late scrub ③ 软换 `ApplyPreferVPNSkipAsSource`（noop/iphlp）④ PS fallback |
+| PreferVPN / SkipAsSource | 主路径：`applyPreferVPNAfterICS`→`PreferVPNAfterSoftIPReplace`（iphlp scrub + SkipAsSource，**保留主机 /24**）；回退：`PreferVPNSourceWithICSContext`（PS）；**禁止** `ics_prefix_fix` |
 | send queue full | `transport.noteSendQueueFull` 限频 5s + drops；根因常在数据面错乱，勿只加大队列 |
 | Windows `client.yaml` windows 段 | `config.ClientWindowsSection`：`use_ip_helper`；`NewEngine`→`netstack.ConfigureWindows` |
 | 策略分段耗时 | `runtime_policy.go` `policy_apply stage=` |
@@ -307,13 +307,17 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 
 ```text
 Handshake(+ local_lans) → TUN open → defer_routes → ApplyDNS（ICS 前）
-  → via Setup：egress 快照 → ICS Enable（同 PS 内 PreferVPN：/32 + 清 TUN 默认路由 + SkipAsSource）
+  → via Setup：egress 快照 → HasICSResidue?
+       有 137 → reuse_live（Go iphlp Prefer，秒级）
+       无 137 → Force Restart SharedAccess → EnableSharing（PS）→ Go iphlp Prefer（保留 /24）
   → 全量装分流路由 →（viaDidSetup 时 Fast scrub）→ StateConnected
+HardRestart → StopKeepICS（ICSPreserve）→ 同上 reuse_live（勿 DisableICSPair）
+Logout → Stop（ICSDisable）→ DisableICSSession
 ```
 
 - **无** post-auth `lan_registry_sync`（仅握手上报注册表）。
-- 慢路径文件：`winnet/dns_query_windows.go`、`egress_windows.go`、`ics_egress_windows.go`、`ics_enable_windows.go`、`ps_snippets.go`、`default_route_windows.go`、`prefer_vpn_light_windows.go`、`route_ops_windows.go`。
-- PreferVPN 四层：① ICS 嵌入 PS ② iphlp Late scrub ③ 软换 `ApplyPreferVPNSkipAsSource` ④ PS fallback。
+- 慢路径文件：`winnet/egress_windows.go`、`ics_egress_windows.go`、`ics_enable_windows.go`、`ics_lifecycle.go`、`ps_snippets.go`、`ps_log.go`、`ics_probe.go`、`default_route_windows.go`、`prefer_vpn_light_windows.go`、`route_ops_windows.go`、`hard_restart.go`。
+- PreferVPN：**主路径 iphlp**（`PreferVPNAfterSoftIPReplace`）；PS 仅无 ifIndex / 回退；**禁止** `ics_prefix_fix`（保留 ICS 扩成的 `/24`）。
 - **在线仅改 VPN IP**：`vpn_ip_replace_inplace`（KeepICS Replace + iphlp SkipAsSource；routes=keep 若 gw/allowed 未变）。
 
 **客户端断线重连与策略应用（差分）**：

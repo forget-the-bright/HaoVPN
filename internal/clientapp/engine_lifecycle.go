@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"haovpn/internal/logger"
+	"haovpn/internal/netstack"
 	"haovpn/internal/safeutil"
 	"haovpn/internal/security"
 	"haovpn/internal/transport"
@@ -101,21 +102,32 @@ func (e *Engine) Start() error {
 }
 
 // Stop 停止重连循环、关闭 TUN/路由并拆除杀开关（并关闭 ICS）。
+//
+// 策略 ICSDisable：Logout / 关引擎须拆共享；下次登录走冷启 Restart→Enable。
 func (e *Engine) Stop() {
-	e.stop(false)
+	e.stop(netstack.ICSDisable)
 }
 
-// StopKeepICS HardRestart 专用：清数据面但保留 Windows ICS（有 137 则下次秒级复用）。
+// StopKeepICS HardRestart 专用：清数据面但保留 Windows ICS。
+//
+// 策略 ICSPreserve：
+//   - 不调用 DisableICSSession（避免 DisableICSPair 十余秒）；
+//   - TUN 上若仍有 192.168.137.*，下次 setup 走 reuse_live（秒级 Prefer iphlp）；
+//   - 与 Stop() 共用 stop 管道，仅生命周期枚举不同。
+//
+// 禁止：Preserve 后再 Force Restart SharedAccess（会冲 137）。
 func (e *Engine) StopKeepICS() {
-	e.stop(true)
+	e.stop(netstack.ICSPreserve)
 }
 
-// stop keepICS=true 时 via TeardownKeepICS；Logout 等全清须 keepICS=false。
+// stop 统一停机：cancel → 关重连 → 清数据面 → 拆杀开关。
+//
+// 参数 ics — ICSDisable=全清共享；ICSPreserve=HardRestart 保 137。
 //
 // 顺序关键（日志实测）：须先 cancel runCtx，再关 Conn/等 loop。
 // 旧顺序先 rc.Stop（关 Conn 并等 onConnect）后 cancel → applyPolicy 仍跑完 ICS（十余秒），
 // 再走 session_abandoned soft 重连，与 HardRestart 观感「清理和拨号并行」。
-func (e *Engine) stop(keepICS bool) {
+func (e *Engine) stop(ics netstack.ICSLifecycle) {
 	e.mu.Lock()
 	e.stopping = true
 	cancel := e.cancel
@@ -135,7 +147,7 @@ func (e *Engine) stop(keepICS bool) {
 	if cancel != nil {
 		cancel()
 	}
-	logger.Info("engine_stop begin keep_ics=%v", keepICS)
+	logger.Info("engine_stop begin ics=%s", ics.LogLabel())
 
 	e.activeMu.Lock()
 	e.activeConn = nil
@@ -148,7 +160,7 @@ func (e *Engine) stop(keepICS bool) {
 		rc.Stop()
 	}
 	// 传输已停后再清数据面（DNS/路由/TUN），禁止并行僵尸 Dial。
-	e.rt.close(keepICS)
+	e.rt.close(ics)
 	if err := e.ks.Remove(); err != nil {
 		logger.Error("拆除杀开关失败: %v", err)
 		e.setKillSwitchStatus(false, fmt.Sprintf("拆除杀开关失败: %v", err))

@@ -258,7 +258,7 @@ func (rt *runtime) applyPolicy(ctx context.Context, policy tunnel.HandshakePolic
 			mode = "routes_diff"
 		}
 	}
-	// 纵深：仅本次刚跑 ICS Setup 时快路径 scrub（嵌入 PreferVPN + ics_enable Late 已清；此处 skip noop 重连）
+	// 纵深：仅本次刚跑 ICS Setup 时快路径 scrub（PreferVPN iphlp 已 scrub；此处多为 skip noop）
 	if viaDidSetup {
 		netstack.ScrubTUNDefaultRouteFast(tunName)
 	}

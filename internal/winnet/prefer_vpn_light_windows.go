@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"haovpn/internal/logger"
-	"haovpn/internal/netutil"
 	"haovpn/internal/platform"
 )
 
@@ -35,7 +34,7 @@ func PreferVPNAfterSoftIPReplace(ctx context.Context, configName string, ifIndex
 		}
 	}
 
-	if _, err := DeleteDefaultRouteOnInterface(ifIndex, ScrubDefaultRouteFast); err != nil {
+	if _, err := DeleteDefaultRouteOnInterface(ifIndex); err != nil {
 		logger.Warn("prefer_vpn_light scrub: %v", err)
 	}
 
@@ -48,16 +47,7 @@ func PreferVPNAfterSoftIPReplace(ctx context.Context, configName string, ifIndex
 		logger.Warn("prefer_vpn_light iphlp_skipas fail: %v", err)
 	}
 
-	has137 := false
-	if ents, err := ListUnicastIPv4OnIfIndex(ifIndex); err == nil {
-		for _, e := range ents {
-			if netutil.IPv4IsICSPrivate(e.IP) {
-				has137 = true
-				break
-			}
-		}
-	}
-	if !has137 {
+	if !InterfaceHasICSPrivate(ifIndex) {
 		logger.Info("prefer_vpn_light method=full_fallback reason=no_137 elapsed=%s", time.Since(start))
 		return PreferVPNSourceWithICSContext(ctx, configName, vpnIP)
 	}
@@ -69,11 +59,6 @@ func PreferVPNAfterSoftIPReplace(ctx context.Context, configName string, ifIndex
 	if psErr != nil {
 		return platform.CommandOutputError("PreferVPNAfterSoftIPReplace", out, psErr)
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "ics_src_diag ") {
-			logger.Info("windows: %s", line)
-		}
-	}
+	LogICSPowerShellLines(out)
 	return nil
 }

@@ -37,15 +37,7 @@ const errorNotFound windows.Errno = 1168
 func SetInterfaceIPv4OnIndex(ifIndex int, ifName, ip string, prefixLen int) error {
 	start := time.Now()
 	if UseIPHelperEnabled() && ifIndex > 0 {
-		keepICS := false
-		if ents, err := ListUnicastIPv4OnIfIndex(ifIndex); err == nil {
-			for _, e := range ents {
-				if netutil.IPv4IsICSPrivate(e.IP) {
-					keepICS = true
-					break
-				}
-			}
-		}
+		keepICS := InterfaceHasICSPrivate(ifIndex)
 		usePrefix := prefixLen
 		if keepICS {
 			usePrefix = 24

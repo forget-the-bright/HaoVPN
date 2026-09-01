@@ -82,11 +82,11 @@
 | Fyne 警告「not migrated to fyne.Do」 | 纯 `go build` **不读** `FyneApp.toml`；未带 `-tags migrated_fynedo` / 未 SetMetadata | **重建 GUI**（`build-local`/`build-release` 已加 tag）+ 代码 `fyne_meta.go`；仅改 toml 无效 |
 | 开应用后 UI 空等数秒才自动连 | 旧版 `waitTunWarmup` 串行挡住 `gui_auto_connect` | **升级**：日志应先见 `gui_auto_connect begin warmup_overlap=true`，**不应**先 `tun_warmup wait done` 再 begin |
 | `tun_open stage=create` 出现在 `tun_warmup` 同时 | 预热冷 Create 正常（同路径日志） | 若随后鉴权 `reuse from_warmup` 则 handoff 正常；勿当二次建卡失败 |
-| 家庭版 via 仍十余～数十秒 / `policy_elapsed` 偏大 | **已优化**：出站快照、PreferVPN 嵌同 PS、skip_empty DNS、already_paired ICS、iphlp scrub 快路径。**COM EnableSharing** 首次仍 ~14s；**勿**因两次 `tun_default_route_scrub method=ps count=0` 各 4–5s 误判（旧版纵深 bug，已修） | 冷连：`method=skip\|iphlp`；软换：`prefer_vpn_light`；HardRestart 全清 ICS ~15s 属预期 |
+| 家庭版 via 仍十余～数十秒 / `policy_elapsed` 偏大 | 冷启无 137：Force Restart SharedAccess（~5s）+ EnableSharing COM（~2–5s）+ PS 冷启（~2s）属 Windows 固有成本；Prefer 已改 iphlp（毫秒级） | 看 `ics_stage stage=restart\|enable`；`prefer=iphlp_after` / `prefer_vpn_light`。HardRestart 有 137 应 `reuse_live`（秒级），**不是**再全清 |
 | 冷连 ~25s 且日志两次 `tun_default_route_scrub method=ps count=0` | ICS 修复 Step2 无条件 PS 纵深，即使无默认路由也冷启 PowerShell ~4–5s/次 | **升级**：iphlp 查表 skip / 删成功不 PS；装路由后不再重复 scrub |
 | 软换 IP 仍 ~6s（无 DisableICSPair） | 旧版 `prefer_vpn_light method=skip_only` 仍冷启 PS ~6s | **升级**：`ApplyPreferVPNSkipAsSource` iphlp；日志 `prefer_vpn_light method=noop\|iphlp`；目标 &lt;500ms |
 | 软换 IP 仍 ~11s（无 DisableICSPair 但慢） | 更旧版跑完整 PreferVPN PS + 重复 scrub | 见上行；另需 scrub 快路径 |
-| 手动 HardRestart / GUI 重连很慢 | HardRestart **全清**数据面 → `DisableICSPair` ~15s + 再 `ics_enable` ~14s | **设计如此**；临时断线自动重连走 `dataplane_keep` 才快。勿与 Soft 重连混淆 |
+| 手动 HardRestart / GUI 重连很慢 | **旧版** HardRestart 全清 → DisableICSPair + 再 Enable | **升级**：`StopKeepICS`（`ics=preserve`）→ `reuse_live`；策略应 &lt;1–2s。仍慢则查是否无 137（误走冷启）或 DNS settle |
 | 日志 `wintun:` 前缀包着 Fyne 警告文案 | logger sink / 控制台归类，非 Wintun DLL 故障 | 以文案内容为准；修 Fyne 迁移后该警告应消失 |
 | 托盘悬停无气泡（OpenVPN 有「已连接至/连接自/分配 IP」） | Fyne 无 SetSystemTrayTooltip；未调底层 systray | **升级**：悬停见 HaoVPN 多行 tip；实现 `tray_tooltip.go` + `systray.SetTooltip` |
 | tip 末行只剩「分配」、或「连接自: 20」 | 旧按 127 拼装；fyne systray 未 SETVERSION → Windows **只显示 ~64** UTF-16，日期被砍成残片 | **升级**：tip 预算 **63**；行序 IP→连接自→主机；短日期；整行原子 |
@@ -103,7 +103,7 @@
 | 服务在跑再开 GUI 提示已在运行 | 旧版不区分服务 | 新版弹出接管对话框：停止服务并接管 / 保持服务 |
 | ping 网关间歇丢包 | 同上：底层 ZT 丢包会连带 `10.88.0.1` 丢 | 对比双 ping；ZT 稳后再看 VPN |
 | 管理台改账号 VPN IP 后 soft/Hard/退出登录都修不好，须杀进程；`ics_src_diag` 见新旧 IP 并存；Connected 后狂刷 `send queue full` | Wintun Close 保留适配器；旧版 `assignIPv4` 只加不删 → 双地址；DNS 可能把旧 VPN IP 当 DNS 写回 | **升级客户端**：在线改 IP 走 `vpn_ip_replace_inplace`（`ReplaceTUNIPv4KeepICS`，保留 137）；冷开仍 `ReplaceInterfaceIPv4`；PreferVPN 删非 vpn 非 137；看 `vpn_ip_inplace`、`tun_addrs_after` 仅新 IP±137；`dns_restore poisoned→dhcp`。queue full 为后果（已限频 WARN），勿只加大 `send_queue_size` |
-| 改 VPN IP 后本机上网全进隧道；`route print` 有 `0.0.0.0/0` 经 TUN（如 `10.88.x.x`）**跃点 5**；`ics_src_diag` vpn **prefix=24** | ICS EnableSharing 把 TUN **主机地址**从握手 `/32` 扩成 `/24`，并在 TUN 私网侧注入默认路由；旧 PreferVPN 只改 SkipAsSource | **升级客户端**：PreferVPN 恢复主机 `/32` + 清 TUN 默认路由；Go 纵深 `ScrubTUNDefaultRoute`；日志 `ics_prefix_fix` / `ics_default_route_scrubbed` / `tun_default_route_scrub`。分流 AllowedIPs **仍只跟握手**。物理默认网关（如 `192.168.31.1`）应仍在 |
+| 改 VPN IP 后本机上网全进隧道；`route print` 有 `0.0.0.0/0` 经 TUN（如 `10.88.x.x`）**跃点 5**；`ics_src_diag` vpn **prefix=24** | ICS EnableSharing 把 TUN 主机地址从握手 `/32` 扩成 `/24`，并注入 TUN 默认路由；**禁止**再强制改回 `/32`（会打死 NAT） | **升级**：Prefer **保留 /24**（`ics_prefix_keep` / `prefer_vpn_light … prefix=24`）+ 清 TUN `0.0.0.0/0`；日志 `tun_default_route_scrub method=skip\|iphlp`。分流 AllowedIPs **仍只跟握手**。物理默认网关应仍在 |
 | 仅改 VPN IP 仍见 `DisableICSPair` / `ics_enable` 十余秒 | 旧版 `viaFingerprint` 含 tunIP → 清 viaFP → 全拆全装 ICS | **升级**：指纹仅 `lans\|subnet`；软换不拆 ICS；日志 `vpn_ip_replace_inplace` / `dataplane_keep=true`，**无** `DisableICSPair` |
 | 日志大量 `send queue full` WARN（正常大流量） | 发送队列（默认 256）被打满，属背压；大文件/看电影更易出现 | 先排除「改 VPN IP 双地址」行；再加大易满一侧：`vpn.send_queue_size` / `server.send_queue_size`（如 1024）。过大增延迟 |
 | WebUI 时间比本地差约 8 小时 | 存库/API 为 UTC；页面默认按 `api.display_timezone=UTC` 展示 | `server.yaml` 设 `api.display_timezone: Asia/Shanghai`（或 `GMT+8`）后重启；**不改**审计存库与 API JSON |

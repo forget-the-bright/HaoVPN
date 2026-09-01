@@ -53,11 +53,11 @@ func waitDNSReadyAbort(addr string, timeout time.Duration, abort func() bool) bo
 	return false
 }
 
-// HardRestart 手动重连：StopKeepICS（保留活 ICS）→ DNS settle → 新 Engine 拨号。
+// HardRestart 手动重连：StopKeepICS（ICSPreserve）→ DNS settle → 新 Engine 拨号。
 //
 // 与 Soft 重连对比：
 //   - Soft：transport.ReconnectClient + protectForReconnect（保留 TUN/路由/DNS/via）
-//   - Hard：清数据面但 KeepICS；有 137 则下次配 IP /24 + 轻量 PreferVPN，跳过 Restart/Enable
+//   - Hard：清数据面但 ICSPreserve；有 137 则下次 /24 + reuse_live（跳过 Restart/Enable）
 //
 // 参数：
 //   old — 可为 nil（无旧引擎时仅 settle+新建）；非 nil 时先 StopKeepICS。

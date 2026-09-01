@@ -49,16 +49,12 @@ func RemoveICSAddressesKeepVPN(configName, vpnIP string) error {
 
 // ScrubTUNDefaultRouteFast 快路径：无路由 skip，iphlp 成功即返回，不起 PS。
 func ScrubTUNDefaultRouteFast(configName string) {
-	scrubTUNDefaultRoute(configName, winnet.ScrubDefaultRouteFast)
-}
-
-func scrubTUNDefaultRoute(configName string, mode winnet.DefaultRouteScrubMode) {
 	idx, err := winnet.InterfaceIndex(configName)
 	if err != nil || idx <= 0 {
 		logger.Debug("tun_default_route_scrub skip resolve tun=%s err=%v", configName, err)
 		return
 	}
-	if _, e := winnet.DeleteDefaultRouteOnInterface(idx, mode); e != nil {
+	if _, e := winnet.DeleteDefaultRouteOnInterface(idx); e != nil {
 		logger.Warn("tun_default_route_scrub tun=%s ifIndex=%d: %v", configName, idx, e)
 	}
 }

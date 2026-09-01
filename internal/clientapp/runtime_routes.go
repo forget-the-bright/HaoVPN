@@ -99,22 +99,22 @@ func gatewayHostRouteNeeded(gw string, allowed []string) bool {
 func (rt *runtime) clearRoutes() {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	rt.clearRoutesLocked(false)
+	rt.clearRoutesLocked(netstack.ICSDisable)
 }
 
-func (rt *runtime) clearRoutesLocked(keepICS bool) {
+func (rt *runtime) clearRoutesLocked(ics netstack.ICSLifecycle) {
 	poison := []string{}
 	if rt.vpnIP != "" {
 		poison = append(poison, rt.vpnIP)
 	}
-	rt.clearRoutesLockedWithDNSPoison(keepICS, poison...)
+	rt.clearRoutesLockedWithDNSPoison(ics, poison...)
 }
 
 // clearRoutesLockedWithDNSPoison 同 clearRoutesLocked，RestoreDNS 时传入 poison（旧/新 VPN IP）。
-func (rt *runtime) clearRoutesLockedWithDNSPoison(keepICS bool, poisonIPs ...string) {
-	// Teardown：仅本会话曾 Setup via 时关 ICS（除非 keepICS）。
+func (rt *runtime) clearRoutesLockedWithDNSPoison(ics netstack.ICSLifecycle, poisonIPs ...string) {
+	// Teardown：仅本会话曾 Setup via 时按 ics 策略处理共享。
 	// DNS 须先于删路由：若先删路由再 RestoreDNS，系统可能仍指向 VPN DNS 却无回程。
-	rt.teardownViaExitLocked(keepICS)
+	rt.teardownViaExitLocked(ics)
 	rt.viaFP = ""
 	rt.viaFPKnown = false
 	if rt.tunDev != nil {

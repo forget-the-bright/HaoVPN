@@ -7,6 +7,7 @@ import (
 
 	"haovpn/internal/config"
 	"haovpn/internal/logger"
+	"haovpn/internal/netstack"
 	"haovpn/internal/tun"
 )
 
@@ -57,12 +58,13 @@ func (rt *runtime) allowedIPs() []string {
 	return append([]string{}, rt.allowedCIDRs...)
 }
 
-func (rt *runtime) close(keepICS bool) {
+// close 关闭数据面。ics=ICSPreserve 时 via TeardownKeepICS（HardRestart）；Logout 用 ICSDisable。
+func (rt *runtime) close(ics netstack.ICSLifecycle) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	start := time.Now()
-	logger.Info("dataplane_clear reason=stop keep_ics=%v", keepICS)
-	rt.clearRoutesLocked(keepICS)
+	logger.Info("dataplane_clear reason=stop ics=%s", ics.LogLabel())
+	rt.clearRoutesLocked(ics)
 	if rt.tunDev != nil {
 		_ = rt.tunDev.Close()
 		rt.tunDev = nil

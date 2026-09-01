@@ -5,8 +5,6 @@ package winnet
 import (
 	"fmt"
 	"net"
-	"strconv"
-	"strings"
 	"time"
 	"unsafe"
 
@@ -37,9 +35,9 @@ func hasDefaultRouteOnInterface(ifIndex int) (bool, error) {
 
 // DeleteDefaultRouteOnInterface 删除指定网卡上的 IPv4 默认路由（0.0.0.0/0）。
 //
-// mode=Fast：无路由 skip；iphlp 删成功即返回，不 PS。
-// mode=Late：ICS 后纵深；iphlp 失败时 PS 枚举删除（ICS 偶发晚挂）。
-func DeleteDefaultRouteOnInterface(ifIndex int, mode DefaultRouteScrubMode) (removed bool, err error) {
+// 仅查表 + IP Helper：无路由 skip；iphlp 删成功即返回。不起 PowerShell
+//（ICS 后 Prefer 已紧跟 Enable，无需 Late PS 纵深；曾用的 ScrubDefaultRouteLate 已删除）。
+func DeleteDefaultRouteOnInterface(ifIndex int) (removed bool, err error) {
 	if ifIndex <= 0 {
 		return false, fmt.Errorf("DeleteDefaultRouteOnInterface: bad ifIndex=%d", ifIndex)
 	}
@@ -56,7 +54,6 @@ func DeleteDefaultRouteOnInterface(ifIndex int, mode DefaultRouteScrubMode) (rem
 		if e := DeleteOnLinkRouteIPHelper(net.IPv4zero, 0, ifIndex); e != nil {
 			logger.Debug("tun_default_route_scrub ifIndex=%d method=iphlp err=%v", ifIndex, e)
 		} else {
-			// 删后再查：成功则不必 PS
 			still, _ := hasDefaultRouteOnInterface(ifIndex)
 			if !still {
 				logger.Info("tun_default_route_scrub ifIndex=%d method=iphlp removed=true elapsed=%s", ifIndex, time.Since(start))
@@ -66,33 +63,6 @@ func DeleteDefaultRouteOnInterface(ifIndex int, mode DefaultRouteScrubMode) (rem
 		}
 	}
 
-	if mode == ScrubDefaultRouteFast {
-		logger.Info("tun_default_route_scrub ifIndex=%d method=iphlp_only removed=false elapsed=%s", ifIndex, time.Since(start))
-		return false, nil
-	}
-
-	count, psErr := deleteDefaultRouteOnInterfacePS(ifIndex)
-	if psErr != nil {
-		return false, psErr
-	}
-	removed = count > 0
-	logger.Info("tun_default_route_scrub ifIndex=%d method=ps removed=%v count=%d elapsed=%s", ifIndex, removed, count, time.Since(start))
-	return removed, nil
-}
-
-func deleteDefaultRouteOnInterfacePS(ifIndex int) (count int, err error) {
-	ps := PSSnippetScrubDefaultRoute(ifIndex)
-	out, e := RunPSOneShot(ps)
-	if e != nil {
-		return 0, fmt.Errorf("DeleteDefaultRouteOnInterface PS: %w", e)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "count=") {
-			if n, err2 := strconv.Atoi(strings.TrimPrefix(line, "count=")); err2 == nil {
-				count = n
-			}
-		}
-	}
-	return count, nil
+	logger.Info("tun_default_route_scrub ifIndex=%d method=iphlp_only removed=false elapsed=%s", ifIndex, time.Since(start))
+	return false, nil
 }

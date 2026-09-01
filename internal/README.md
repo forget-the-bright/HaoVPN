@@ -13,9 +13,10 @@
 | Soft / Hard 重连 | Soft：`transport/reconnect.go`；Hard：`clientapp/hard_restart.go`（DNS settle + PollUntil）；GUI：`reconnect_dns.go` + `engine_intent.go` / `engine_op_queue.go` |
 | 在线改 VPN IP（同 IP 保 / 变 IP 软换） | 判断：`runtime_policy.go`（`vpn_ip_inplace`）；软换：`ReplaceTUNIPv4KeepICS` + `ApplyPreferVPNSkipAsSource`（`iphlp_skipas_windows.go`）；routes=keep：`routeListsEqual` |
 | 分流目的过滤 / 越权 WARN | 公式：`netutil.VPNIPOrInNets`；噪声：`IsTUNNoiseDst`/`IsTUNNoiseForLog`/`IsTUNNoiseSource`；限频：`safeutil.AllowEvery`；DNS：`MergeDNSIntoAllowedIPs`；调用：`runtime_tun` / `route_inbound` |
-| Stop / policy abort / ICS | `engine_lifecycle.go`（先 cancel）；`runtime_policy.go`；`netstack.Setup(ctx)`；via 残留：`CleanupICSResidueContext`；`winnet.RunPS*Context` |
+| Stop / policy abort / ICS | `engine_lifecycle.go`（`Stop`=`ICSDisable` / `StopKeepICS`=`ICSPreserve`）；`ics_lifecycle.go`；via：`CleanupICSResidueContext` |
+| HardRestart（保活 ICS） | `hard_restart.go` → `StopKeepICS` → 有 137 则 `reuse_live` |
 | GUI Stop 串行 / 意图排队 | `engine_stop.go`（`stopEnginesSerial`）；`engine_op_queue.go`；`login_fail.go`（`safeutil.IsDeadline`） |
-| Windows PS / ICS / WinNAT / 出站 / DNS / 孤儿 | `ps_snippets.go`、`iphlp_skipas_windows.go`、`default_route_windows.go`、`prefer_vpn_light_windows.go`、`ics_*`；门面 `PreferVPNAfterSoftIPReplace` |
+| Windows PS / ICS / WinNAT / 出站 / DNS / 孤儿 | `ps_snippets.go`、`ps_log.go`、`ics_probe.go`、`prefer_vpn_light_windows.go`、`ics_*`；门面 `PreferVPNAfterSoftIPReplace` |
 | local_lans / replay | 服务端：`sessionmgr/route_inbound.go`（Conn 绑定）、`register.go` + `register_grace.go` + `register_lan.go`、`crypto/wg_crypto.go`；客户端：`engine_connect.go` `tunUploadReady`；注册表握手：`tunnel/server_handler.go` `applyLANRegistry`（旧客户端兼容：`tunnel/lan_registry_sync.go`） |
 | ctx 取消 / 可中止轮询 / 截止 | `safeutil.IsCanceled` / `Check` / `IsDeadline` / `PollUntil` |
 | TUN 预热 / 服务凭据 / CLI·GUI 启动 | `clientapp.StartWarmupAsync` / `RunCLI` / `PrepareEngine` / `RunServiceLoop`（GUI 禁止 import tun/winnet/credentials/autostart 编排） |
@@ -41,8 +42,8 @@
 | **tunnel** | `server_handler.go` / `server_handshake_*.go` / `handshake*.go` | 握手编排文件簇；源 IP 直接 netutil |
 | **netutil** | `ipmatch.go`（`VPNIPOrInNets`/`MergeDNSIntoAllowedIPs`）/ `addr.go`（`IsTUNNoise*`）/ `gateway.go`（`ResolveGateway` 两参） | 分流目的公式；DNS 并入；TUN 噪声；网关 |
 | **safeutil** | `throttle.go`（`AllowEvery`）/ `poll.go` / `context.go`（`IsCanceled`/`IsDeadline`/`Check`）/ `goroutine.go` / `retry.go` | 日志限频；可中止轮询；ctx；GoSafe；退避 |
-| **winnet** | `ipv4_replace.go` / `iphlp_write_windows.go` / `iphlp_skipas*.go` / `default_route*.go` / `egress_*.go` / `prefer_vpn_light_windows.go` / `ps_snippets.go` / `ps_assemble_windows.go` / `ics_*` / `dns_restore*.go` | 替换式配 IP；SkipAsSource；scrub；软换 PreferVPN；PS 模板 |
-| **netstack** | `dns_windows.go`（`RestoreDNS` poison）；`forward_`/`nat_`/`ics_egress_`/`ics_enable_`/`ics_plan`/`route_ops_`；`winnet_facade.go` | DNS 防毒；转发/NAT/ICS/路由；瘦门面 |
+| **winnet** | `ipv4_replace.go` / `iphlp_*` / `ics_probe.go` / `ps_log.go` / `prefer_vpn_light_windows.go` / `ps_snippets.go` / `ics_*` | 配 IP；137 探测；ICS PS 日志；Prefer iphlp；PS 模板 |
+| **netstack** | `ics_lifecycle.go` / `ics_enable_` / `ics_egress_` / `winnet_facade.go` / `dns_windows.go` | ICS Disable/Preserve；Enable/reuse；瘦门面 |
 | **api** | `auth_handlers.go` / `httputil.go` / `handler_peer_*.go` | Cookie helpers；`writeDomainError`；HTTP 薄层 |
 | **vpnaccount** | `peer_write.go` / `peer_apply.go` / `provision.go` | peer 写+脏标；开户/策略 |
 | **serverapp** | `engine.go` / `engine_boot.go` / `boot_persist.go` / `boot_ippool.go` / `boot_session.go` / `boot_tun.go` / `boot_tunnel.go` / `boot_api.go` / `engine_shutdown.go` | 启动分阶段；peerDirty 重启 WARN |

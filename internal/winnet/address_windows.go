@@ -63,17 +63,7 @@ func PreferVPNSourceWithICSContext(ctx context.Context, configName, vpnIP string
 	if err != nil {
 		return platform.CommandOutputError("PreferVPNSourceWithICS", out, err)
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "ics_src_diag "),
-			strings.HasPrefix(line, "ics_prefix_keep "),
-			strings.HasPrefix(line, "ics_prefix_fix "),
-			strings.HasPrefix(line, "ics_default_route_scrubbed "),
-			strings.HasPrefix(line, "ics_prefer_vpn "):
-			logger.Info("windows: %s", line)
-		}
-	}
+	LogICSPowerShellLines(out)
 	return nil
 }
 

@@ -452,7 +452,7 @@ HaoVPN 分层其实同类，但：
 
 - 服务端 NAT 手动网卡：`nat.outbound_interface`（同样仅 ICS）。
 - 客户端 via：`windows.outbound_interface` → `netstack.Config.OutboundIf`。
-- **ICS 副作用**：EnableSharing 可能扩主机 `/32→/24` 并注入 TUN `0.0.0.0/0`。PreferVPN 嵌入 PS 纠正；Go `DeleteDefaultRouteOnInterface` Fast/Late（**无路由 skip，不无条件 PS**）。
+- **ICS 副作用**：EnableSharing 可能扩主机 `/32→/24` 并注入 TUN `0.0.0.0/0`。Prefer **保留 /24**（禁 prefix_fix）+ Go iphlp 清 TUN 默认路由（**无路由 skip，不无条件 PS**）。
 - **在线改 VPN IP**：`ApplyPreferVPNSkipAsSource`（iphlp noop/iphlp）；不拆 ICS。
 
 公司要通服务端侧 `192.168.3.x`：
@@ -485,4 +485,4 @@ HaoVPN 分层其实同类，但：
 
 ---
 
-*文档版本：与 2026-09-01 对齐（ICS PreferVPN 恢复主机 /32 + 清 TUN 默认路由；在线改 IP 软换）；若改选路顺序或 Windows 装路由方式，请同步本文与 troubleshooting。*
+*文档版本：与 2026-09-01 对齐（ICS Prefer 保留主机 /24 + 清 TUN 默认路由；HardRestart KeepICS；在线改 IP 软换）；若改选路顺序或 Windows 装路由方式，请同步本文与 troubleshooting。*
