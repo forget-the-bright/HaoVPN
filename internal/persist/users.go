@@ -192,6 +192,10 @@ func (s *Store) DeleteUser(id int64) error {
 		{`DELETE FROM peer_access WHERE user_id=? OR peer_user_id=?`, []any{id, id}},
 		{`DELETE FROM peer_route_members WHERE user_id=? OR route_id IN (SELECT id FROM peer_routes WHERE via_user_id=?)`, []any{id, id}},
 		{`DELETE FROM peer_routes WHERE via_user_id=?`, []any{id}},
+		{`DELETE FROM dns_server_members WHERE user_id=?`, []any{id}},
+		{`DELETE FROM dns_server_excludes WHERE user_id=?`, []any{id}},
+		// 手工 DNS 若成员被删空则删除整行，避免幽灵配置（config/all 成员为 0 不受影响）
+		{`DELETE FROM dns_servers WHERE source='manual' AND id NOT IN (SELECT dns_id FROM dns_server_members)`, []any{}},
 		{`DELETE FROM client_lan_registry WHERE user_id=?`, []any{id}},
 		{`DELETE FROM connection_events WHERE user_id=?`, []any{id}},
 		{`DELETE FROM session_stats WHERE user_id=?`, []any{id}},

@@ -12,6 +12,8 @@
 //   route_policy.go — 源 IP / ExitLAN / 横向隔离策略
 //   stats.go — 在线统计、入站字节累加
 //
+// L4 流表：Manager.Flows（flowmon）；入站/出站 Observe，供 /api/v1/monitor/flows。
+//
 // Conn 接口（PeerActivityConn / DrainableConn / DataCallbackConn）由 transport.Conn 方法集满足，
 // register 内 type assert 使用，勿在 sessionmgr 外 import transport 仅为挂名。
 //

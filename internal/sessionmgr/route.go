@@ -3,6 +3,7 @@ package sessionmgr
 import (
 	"net"
 
+	"haovpn/internal/flowmon"
 	"haovpn/internal/logger"
 )
 
@@ -77,5 +78,8 @@ func (m *Manager) sendToAccount(ps *AccountSession, packet []byte) bool {
 		return false
 	}
 	ps.TxBytes.Add(int64(len(packet)))
+	if m.Flows != nil {
+		m.Flows.ObservePacket(ps.UserID, packet, flowmon.DirOut)
+	}
 	return true
 }

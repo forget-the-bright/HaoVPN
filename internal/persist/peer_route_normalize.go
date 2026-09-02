@@ -78,6 +78,37 @@ func UnionMemberUserIDs(a, b []int64) []int64 {
 	return NormalizeMemberUserIDs(append(append([]int64{}, a...), b...))
 }
 
+// SymmetricDiffUserIDs 返回两份 user_id 列表的对称差（仅在一侧出现的 ID）。
+//
+// 用途：托管 DNS 仅改排除名单时，只脏标「新进排除 ∪ 新出排除」，避免 MarkAll。
+// 忽略 ≤0（全部哨兵不应出现在排除表）。
+func SymmetricDiffUserIDs(a, b []int64) []int64 {
+	seenA := map[int64]struct{}{}
+	seenB := map[int64]struct{}{}
+	for _, id := range a {
+		if id > 0 {
+			seenA[id] = struct{}{}
+		}
+	}
+	for _, id := range b {
+		if id > 0 {
+			seenB[id] = struct{}{}
+		}
+	}
+	out := make([]int64, 0, len(seenA)+len(seenB))
+	for id := range seenA {
+		if _, ok := seenB[id]; !ok {
+			out = append(out, id)
+		}
+	}
+	for id := range seenB {
+		if _, ok := seenA[id]; !ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // validatePeerRouteMemberIDs 校验访问方：>0 须存在且为 VPN 账号；0=全部跳过。
 //
 // 为何要求 HasVPN：纯管理员无隧道身份，写入成员表无意义且应用生效踢线无对应会话。

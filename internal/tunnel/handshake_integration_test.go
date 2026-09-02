@@ -119,6 +119,103 @@ func TestHandshakeIntegration(t *testing.T) {
 	}
 }
 
+// TestHandshakeSoftDNSHosted 托管 DNS 进 policy.dns_servers，但不并入 AllowedIPs（软 DNS）。
+func TestHandshakeSoftDNSHosted(t *testing.T) {
+	dir := t.TempDir()
+	store, err := persist.Open(filepath.Join(dir, "soft-dns.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	kp, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverKP, err := tunnel.LoadOrCreateServerKeys(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := auth.HashPassword("testpass12")
+	uid, err := store.CreateVPNAccount(persist.User{
+		Username: "u1", PasswordHash: hash, PublicKey: kp.PublicKey, PrivateKeyEnc: kp.PrivateKey,
+		VPNIP: "10.88.0.60", AllowedIPs: []string{"192.168.1.0/24"}, IPMode: persist.IPModeFixed, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	corpDNS := "10.10.6.51"
+	if _, err := store.CreateDNSServer(corpDNS, "公司", []int64{persist.DNSMemberAll}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	cert := genTestCert(t)
+	tlsCfg := security.TLSConfig(cert, true)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	sessMgr := sessionmgr.New(store)
+	pool, _ := ippool.New("10.88.0.0/24")
+	pool.Reserve("10.88.0.1")
+	_ = pool.AllocateSpecific("10.88.0.60", uid)
+	cfg := &config.ServerConfig{
+		VPN:      config.VPNSection{Subnet: "10.88.0.0/24", MTU: 1420},
+		Security: config.SecuritySection{EnforceSplitTunnel: true},
+	}
+	vpnSvc := &vpnaccount.Service{Store: store, Pool: pool, Cfg: cfg}
+	authSvc := auth.New(store, 5, 900, 3600)
+	handler := &tunnel.ServerHandler{
+		Store: store, SessMgr: sessMgr, ServerKP: serverKP, TunDev: nil, VPN: vpnSvc, MTU: 1420,
+		GatewayIP: "10.88.0.1", Auth: authSvc, AllowPlaintextPrivateKeys: true,
+	}
+
+	go func() {
+		raw, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		tc := tls.Server(raw, tlsCfg)
+		if err := tc.Handshake(); err != nil {
+			return
+		}
+		conn := transport.AcceptConn(tc, transport.DefaultConfig(), nil, nil)
+		handler.Attach(conn)
+	}()
+
+	clientTLS := security.TLSConfig(tls.Certificate{}, false)
+	clientTLS.InsecureSkipVerify = true
+	conn, err := transport.Dial(ln.Addr().String(), clientTLS, transport.DefaultConfig(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	hs := tunnel.NewClientHandshake()
+	res, err := hs.RunAuthWithTimeout(conn, "u1", "testpass12", 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, d := range res.Policy.DNSServers {
+		if d == corpDNS {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("policy 应含托管 DNS %s, got %v", corpDNS, res.Policy.DNSServers)
+	}
+	slash32 := corpDNS + "/32"
+	for _, a := range res.Policy.AllowedIPs {
+		if a == slash32 || strings.HasPrefix(a, corpDNS+"/") {
+			t.Fatalf("软 DNS 不得把 %s 并入 AllowedIPs, got %v", slash32, res.Policy.AllowedIPs)
+		}
+	}
+}
+
 // TestHandshakeDisabledAccountRejected 禁用账号后新握手须失败（meta-plan #6）。
 func TestHandshakeDisabledAccountRejected(t *testing.T) {
 	dir := t.TempDir()

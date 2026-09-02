@@ -3,11 +3,12 @@ package api
 import (
 	"net/http"
 
+	"haovpn/internal/paginate"
 	"haovpn/internal/readmodel"
 	"haovpn/internal/timeutil"
 )
 
-// handleLANRegistry GET /api/v1/lan-registry 只读列表。
+// handleLANRegistry GET /api/v1/lan-registry 只读列表（支持 limit/offset）。
 func (s *Server) handleLANRegistry(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -34,5 +35,7 @@ func (s *Server) handleLANRegistry(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, v)
 	}
-	writeItems(w, items)
+	limit, offset := paginate.ParseLimitOffset(r.URL.Query(), 50, 200)
+	total := len(items)
+	writePage(w, http.StatusOK, slicePage(items, limit, offset), total, limit, offset)
 }

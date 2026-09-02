@@ -3,32 +3,52 @@ package vpnaccount
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"haovpn/internal/logger"
 	"haovpn/internal/persist"
 )
 
-// PeerPolicyApplier 托管路由/互访变更后的「待应用」脏标记与应用生效。
+// PeerPolicyApplier 托管路由/互访/DNS 变更后的「待应用」脏标记与应用生效。
 //
 // 为何独立于 HTTP：脏集合与 bump+kick 是领域逻辑；api 只做鉴权/解析/写响应。
 // 状态仅内存：进程重启后清空（serverapp 启动 WARN）；库内策略已是权威。
-// 关联：api/handler_peers_*.go、persist peer_*、sessionmgr.KickUser。
+// 关联：api/handler_peers_*.go、persist peer_* / dns_*、sessionmgr.KickUser / ListOnline。
+//
+// 应用策略（防一次踢挂）：只对「脏集 ∩ 当前在线」做 IncrementPolicyVer+Kick；
+// 离线账号下次握手从库读新策略，不强制 bump；大批量按批限速。
 type PeerPolicyApplier struct {
 	Store *persist.Store
 	Kick  func(userID int64) // 通常注入 sessionmgr.KickUser；可为 nil（仅 bump）
+	// ListOnline 返回当前在线 userID；nil 时不做在线过滤（单测便利）。
+	ListOnline func() []int64
 
 	mu  sync.Mutex
 	all bool
 	ids map[int64]struct{}
 }
 
-// NewPeerPolicyApplier 构造空脏集合的应用器。
+// applyPaceBatch / applyPaceSleep：每踢满一批后短暂休眠，避免瞬时风暴拖死数据面。
+const (
+	applyPaceBatch = 20
+	applyPaceSleep = 50 * time.Millisecond
+)
+
+// NewPeerPolicyApplier 构造空脏集合的应用器（未注入 ListOnline 时 Apply 不过滤在线）。
 func NewPeerPolicyApplier(store *persist.Store, kick func(int64)) *PeerPolicyApplier {
 	return &PeerPolicyApplier{
 		Store: store,
 		Kick:  kick,
 		ids:   map[int64]struct{}{},
 	}
+}
+
+// SetListOnline 注入在线账号枚举（生产由 sessionmgr.ListOnline 注入）。
+func (p *PeerPolicyApplier) SetListOnline(fn func() []int64) {
+	if p == nil {
+		return
+	}
+	p.ListOnline = fn
 }
 
 // MarkUsers 标记指定账号须「应用生效」后踢线刷新策略。
@@ -48,7 +68,8 @@ func (p *PeerPolicyApplier) MarkUsers(ids ...int64) {
 	}
 }
 
-// MarkAll 标记全部 VPN 账号须应用生效（全员托管路由变更）。
+// MarkAll 标记全部 VPN 账号须应用生效（全员托管路由/全员 DNS 变更；黄条用）。
+// Apply 时仍只踢当前在线，不扫离线目录做 Kick。
 func (p *PeerPolicyApplier) MarkAll() {
 	if p == nil {
 		return
@@ -116,12 +137,14 @@ type ApplyResult struct {
 	Failed   int
 	UserIDs  []int64
 	ForceAll bool
+	OnlineOnly bool
 	Message  string
 }
 
-// Apply 对脏账号递增 policy_ver 并 Kick，使在线客户端重连拿新策略。
+// Apply 对脏账号中「当前在线」者递增 policy_ver 并 Kick，使客户端重连拿新策略。
 //
 // 参数：forceAll — 请求强制全员，或与内存 peerDirtyAll 合并。
+// 离线脏账号：不 bump、不 Kick（库已是权威，下次握手生效），并从脏集清除以免黄条永挂。
 // 仅清除本次成功处理的 dirty；失败与踢线过程中新产生的脏标保留，避免 TOCTOU 伪成功。
 func (p *PeerPolicyApplier) Apply(forceAll bool) (*ApplyResult, error) {
 	if p == nil || p.Store == nil {
@@ -151,12 +174,39 @@ func (p *PeerPolicyApplier) Apply(forceAll bool) (*ApplyResult, error) {
 	}
 
 	if len(ids) == 0 {
-		return &ApplyResult{Message: "无待应用变更", ForceAll: force}, nil
+		return &ApplyResult{Message: "无待应用变更", ForceAll: force, OnlineOnly: true}, nil
 	}
 
-	done := make([]int64, 0, len(ids))
+	// 与在线求交：未注入 ListOnline 时不过滤（单测）；生产必注入。
+	onlineOnly := p.ListOnline != nil
+	var toKick []int64
+	var offlineClear []int64
+	if onlineOnly {
+		online := map[int64]struct{}{}
+		for _, id := range p.ListOnline() {
+			if id > 0 {
+				online[id] = struct{}{}
+			}
+		}
+		for _, id := range ids {
+			if _, ok := online[id]; ok {
+				toKick = append(toKick, id)
+			} else {
+				offlineClear = append(offlineClear, id)
+			}
+		}
+	} else {
+		toKick = ids
+	}
+
+	done := make([]int64, 0, len(toKick))
 	failed := 0
-	for _, id := range ids {
+	paced := false
+	for i, id := range toKick {
+		if i > 0 && i%applyPaceBatch == 0 {
+			time.Sleep(applyPaceSleep)
+			paced = true
+		}
 		if _, err := p.Store.IncrementPolicyVer(id); err != nil {
 			logger.Warn("应用生效 IncrementPolicyVer 失败 user_id=%d: %v", id, err)
 			failed++
@@ -167,15 +217,27 @@ func (p *PeerPolicyApplier) Apply(forceAll bool) (*ApplyResult, error) {
 		}
 		done = append(done, id)
 	}
+	// 离线候选直接清脏（策略已在库；无需 Kick）
+	clearIDs := append(append([]int64{}, done...), offlineClear...)
 	clearAll := force && failed == 0
-	p.clearDone(done, clearAll)
+	p.clearDone(clearIDs, clearAll)
 	kicked := len(done)
-	logger.Info("peers_apply kicked=%d failed=%d force_all=%v", kicked, failed, force)
-	msg := fmt.Sprintf("已踢线 %d 个账号以刷新策略", kicked)
+	_, stillAll, remain := p.Status()
+	remainN := len(remain)
+	if stillAll {
+		remainN = -1 // 仍有全员脏标
+	}
+	logger.Info("peers_apply kicked=%d failed=%d force_all=%v online_only=%v offline_cleared=%d remaining_dirty=%d paced=%v",
+		kicked, failed, force, onlineOnly, len(offlineClear), remainN, paced)
+	msg := fmt.Sprintf("已踢线 %d 个在线账号以刷新策略", kicked)
+	if len(offlineClear) > 0 {
+		msg = fmt.Sprintf("已踢线 %d 个在线账号；%d 个离线账号下次连接自动生效", kicked, len(offlineClear))
+	}
 	if failed > 0 {
 		msg = fmt.Sprintf("已踢线 %d 个账号，%d 个失败仍待应用", kicked, failed)
 	}
 	return &ApplyResult{
-		Kicked: kicked, Failed: failed, UserIDs: done, ForceAll: force, Message: msg,
+		Kicked: kicked, Failed: failed, UserIDs: done, ForceAll: force,
+		OnlineOnly: onlineOnly, Message: msg,
 	}, nil
 }

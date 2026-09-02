@@ -12,7 +12,9 @@
 | 握手 / 拨号错误 | `autherr/`、`dialerr/`、`tunnel/`、`clientapp/fatal_auth.go` |
 | Soft / Hard 重连 | Soft：`transport/reconnect.go`；Hard：`clientapp/hard_restart.go`（DNS settle + PollUntil）；GUI：`reconnect_dns.go` + `engine_intent.go` / `engine_op_queue.go` |
 | 在线改 VPN IP（同 IP 保 / 变 IP 软换） | 判断：`runtime_policy.go`（`vpn_ip_inplace`）；软换：`ReplaceTUNIPv4KeepICS` + `ApplyPreferVPNSkipAsSource`（`iphlp_skipas_windows.go`）；routes=keep：`routeListsEqual` |
-| 分流目的过滤 / 越权 WARN | 公式：`netutil.VPNIPOrInNets`；噪声：`IsTUNNoiseDst`/`IsTUNNoiseForLog`/`IsTUNNoiseSource`；限频：`safeutil.AllowEvery`；DNS：`MergeDNSIntoAllowedIPs`；调用：`runtime_tun` / `route_inbound` |
+| 分流目的过滤 / 越权 WARN | 公式：`netutil.VPNIPOrInNets`；噪声：`IsTUNNoise*`；限频：`safeutil.AllowEvery`；**软 DNS**：`vpnaccount.ResolveDNSForUser`（不自动 `/32`）；调用：`runtime_tun` / `route_inbound` |
+| 托管 DNS | `persist/dns_*.go`；`vpnaccount/dns_resolve.go` + `dns_write.go`；API `handler_dns_servers.go`；UI `/peers`；YAML seed 在 `boot_persist` |
+| L4 流量监控 | `flowmon/`；`sessionmgr.Flows`；API `/api/v1/monitor/flows`；UI `/connections` 可折叠区 |
 | Stop / policy abort / ICS | `engine_lifecycle.go`（`Stop`=`ICSDisable` / `StopKeepICS`=`ICSPreserve`）；`ics_lifecycle.go`；via：`CleanupICSResidueContext` |
 | HardRestart（保活 ICS） | `hard_restart.go` → `StopKeepICS` → 有 137 则 `reuse_live` |
 | GUI Stop 串行 / 意图排队 | `engine_stop.go`（`stopEnginesSerial`）；`engine_op_queue.go`；`login_fail.go`（`safeutil.IsDeadline`） |
@@ -33,14 +35,16 @@
 | **probedefense** | `guard.go`（`OnHandshakeReject`）/ `classify_*.go` | 探针；实现 tunnel.ProbeRecorder；无 ErrSourceDenied re-export |
 | **clientapp** | `engine_bootstrap.go` / `bootstrap.go` / `connect_failure.go` / `connect_warn.go` / `dial_errors.go` / `autostart_facade.go` / `hooks.go` / `engine_*.go` / `hard_restart.go` / `warmup.go` / `via_exit.go` | 启动契约；HardRestart；via/ICS（经 netstack 门面） |
 | **clientgui** | `run.go` / `tray_*.go` / `service_takeover.go` / `engine_intent.go` / `engine_stop.go` / `reconnect_dns.go` | 托盘/重连/服务接管；`prepareGUIEngine`；禁 autostart 直接编排 |
-| **sessionmgr** | `register*.go` / `register_grace.go` / `register_lan.go` / `route_inbound.go` / `route_policy.go` / `stats.go` | 在线会话、via 旁路、横向隔离 |
-| **persist** | `store.go` / `peer_*.go` / `lan_registry.go` | SQLite 与 peer/LAN 表 |
+| **sessionmgr** | `register*.go` / `route_inbound.go` / `route.go`（含 flowmon Observe）/ `stats.go` | 在线会话、via 旁路、横向隔离、L4 流挂钩 |
+| **flowmon** | `tracker.go` | L4 五元组内存流表 |
+| **persist** | `store.go` / `peer_*.go` / `dns_*.go` / `lan_registry.go` | SQLite；peer/LAN/托管 DNS |
+| **vpnaccount** | `peer_*.go` / `dns_resolve.go` / `dns_write.go` | 策略解析与写用例（含托管 DNS） |
 | **auth** | `session.go` / `tunnel_login.go` / `lockout.go` | Web/隧道鉴权与会话 |
 | **crypto** | `wg_crypto.go` | 隧道加解密与防重放 commit |
 | **tun** | `tun_*.go` / `wintundll/` | TUN 设备；GUI 经 `StartWarmupAsync` |
 | **transport** | `transport.go`（`noteSendQueueFull` 限频）/ `reconnect.go` / `probe_banner.go` | Conn 队列背压可观测；重连 Done/ExpBackoff；banner |
 | **tunnel** | `server_handler.go` / `server_handshake_*.go` / `handshake*.go` | 握手编排文件簇；源 IP 直接 netutil |
-| **netutil** | `ipmatch.go`（`VPNIPOrInNets`/`MergeDNSIntoAllowedIPs`）/ `addr.go`（`IsTUNNoise*`）/ `gateway.go`（`ResolveGateway` 两参） | 分流目的公式；DNS 并入；TUN 噪声；网关 |
+| **netutil** | `ipmatch.go`（`VPNIPOrInNets`；`MergeDNSIntoAllowedIPs` 仅历史工具，握手已改软 DNS）/ `addr.go`（`IsTUNNoise*`）/ `gateway.go`（`ResolveGateway` 两参） | 分流目的公式；TUN 噪声；网关 |
 | **safeutil** | `throttle.go`（`AllowEvery`）/ `poll.go` / `context.go`（`IsCanceled`/`IsDeadline`/`Check`）/ `goroutine.go` / `retry.go` | 日志限频；可中止轮询；ctx；GoSafe；退避 |
 | **winnet** | `ipv4_replace.go` / `iphlp_*` / `ics_probe.go` / `ps_log.go` / `prefer_vpn_light_windows.go` / `ps_snippets.go` / `ics_*` | 配 IP；137 探测；ICS PS 日志；Prefer iphlp；PS 模板 |
 | **netstack** | `ics_lifecycle.go` / `ics_enable_` / `ics_egress_` / `winnet_facade.go` / `dns_windows.go` | ICS Disable/Preserve；Enable/reuse；瘦门面 |
@@ -99,7 +103,8 @@ netutil / winnet / fileutil / timeutil / paginate / readmodel / security / confi
 | `users_*.go` | 用户 CRUD / VPN PATCH |
 | `handler_peer_*.go` / `handler_lan_*.go` / `handler_peers_*.go` | 托管路由、互访、LAN、dirty/apply |
 | `handler_security_*.go` | 探针事件/封禁/豁免 |
-| `handler_ops.go` / `monitor_handler.go` | health、审计、备份、日志、监控 |
+| `handler_ops.go` / `monitor_handler.go` | health、审计、备份、日志、监控（含 flows） |
+| `handler_dns_servers.go` / `handler_peer_*.go` | 托管 DNS / 托管路由 / 互访 |
 | `httputil.go` / `formparse.go` | JSON 信封、领域错误、表单解析 |
 
 ### persist/

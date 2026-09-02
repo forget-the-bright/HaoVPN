@@ -55,7 +55,7 @@ func addClientRoutePlatform(cidr, tunName, gateway string) error {
 
 ## 2. 策略从哪来（握手一次下齐）
 
-控制台改托管路由 / 互访后须点 **「应用生效」**（踢线刷新策略）。客户端重连握手拿到完整 `HandshakePolicy`。
+控制台改托管路由 / 互访 / 托管 DNS 后须点 **「应用生效」**（统一入口：脏集 ∩ 当前在线 → bump+Kick；离线下次握手从库读新策略；每 20 账号间隔 50ms）。客户端重连握手拿到完整 `HandshakePolicy`。
 
 ```mermaid
 flowchart TB
@@ -242,9 +242,13 @@ func (e *Engine) tunReadLoop(ctx context.Context) {
 5. **托管**：`lookupViaSession` 命中 → **直转 via，不写服务端 TUN**
 6. 否则 `writeTUN` → 服务端内核路由 / NAT
 
-**双层过滤（分流）**：目的放行单一公式 `[netutil.VPNIPOrInNets](../internal/netutil/ipmatch.go)`（客户端 `[shouldUploadTUN](../internal/clientapp/runtime_tun.go)` + 服务端 `dstAllowed`）。噪声：`IsTUNNoiseDst`（上送早丢）、`IsTUNNoiseForLog`（WARN→DEBUG，含 LL-unicast）、`IsTUNNoiseSource`（伪造源噪声）。越权/伪造 WARN 限频：`[safeutil.AllowEvery](../internal/safeutil/throttle.go)`。策略 `vpn.dns_servers` 以 `/32` 并入 AllowedIPs（`MergeDNSIntoAllowedIPs`）。
+**双层过滤（分流）**：目的放行单一公式 `[netutil.VPNIPOrInNets](../internal/netutil/ipmatch.go)`（客户端 `[shouldUploadTUN](../internal/clientapp/runtime_tun.go)` + 服务端 `dstAllowed`）。噪声：`IsTUNNoiseDst`（上送早丢）、`IsTUNNoiseForLog`（WARN→DEBUG，含 LL-unicast）、`IsTUNNoiseSource`（伪造源噪声）。越权/伪造 WARN 限频：`[safeutil.AllowEvery](../internal/safeutil/throttle.go)`。
 
-```102:107:internal/sessionmgr/route_inbound.go
+**软 DNS**：握手按账号下发 `dns_servers`（`ResolveDNSForUser` = members−excludes；YAML seed 默认 all 可排除）。**不再**调用 `MergeDNSIntoAllowedIPs`。DNS IP 仅当已被 AllowedIPs/托管路由覆盖时查询才进隧道；否则依赖系统其它网卡 DNS。若必须用公司 DNS 解内网名，请先配置覆盖该 IP 的路由。
+
+**L4 流表挂钩**：`dstAllowed` 通过后 `flowmon.ObservePacket(..., DirIn)`；出站在 `sendToAccount` 侧 `DirOut`。折叠连接页「流量明细」时前端停轮询。
+
+```127:132:internal/sessionmgr/route_inbound.go
 	// 托管路由：命中 dest 则直转 via 会话（服务端内核通常无该 LAN 路由）
 	if via := m.lookupViaSession(ps, dst); via != nil {
 		_ = m.sendToAccount(via, plain)
@@ -471,18 +475,19 @@ HaoVPN 分层其实同类，但：
 | -------- | ---- |
 | 策略合并 / Stale            | `vpnaccount/peer_policy.go`                                                                                    |
 | 握手下发 / 写 TUN 回调         | `tunnel/server_handler.go`                                                                                     |
-| 入站选路                    | `sessionmgr/route_inbound.go`                                                                                  |
-| 出站选路                    | `sessionmgr/route.go`、`route_lookup.go`                                                                        |
+| 入站选路                    | `sessionmgr/route_inbound.go`（含 `flowmon` DirIn Observe）                                                      |
+| 出站选路                    | `sessionmgr/route.go`、`route_lookup.go`（`sendToAccount` DirOut Observe）                                        |
+| L4 流表                     | `internal/flowmon`；API `GET /api/v1/monitor/flows`；UI `/connections`                                            |
 | 会话 ViaRoutes / viaIndex | `sessionmgr/register.go`                                                                                       |
 | 客户端装路由 / 差分             | `clientapp/runtime_routes.go`、`policy_diff.go`、`runtime_policy.go`                                             |
 | Windows on-link         | `netstack/route_windows.go`                                                                                    |
 | via 出口 ICS              | `clientapp/via_exit.go`、`netstack`（`setupNATForLANs` / `PlanICSByOutbound`* / `FormatICSLocalLANsHint`）；注册表仅握手 |
 | 托盘文案                    | `clientgui/tray_routes.go`                                                                                     |
-| 管理 API / 应用生效           | `api/handler_peer_*.go`、`vpnaccount/peer_apply.go`                                                             |
+| 管理 API / 应用生效           | `api/handler_peer_*.go`、`handler_dns_servers.go`、`vpnaccount/peer_apply.go`（在线∩限速，每 20/50ms） |
 
 
 单测锚点：`sessionmgr/peer_route_test.go`（托管直转、禁止 AllowedIPs 出站误匹配）、`clientgui/tray_routes_test.go`（三栏文案）。
 
 ---
 
-*文档版本：与 2026-09-01 对齐（ICS Prefer 保留主机 /24 + 清 TUN 默认路由；HardRestart KeepICS；在线改 IP 软换）；若改选路顺序或 Windows 装路由方式，请同步本文与 troubleshooting。*
+*文档版本：与 2026-09-02 对齐（软 DNS、应用生效只踢在线+限速、L4 flowmon Observe；ICS Prefer 保留主机 /24；HardRestart KeepICS）；若改选路顺序或 Windows 装路由方式，请同步本文与 troubleshooting。*

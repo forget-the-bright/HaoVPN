@@ -6,6 +6,123 @@
 
 ---
 
+## 2026-09-02 · 配置相对路径：绝对 > exe 旁 > 配置目录（客/服共用）
+
+### 契约
+`ResolveFilePath`：绝对路径最高；相对路径先试 **应用/exe 同目录**（文件存在则用），否则 **yaml 所在目录**（便于新建 log/db）。
+`LoadClient` / `LoadServer` 加载后展开；盘上 YAML 仍可写相对路径。
+
+### 字段
+- 客户端：`ca_file`、`log.file`
+- 服务端：`tls.cert/key`、`database.path`、`encryption_key_file`、`log.file`、`history_db`
+
+验收：`go test ./internal/config/ -count=1`
+
+---
+
+## 2026-09-02 · 客户端相对路径锚定配置目录（自启找 CA）
+
+### 问题
+开机自启能找到 `client.yaml`，但 `./certs/...` 相对 CA 失败：计划任务/服务 CWD≠配置目录。
+
+### 修法
+（已由上条「绝对 > exe > 配置目录」取代仅锚定配置目录的行为。）
+
+---
+
+## 2026-09-02 · 工具栏对齐 + 互访布局 + 主题切换
+
+### 工具栏
+- `--control-h` / padding 令牌：`input`/`select`/`btn`/`btn-sm` 同高；「每页」`form-group-limit`
+- checkbox 排除 `width:100%`；`.check-row` / `.policy-row`
+
+### 托管页
+- 「应用生效」迁 topbar（+ pending banner）；全局互访卡仅勾选+保存（即时生效）
+
+### 主题
+- 三档 `system` / `light` / `dark`；默认跟随系统；`localStorage.haovpn_theme`
+- 侧栏与登录页 `#themeSelect`；`app.js` `HaoVPN.setTheme` / `getTheme`
+
+验收：重编译 embed 后目视工具栏同高、互访勾选正常、主题三档可切。
+
+---
+
+## 2026-09-02 · 总览表头换行修复 + 流量过滤多列排序
+
+### 样式
+- `data-table`：`th` nowrap、`min-width: 960px`（横滑）、长列 `cell-ellipsis`；工具栏 `align-items: flex-end`
+- 总览「会话分流前缀」ellipsis + `title`
+
+### 流量明细
+- `flowmon.List`：`src_ip`/`dst_ip` 子串过滤 → 多键排序 → 分页；缺省 `last_seen desc`
+- API query：`src_ip`、`dst_ip`、`sort=rx_bytes:desc,last_seen:asc`
+- 连接页：客户端/远端 IP 过滤；RX/TX/入包/出包/最近活跃分列；三态多列排序（无→升→降→无）+ 优先级角标
+
+### 测试
+- flowmon：IP 过滤、双键排序、`ParseSortQuery`
+
+验收：`go test ./internal/flowmon/... ./internal/api/... -count=1`
+
+---
+
+## 2026-09-02 · 二次审查收口：Create 空成员 / flowmon 并发 / UI·文档
+
+### 契约
+- CreateDNS 空成员拒绝（禁止静默变 all）；UNIQUE →「相同 DNS IP 已存在」
+- flowmon 新流整表锁序保证 maxPerUser；并发单测
+- DNS 新增「选择账号」多选；互访循环拉全量再折叠分页
+
+### 测试
+- members dirty 旧∪新 / 切 all；flows nil 回显 limit/offset；握手软 DNS（policy 有 DNS、AllowedIPs 无 `/32`）
+
+### 文档
+- traffic-routing 行号与 Observe；troubleshooting L4 入口；codebase-guide / architecture / web README
+
+验收：`go test ./internal/persist/... ./internal/vpnaccount/... ./internal/flowmon/... ./internal/api/... ./internal/sessionmgr/... ./internal/tunnel/... -count=1`
+
+---
+
+## 2026-09-02 · 审查收口：应用生效精确踢线 + DNS/flowmon 缺陷
+
+### 应用生效（防一次踢挂）
+- `PeerPolicyApplier.Apply`：脏集 ∩ `ListOnline` 才 bump+Kick；离线清脏、下次握手生效
+- 每 20 账号间隔 50ms；DNS **仅改排除** → 对称差脏标（禁止 MarkAll）；备注不标脏
+- 托管路由/互访/DNS 仍共用 `/peers`「应用生效」入口
+
+### 缺陷与契约
+- P0：DNS 排除模态取消还原 OK 回调（防清空排除）
+- flowmon：`maxPerUser` 跨分片合计；Observe 低频 TTL
+- 去 `ServerHandler.DNSServers` 死接线；DeleteUser 后空成员 manual DNS 删行
+- DNS「范围」多选模态；备注 API 即时生效无 pending
+
+### 文档
+- troubleshooting / deploy / traffic-routing：软 DNS；应用生效只踢在线+限速
+
+验收：`go test ./internal/persist/... ./internal/vpnaccount/... ./internal/flowmon/... ./internal/api/... ./internal/sessionmgr/... ./internal/tunnel/... -count=1`
+
+---
+
+## 2026-09-02 · 托管 DNS（按账号）+ L4 流量监控 + 列表分页
+
+### 托管 DNS
+- 表：`dns_servers` + `dns_server_members` + `dns_server_excludes`（生效 = members − excludes）
+- YAML `vpn.dns_servers` → `SyncConfigDNSServers`（`source=config`，绑定 all，禁改 IP/删/改包含集；可配 excludes + 备注）
+- 握手：`ResolveDNSForUser`；**软 DNS**：去掉 `MergeDNSIntoAllowedIPs`
+- API/UI：`/api/v1/dns-servers*`，挂 `/peers`；与托管路由共用「应用生效」脏集
+- `DeleteUser` 级联清 DNS 成员与排除
+
+### L4 流量
+- 包 `internal/flowmon`；`sessionmgr` 入站/出站 Observe
+- API `GET /api/v1/monitor/flows`；连接页「流量明细」可折叠 + 分页
+
+### 列表分页一致性
+- 连接页三块、总览在线、托管路由三表、探针封禁/豁免/事件：统一 `每页` + pager
+- `monitor/accounts` 改为 `writePage`
+
+验收：`go test ./internal/persist/... ./internal/vpnaccount/... ./internal/flowmon/... ./internal/sessionmgr/... ./internal/tunnel/... ./internal/api/...`
+
+---
+
 ## 2026-09-01 · 架构第 30 轮：ICSLifecycle + 死代码收口 + 文档对齐
 
 抽取与去耦：

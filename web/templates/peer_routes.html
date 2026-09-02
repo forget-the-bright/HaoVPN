@@ -25,6 +25,14 @@
         <a class="nav-item" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
       </nav>
       <div class="sidebar-footer">
+        <div class="theme-switch">
+          <label for="themeSelect">主题</label>
+          <select id="themeSelect" aria-label="主题">
+            <option value="system">跟随系统</option>
+            <option value="light">白天</option>
+            <option value="dark">黑夜</option>
+          </select>
+        </div>
         <button type="button" class="btn btn-ghost btn-block btn-sm" data-action="logout">退出登录</button>
       </div>
     </aside>
@@ -32,7 +40,12 @@
     <div class="main-area">
       <header class="topbar">
         <h1>托管路由 / Managed Routes</h1>
-        <span class="text-muted">对齐 ZeroTier：目标网段 via 客户端 VPN IP（服务端转发）</span>
+        <div class="topbar-actions">
+          <span class="text-muted">对齐 ZeroTier：目标网段 via 客户端 VPN IP（服务端转发）</span>
+          <button type="button" class="btn btn-primary btn-sm btn-apply" id="btnApplyPeers" title="踢线待应用账号">
+            <span class="btn-label">应用生效</span>
+          </button>
+        </div>
       </header>
       <main class="content">
         <div id="pendingBanner" class="card pending-banner hidden">
@@ -43,25 +56,28 @@
         </div>
 
         <div class="card">
-          <div class="toolbar toolbar-spread">
-            <div>
-              <h2 class="card-title m-0">全局互访</h2>
-              <p class="text-muted mt-035">默认禁止 VPN 客户端互访对方虚拟 IP。开启后任意账号可互 ping（即时生效，无需应用）。</p>
-            </div>
-            <button type="button" class="btn btn-primary btn-sm btn-apply" id="btnApplyPeers" title="踢线待应用账号">
-              <span class="btn-label">应用生效</span>
-            </button>
+          <h2 class="card-title">全局互访</h2>
+          <p class="text-muted">默认禁止 VPN 客户端互访对方虚拟 IP。开启后任意账号可互 ping（即时生效，无需应用）。</p>
+          <div class="policy-row">
+            <label class="check-row">
+              <input type="checkbox" id="allowAllPeers"> 允许全部 VPN 互访
+            </label>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnSavePeersPolicy">保存开关</button>
           </div>
-          <label class="check-row mt-075">
-            <input type="checkbox" id="allowAllPeers"> 允许全部 VPN 互访
-          </label>
-          <button type="button" class="btn btn-ghost btn-sm" id="btnSavePeersPolicy">保存开关</button>
         </div>
 
         <div class="card mt-1">
           <h2 class="card-title">在线本地网段注册表</h2>
           <p class="text-muted">客户端配置 <code>local_lans</code> 后登录上报；断线清空。仅广告，不自动建托管路由。可从下行「从注册表创建」。</p>
           <div class="toolbar">
+            <div class="form-group form-group-limit">
+              <label>每页</label>
+              <select id="regLimit">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
             <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshRegistry">刷新注册表</button>
           </div>
           <div class="table-wrap">
@@ -72,6 +88,7 @@
               <tbody id="registryRows"></tbody>
             </table>
           </div>
+          <div class="pager" id="regPager"></div>
         </div>
 
         <div class="card mt-1">
@@ -99,6 +116,14 @@
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="btnAddRoute">新增</button>
             <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshRoutes">刷新</button>
+            <div class="form-group form-group-limit">
+              <label>每页</label>
+              <select id="routeLimit">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -115,6 +140,57 @@
               <tbody id="routeRows"></tbody>
             </table>
           </div>
+          <div class="pager" id="routePager"></div>
+        </div>
+
+        <div class="card mt-1">
+          <h2 class="card-title">托管 DNS</h2>
+          <p class="text-muted">按账号下发 <code>dns_servers</code>（软 DNS：不自动追加 /32）。YAML <code>vpn.dns_servers</code> 种子为「全部账号」，可配<strong>排除名单</strong>；手工条目可绑指定账号。改后须「应用生效」。</p>
+          <div class="toolbar">
+            <div class="form-group">
+              <label>DNS IP</label>
+              <input id="dnsIp" placeholder="10.10.6.51">
+            </div>
+            <div class="form-group">
+              <label>备注</label>
+              <input id="dnsRemark" placeholder="公司内网 DNS">
+            </div>
+            <div class="form-group">
+              <label>适用范围</label>
+              <select id="dnsScope">
+                <option value="all">全部账号</option>
+                <option value="user">指定账号</option>
+              </select>
+            </div>
+            <div class="form-group hidden" id="dnsMemberGroup">
+              <label>绑定账号</label>
+              <div class="dns-create-members">
+                <span id="dnsCreateMemberSummary" class="text-muted">未选择</span>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnPickDNSMembers">选择账号</button>
+              </div>
+            </div>
+            <div class="form-group form-group-limit">
+              <label>每页</label>
+              <select id="dnsLimit">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAddDNS">新增</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshDNS">刷新</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>DNS IP</th><th>备注</th><th>来源</th><th>适用范围</th><th>排除账号</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="dnsRows"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="dnsPager"></div>
         </div>
 
         <div class="card mt-1">
@@ -131,6 +207,14 @@
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="btnAddAccess">添加互访</button>
             <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshAccess">刷新</button>
+            <div class="form-group form-group-limit">
+              <label>每页</label>
+              <select id="accessLimit">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -140,6 +224,7 @@
               <tbody id="accessRows"></tbody>
             </table>
           </div>
+          <div class="pager" id="accessPager"></div>
         </div>
       </main>
     </div>

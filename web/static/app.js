@@ -1,5 +1,5 @@
 /**
- * HaoVPN WebUI 共用脚本：CSRF、API、Toast、格式化、分页。
+ * HaoVPN WebUI 共用脚本：CSRF、API、Toast、格式化、分页、主题。
  * 各 templates/*.html 通过 window.HaoVPN 调用；无构建步骤，修改后须重编服务端 embed。
  */
 (function () {
@@ -8,6 +8,42 @@
   /** 当前页 CSRF token；由 refreshCSRF 或模板注入 setCSRF 设置 */
   let csrfToken = '';
 
+  var THEME_KEY = 'haovpn_theme';
+  var THEME_MODES = { system: 1, light: 1, dark: 1 };
+
+  /** 读取主题偏好；非法值回落 system */
+  function getTheme() {
+    try {
+      var v = localStorage.getItem(THEME_KEY) || 'system';
+      return THEME_MODES[v] ? v : 'system';
+    } catch (_) {
+      return 'system';
+    }
+  }
+
+  /** 应用主题到 <html data-theme> 并可选写入 localStorage */
+  function setTheme(mode, persist) {
+    mode = THEME_MODES[mode] ? mode : 'system';
+    document.documentElement.setAttribute('data-theme', mode);
+    if (persist !== false) {
+      try { localStorage.setItem(THEME_KEY, mode); } catch (_) {}
+    }
+    var sel = document.getElementById('themeSelect');
+    if (sel && sel.value !== mode) sel.value = mode;
+  }
+
+  /** 绑定侧栏/登录页主题下拉 */
+  function bindThemeSelect() {
+    var sel = document.getElementById('themeSelect');
+    if (!sel) return;
+    sel.value = getTheme();
+    sel.addEventListener('change', function () {
+      setTheme(sel.value, true);
+    });
+  }
+
+  // 尽早应用，减少强制亮/暗相对 system 的闪烁
+  setTheme(getTheme(), false);
   /** 右下角 Toast 提示；type 为 info|ok|error 等，对应 CSS class */
   function toast(msg, type) {
     let box = document.getElementById('toastContainer');
@@ -270,9 +306,12 @@
       if (!el) return;
       if (open) el.classList.add('is-open');
       else el.classList.remove('is-open');
-    }
+    },
+    getTheme: getTheme,
+    setTheme: function (mode) { setTheme(mode, true); }
   };
 
   // app.js 置于 </body> 前加载，此时侧栏等 DOM 已就绪
+  bindThemeSelect();
   bindDataActions();
 })();

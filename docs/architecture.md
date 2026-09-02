@@ -45,7 +45,9 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | 公开 health vs Dashboard | `api/handler_ops.go`：公开 health **仅** `ok`+`uptime_sec`；Dashboard 有 db/tun/nat/online/recent_errors |
 | API JSON 成功信封 / pending_apply / items 列表 | `api/httputil.go`（`writeOK`、`writeOKWith`、`writePendingApply`、`writeItems`、`writeItemsTotal`、`parseFormInt64`、`parseQueryInt64`、`decodeJSONBody` 体限 1MiB） |
 | 托管路由 / 互访 / LAN 注册 / 应用生效 | HTTP：`api/handler_peer_routes.go`、`handler_peer_access.go`、`handler_lan_registry.go`、`handler_peers_apply.go`；**写用例** `vpnaccount/peer_write.go` + dirty/apply `peer_apply.go`；DTO `readmodel/peers.go` |
-| peer dirty / 应用生效（非 HTTP） | `vpnaccount/peer_apply.go`（`PeerPolicyApplier`）；重启清空内存脏集，启动 WARN 见 `serverapp/boot_api.go` |
+| 托管 DNS（按账号） | HTTP：`api/handler_dns_servers.go`；写用例 `vpnaccount/dns_write.go`；解析 `vpnaccount/dns_resolve.go`；表 `persist/dns_*.go`；YAML seed `SyncConfigDNSServers`（boot_persist）；DTO `readmodel/dns.go`；UI 挂 `/peers` |
+| L4 流量流表 | `internal/flowmon`；热路径 `sessionmgr` Observe；API `GET /api/v1/monitor/flows`；UI 挂 `/connections` 可折叠区 |
+| peer dirty / 应用生效（非 HTTP） | `vpnaccount/peer_apply.go`（`PeerPolicyApplier`）；**只踢在线**∩脏集、批量限速；重启清空内存脏集，启动 WARN 见 `serverapp/boot_api.go` |
 | TUN 名校验 | `config.ValidateTunName`（`tun_name.go`）；客户端 Validate 强制 `[A-Za-z0-9_-]{1,64}` |
 | TUN 预热（CLI/GUI/服务） | `clientapp.StartWarmupAsync` → `warmupTun` → `tun.WarmupAdapter`；GUI **禁止** import tun；与拨号重叠；Open `reuse from_warmup` |
 | CLI 启动契约 | `clientapp/bootstrap.go`：`RunCLI`（预热+FailFast+45s）vs `RunServiceLoop`（持续重连） |
@@ -108,7 +110,7 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | Stop 时 DNS/路由顺序 | `runtime_routes.go`：先 `RestoreDNS(poison…)` 再删路由；`Engine.Stop`：先 `cancel(runCtx)` 再 `rc.Stop`/清数据面 |
 | 分流路由部分失败 | `route_install` 日志；零成功硬失败；部分成功 → `LastError` + `partial_routes=true` |
 | 同 IP vs 变 VPN IP | `runtime_policy.go`：同 IP 保 dataplane；**变 IP 软换** `vpn_ip_replace_inplace`（`ReplaceTUNIPv4KeepICS` + PreferVPN，**不**拆 via/ICS）；冷启动才 `tun.Open` |
-| TUN 上送 / 越权目的 | 公式：`netutil.VPNIPOrInNets`；噪声：`IsTUNNoiseDst` / `IsTUNNoiseForLog` / **`IsTUNNoiseSource`**；限频：`safeutil.AllowEvery`；DNS `/32`→`MergeDNSIntoAllowedIPs` |
+| TUN 上送 / 越权目的 | 公式：`netutil.VPNIPOrInNets`；噪声：`IsTUNNoiseDst` / `IsTUNNoiseForLog` / **`IsTUNNoiseSource`**；限频：`safeutil.AllowEvery`；**软 DNS**：握手不再 `MergeDNSIntoAllowedIPs`（DNS 仅当已被 AllowedIPs 覆盖才走隧道） |
 | 配 TUN IPv4 / wait | `tun/tun_windows.go` `assignIPv4`（禁止「已有则跳过」）；`winnet.ReplaceInterfaceIPv4` / `ReplaceInterfaceIPv4KeepICS`；埋点 `tun_addrs_before/after` |
 | 分流路由 / DNS 写入 | `route_ops_windows.go`（add/del 优先 iphlp）；`dns_windows.go`→首次 `skip_empty`；`RestoreDNS(poison…)` 防旧 VPN IP 写回 |
 | Windows 出站快照 | `winnet/egress.go` + `egress_windows.go`（一次 GAA+路由表） |
@@ -170,7 +172,7 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | **maintenance** | 数据保留后台 | `retention.go`（`GoSafe` 启动；封禁 prune 独立） | persist, logstore, config, safeutil |
 | **fileutil** | 父目录 / EnsureDir / 原子写 / exe / Exists / AbsPair / ACL | `mkdir.go`, `atomic.go`, `exe.go`, `fs.go`, `perm_*.go` | — |
 | **timeutil** | SQLite UTC + RFC3339 + Seconds + 展示时区 | `sqlite.go`, `rfc3339.go`, `duration.go`, `timezone.go` | — |
-| **vpnaccount** | IP 模式、开户、策略、启禁、删号、peer 写+应用生效 | `service.go`, `peer_write.go`, `peer_apply.go`, `peer_policy.go`, `provision.go`, `patch.go`, `delete.go`, `enable.go`, `errors.go` | ippool, persist, netutil, auth |
+| **vpnaccount** | IP 模式、开户、策略、启禁、删号、peer/DNS 写+应用生效 | `service.go`, `peer_write.go`, `peer_apply.go`, `peer_policy.go`, `dns_write.go`, `dns_resolve.go`, `provision.go`, `patch.go`, `delete.go`, `enable.go`, `errors.go` | ippool, persist, netutil, auth |
 | **tunnel** | 握手协议（含 handshake_err.code） | `handshake.go`, `handshake_reject.go`, `client_handshake.go`, `server_handler.go`, `server_handshake_auth.go`, `server_handshake_session.go` | transport, crypto, auth, autherr, sessionmgr, netutil, **tun** |
 | **transport** | TLS-TCP 帧、重连、Probe、banner I/O | `transport.go`, `config.go`, `conn_loops.go`, `server.go`, `probe_banner.go`, `mtu.go`, `frame.go`, `reconnect.go`（均经 GoSafe） | dialerr, netutil, timeutil, config, safeutil |
 | **dialerr** | 拨号/TLS 前拒绝叶子哨兵与 banner 常量 | `errors.go`, `classify.go` | — |
@@ -185,7 +187,8 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | **audit** | 管理审计 | `audit.go`, `labels.go`, `public_bind.go`, `tun_listen.go` | persist |
 | **config** | YAML 加载/导出/默认值/TUN 名校验 | `config.go`, `client.go`, `tun_name.go`（`ValidateTunName`）、`defaults.go` | netutil, fileutil, brand |
 | **security** | TLS、CSP 安全头、密钥加密、绑定自检 | `tls_policy.go`（CSP script+style 均 `'self'`）、`tls_client.go`, `datakey.go`, `keyenc.go` | netutil, fileutil |
-| **persist** | SQLite；托管路由/注册表/迁移 | `store.go`, `schema.sql`, `peer_types.go`, `peer_access.go`, `peer_routes.go`, `peer_route_normalize.go`, `lan_registry.go`（含 host_id 截断）、`migrate_peer_routes.go`, `users.go`, `settings.go`, `query_*.go` | paginate, readmodel, timeutil |
+| **persist** | SQLite；托管路由/托管 DNS/注册表/迁移 | `store.go`, `schema.sql`, `peer_*`, `dns_types.go`/`dns_servers.go`/`dns_normalize.go`/`dns_seed.go`, `lan_registry.go`, `migrate_peer_routes.go`, `users.go`, `query_*.go` | paginate, readmodel, timeutil, netutil |
+| **flowmon** | L4 内存流表（五元组聚合） | `tracker.go` | 无（sessionmgr 热路径调用） |
 | **auth** | Web Session + 隧道密码 + 分表锁定 + 哨兵 | `errors.go`, `service.go`, `login.go`, `tunnel_login.go`, `session.go`, `lockout.go`, `password.go`, `password_ops.go`, `username.go` | persist |
 | **ippool** | VPN IP 池 | `pool.go` | — |
 | **health** | 启动自检 + Dashboard | `health.go`, `dashboard.go` | config, persist |
@@ -269,6 +272,11 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | GET | `/api/v1/monitor/online` | handleMonitorOnline | Session |
 | GET | `/api/v1/monitor/accounts` | handleMonitorAccounts | Session |
 | GET | `/api/v1/monitor/events` | handleMonitorEvents | Session |
+| GET | `/api/v1/monitor/flows` | handleMonitorFlows | Session |
+| GET/POST | `/api/v1/dns-servers` | handleDNSServers | Session |
+| DELETE/PUT | `/api/v1/dns-servers/{id}`… | handleDNSServerByID（remark/members/excludes） | Session |
+| GET | `/api/v1/monitor/accounts` | handleMonitorAccounts | Session |
+| GET | `/api/v1/monitor/events` | handleMonitorEvents | Session |
 | GET | `/api/v1/security/events` | handleSecurityEvents | Session |
 | GET/POST | `/api/v1/security/blocks` | handleSecurityBlocks | Session |
 | DELETE | `/api/v1/security/blocks/{ip}` | handleSecurityBlockByIP | Session |
@@ -282,15 +290,16 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 | GET/POST | `/api/v1/peers/apply` | handlePeersApply | Session |
 | GET/PUT | `/api/v1/security/vpn-peers` | handleVPNPeersPolicy | Session |
 
-**WebUI**：`/`, `/users`, `/peers`（托管路由 + 本地网段注册表）、`/connections`, `/audit`, `/security`（探针）、`/tools`；`/login` 公开。
+**WebUI**：`/`, `/users`, `/peers`（托管路由 + 托管 DNS + 本地网段注册表）、`/connections`（会话 + L4 流量明细 + 事件）、`/audit`, `/security`（探针）、`/tools`；`/login` 公开。列表页统一 `每页` + `renderPager`。
 
-**AllowedIPs vs local_lans vs 托管路由（勿混用）**：
+**AllowedIPs vs local_lans vs 托管路由 / 托管 DNS（勿混用）**：
 
 | 概念 | 含义 | 存储 / 下发 |
 |------|------|-------------|
-| **AllowedIPs** | 经**服务端网关/NAT**可达的工控网段（及可选 VPN 子网）；握手时另并入策略 DNS `/32` | `users.allowed_ips` + 默认 NAT CIDR；`MergeDNSIntoAllowedIPs`；握手 `allowed_ips` |
-| **local_lans** | 客户端 YAML/GUI **手动**配置的本机后面 LAN；非空才开启 | `client.yaml` → 握手 `local_lans` → 临时表 `client_lan_registry`；客户端 `netstack` via 出口 |
+| **AllowedIPs** | 经**服务端网关/NAT**可达的工控网段（及可选 VPN 子网） | `users.allowed_ips` + 默认 NAT CIDR；握手 `allowed_ips`（**不再**自动并 DNS `/32`） |
+| **local_lans** | 客户端广告本机 LAN → 临时注册表 | 握手 `local_lans` → `client_lan_registry` |
 | **托管路由 Managed Routes** | `dest via 客户端`（hub 转 via，via 再出 LAN） | 定义 `peer_routes` + 访问方 `peer_route_members`（`user_id=0`=全部）；握手仅下发**非失效**项 |
+| **托管 DNS** | 按账号下发解析器列表（软 DNS） | `dns_servers` + `members` − `excludes`；YAML seed=`source=config` 固定 all，可配排除；空则回落 gateway |
 | **互访** | 默认可 ping 对方 `vpn_ip/32` 禁止 | `security.allow_all_vpn_peers` / `peer_access`（默认双向）；「应用生效」踢线刷新 |
 
 客户端托盘「本机路由」：本机 TUN（`vpn_subnet`）+ **分流**（AllowedIPs，含 `nat.allowed_lan_cidrs`）+ **对端托管**（`managed_routes`）。「无对端托管」≠ 未装工控路由。
@@ -301,7 +310,7 @@ netutil, dialerr, autherr, winnet, paginate, security, config, fileutil, timeuti
 
 出站 `RouteOutbound`：仅 `dst==vpn_ip` 或托管 via 索引；**禁止**用会话 AllowedIPs（NAT）把流量错送回客户端。入站：横向 → via 匹配（优先于 writeTUN）→ 否则 writeTUN（网关 NAT）。入站越权目的：`netutil.VPNIPOrInNets` + `safeutil.AllowEvery` 限频；客户端上送同公式。
 
-查功能：公式 → `netutil.VPNIPOrInNets` / `IsTUNNoise*`（含 `IsTUNNoiseSource`）；限频 → `safeutil.AllowEvery`；调用 → `clientapp/runtime_tun.go`、`sessionmgr/route_inbound.go`；DNS 并入 → `MergeDNSIntoAllowedIPs`（握手 `server_handshake_session.go`）。
+查功能：公式 → `netutil.VPNIPOrInNets` / `IsTUNNoise*`（含 `IsTUNNoiseSource`）；限频 → `safeutil.AllowEvery`；调用 → `clientapp/runtime_tun.go`、`sessionmgr/route_inbound.go`；DNS 下发 → `vpnaccount.ResolveDNSForUser`（**软 DNS**，不自动 `/32`）。
 
 **客户端冷启动时序（家庭版 via / ICS）**：
 

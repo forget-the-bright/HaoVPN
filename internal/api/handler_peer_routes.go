@@ -104,7 +104,9 @@ func (s *Server) listPeerRoutes(w http.ResponseWriter, r *http.Request) {
 	for _, rt := range routes {
 		items = append(items, s.toPeerRouteView(rt, byID))
 	}
-	writeItems(w, items)
+	limit, offset := paginate.ParseLimitOffset(r.URL.Query(), 50, 200)
+	total := len(items)
+	writePage(w, http.StatusOK, slicePage(items, limit, offset), total, limit, offset)
 }
 
 func (s *Server) createPeerRoute(w http.ResponseWriter, r *http.Request) {

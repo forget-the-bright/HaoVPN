@@ -39,7 +39,6 @@ func bootTunnel(bc *bootContext, tunDev tun.Device) (*transport.Server, crypto.K
 		VPN:                       bc.vpnSvc,
 		MTU:                       cfg.VPN.MTU,
 		GatewayIP:                 cfg.VPN.GatewayIP,
-		DNSServers:                cfg.VPN.DNSServers,
 		VPNSubnet:                 cfg.VPN.Subnet,
 		Auth:                      bc.authSvc,
 		KeyEnc:                    bc.keyEnc,

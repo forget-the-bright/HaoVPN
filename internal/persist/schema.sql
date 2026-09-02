@@ -155,6 +155,36 @@ CREATE TABLE IF NOT EXISTS peer_route_members (
 );
 CREATE INDEX IF NOT EXISTS idx_peer_route_members_user ON peer_route_members(user_id);
 
+-- 托管 DNS 定义（管理员维护；YAML vpn.dns_servers 启动 seed 为 source=config）
+-- 生效集合 = members − excludes；config 行 members 固定为 all(0)，仅允许配 excludes
+CREATE TABLE IF NOT EXISTS dns_servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dns_ip TEXT NOT NULL UNIQUE,                 -- IPv4 解析器地址
+    remark TEXT NOT NULL DEFAULT '',             -- 备注（用途说明）
+    source TEXT NOT NULL DEFAULT 'manual',       -- config=YAML 种子；manual=管理端新增
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (source IN ('config', 'manual'))
+);
+CREATE INDEX IF NOT EXISTS idx_dns_servers_source ON dns_servers(source);
+
+-- 托管 DNS 包含集：user_id=0 表示全部账号
+CREATE TABLE IF NOT EXISTS dns_server_members (
+    dns_id INTEGER NOT NULL REFERENCES dns_servers(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL,                   -- 0=全部；>0 须为 users.id
+    PRIMARY KEY (dns_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dns_server_members_user ON dns_server_members(user_id);
+
+-- 托管 DNS 排除集（反向规则）：仅真实账号；从「全部」中减去
+CREATE TABLE IF NOT EXISTS dns_server_excludes (
+    dns_id INTEGER NOT NULL REFERENCES dns_servers(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL,                   -- 须 >0
+    PRIMARY KEY (dns_id, user_id),
+    CHECK (user_id > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_dns_server_excludes_user ON dns_server_excludes(user_id);
+
 -- schema 版本（迁移标记）
 CREATE TABLE IF NOT EXISTS schema_meta (
     key TEXT PRIMARY KEY,

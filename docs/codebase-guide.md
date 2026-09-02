@@ -149,8 +149,17 @@ ICS PS 日志统一 → `winnet.LogICSPowerShellLines`；137 探测 → `Interfa
 | `session_context.go` | Context 存 Session；`sessionFromRequest` 优先读 Context |
 | `httputil.go` | JSON 错误、分页、`requireMethod`、客户端 IP |
 | `handler_security_*.go` | 探针事件/封禁/豁免（已按职责拆分） |
-| `handler_peers_*.go` | 托管路由、互访、应用生效 |
+| `handler_peers_*.go` / `handler_dns_servers.go` | 托管路由、互访、托管 DNS、应用生效（只踢在线；每 20 账号/50ms 限速） |
+| `monitor_handler.go` | 在线/账号监控；`GET /api/v1/monitor/flows`（L4 流表） |
 | `users_*.go` | 账号 CRUD / VPN 策略 |
+
+### flowmon — L4 内存流表
+
+| 路径 | 做什么 |
+|------|--------|
+| `internal/flowmon/tracker.go` | 分片五元组聚合；跨片 maxPerUser；Observe TTL |
+| `sessionmgr/route_inbound.go` / `route.go` | DirIn / DirOut Observe 挂钩 |
+| `web/static/connection_detail.js` | 连接页「流量明细」折叠停轮询 |
 
 ### web — 前端资源
 
@@ -158,6 +167,7 @@ ICS PS 日志统一 → `winnet.LogICSPowerShellLines`；137 探测 → `Interfa
 |------|----------------|
 | `templates/*.html` | 页面骨架 |
 | `static/security_probe.js` | `/security` 探针页（events/blocks/exempts） |
+| `static/connection_detail.js` | `/connections`：会话 → 流量明细 → 事件 |
 | `static/*.js` | 各管理页逻辑（CSP `script-src 'self'`） |
 
 ---

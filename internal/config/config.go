@@ -30,13 +30,25 @@ func loadYAML[T any](path, template string, validate func(*T) error) (*T, bool, 
 }
 
 // LoadServer 从路径加载服务端配置；文件不存在则生成默认配置后返回。
+// 加载成功后将相对证书/库/日志路径按 ResolveFilePath 规则展开。
 func LoadServer(path string) (*ServerConfig, bool, error) {
-	return loadYAML(path, serverYAMLTemplate, func(c *ServerConfig) error { return c.Validate() })
+	cfg, created, err := loadYAML(path, serverYAMLTemplate, func(c *ServerConfig) error { return c.Validate() })
+	if err != nil {
+		return nil, created, err
+	}
+	cfg.ResolveRelativePaths(path)
+	return cfg, created, nil
 }
 
 // LoadClient 从路径加载客户端配置；文件不存在则生成默认配置后返回。
+// 加载成功后将相对 ca_file / log.file 按 ResolveFilePath 规则展开。
 func LoadClient(path string) (*ClientConfig, bool, error) {
-	return loadYAML(path, clientYAMLTemplate, func(c *ClientConfig) error { return c.Validate() })
+	cfg, created, err := loadYAML(path, clientYAMLTemplate, func(c *ClientConfig) error { return c.Validate() })
+	if err != nil {
+		return nil, created, err
+	}
+	cfg.ResolveRelativePaths(path)
+	return cfg, created, nil
 }
 
 // ensureFile 若配置文件不存在，创建父目录并以原子写写入带注释的默认模板。

@@ -25,6 +25,14 @@
         <a class="nav-item" data-page="tools" href="/tools"><span class="icon">🛠</span> 维护</a>
       </nav>
       <div class="sidebar-footer">
+        <div class="theme-switch">
+          <label for="themeSelect">主题</label>
+          <select id="themeSelect" aria-label="主题">
+            <option value="system">跟随系统</option>
+            <option value="light">白天</option>
+            <option value="dark">黑夜</option>
+          </select>
+        </div>
         <button type="button" class="btn btn-ghost btn-block btn-sm" data-action="logout">退出登录</button>
       </div>
     </aside>
@@ -81,6 +89,14 @@
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="btnBanIP">封禁</button>
             <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshBlocks">刷新</button>
+            <div class="form-group form-group-limit">
+              <label>每页</label>
+              <select id="blockLimit">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -90,6 +106,7 @@
               <tbody id="blocks"></tbody>
             </table>
           </div>
+          <div class="pager" id="blockPager"></div>
         </div>
 
         <div class="card mt-1" id="exemptSection">
@@ -106,6 +123,14 @@
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="btnAddExempt">添加</button>
             <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshExempts">刷新</button>
+            <div class="form-group form-group-limit">
+              <label>每页</label>
+              <select id="exemptLimit">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -115,6 +140,7 @@
               <tbody id="exempts"></tbody>
             </table>
           </div>
+          <div class="pager" id="exemptPager"></div>
         </div>
 
         <div class="card mt-1">
@@ -127,6 +153,14 @@
             <div class="form-group">
               <label>特征</label>
               <input id="fSig" placeholder="如 http_get">
+            </div>
+            <div class="form-group form-group-limit">
+              <label>每页</label>
+              <select id="eventLimit">
+                <option value="20">20</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="btnQueryEvents">查询</button>
           </div>

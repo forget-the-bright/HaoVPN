@@ -199,6 +199,18 @@ func TestUnionMemberUserIDs(t *testing.T) {
 	}
 }
 
+// TestSymmetricDiffUserIDs 排除名单对称差。
+func TestSymmetricDiffUserIDs(t *testing.T) {
+	d := persist.SymmetricDiffUserIDs([]int64{1, 2}, []int64{2, 3})
+	got := map[int64]bool{}
+	for _, id := range d {
+		got[id] = true
+	}
+	if !got[1] || !got[3] || got[2] || len(d) != 2 {
+		t.Fatalf("want {1,3} got %v", d)
+	}
+}
+
 // TestInsertPeerRouteRejectsUnknownMember 不存在的访问方须拒绝。
 func TestInsertPeerRouteRejectsUnknownMember(t *testing.T) {
 	store, err := persist.Open(filepath.Join(t.TempDir(), "mem.db"))

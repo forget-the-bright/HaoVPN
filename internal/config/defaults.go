@@ -33,7 +33,8 @@ vpn:
   send_queue_size: 256
   # 生产现场应为 true：无 TUN 则拒绝启动（开发冒烟可 false）
   require_tun: true
-  # 推送给客户端的 DNS 列表；空则握手回退 gateway_ip
+  # 托管 DNS YAML 种子（启动写入 DB，source=config，默认全部账号，可配排除）
+  # 运行时权威在管理端「托管 DNS」；空则握手回退 gateway_ip
   # 示例：["10.88.0.1", "8.8.8.8"]
   dns_servers: []
   # 同账号第二端策略：

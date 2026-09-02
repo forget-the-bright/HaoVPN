@@ -43,9 +43,8 @@ func (h *ServerHandler) handshakeSession(conn *transport.Conn, authOK handshakeA
 		return
 	}
 	allowed := clientPol.AllowedIPs
-	dnsServers := h.resolveDNSServers()
-	// TUN DNS 须进隧道：把 DNS /32 并入 AllowedIPs（会话 dstAllowed + 客户端路由/上送）
-	allowed = netutil.MergeDNSIntoAllowedIPs(allowed, dnsServers)
+	// 按账号托管 DNS（members−excludes）；软 DNS：不再 MergeDNSIntoAllowedIPs
+	dnsServers := h.VPN.ResolveDNSForUser(user.ID, h.GatewayIP)
 	peerReg := sessionmgr.PeerReg{
 		PeerAccessIDs: clientPol.PeerAccessIDs,
 		ViaUserIDs:    clientPol.ViaUserIDs,

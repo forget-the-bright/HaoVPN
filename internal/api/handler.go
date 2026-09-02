@@ -34,7 +34,7 @@ type Server struct {
 	natOK      bool
 	logStore   *logstore.Store
 
-	// peerPolicy 托管路由/互访「待应用」脏标记与生效（领域逻辑在 vpnaccount）。
+	// peerPolicy 托管路由/互访/托管 DNS「待应用」脏标记与生效（领域逻辑在 vpnaccount）。
 	peerPolicy *vpnaccount.PeerPolicyApplier
 }
 
@@ -51,9 +51,13 @@ func NewServer(
 	serverTunnelPublicKey string,
 ) *Server {
 	var kick func(int64)
+	var listOnline func() []int64
 	if sessMgr != nil {
 		kick = sessMgr.KickUser
+		listOnline = sessMgr.ListOnline
 	}
+	applier := vpnaccount.NewPeerPolicyApplier(store, kick)
+	applier.SetListOnline(listOnline)
 	s := &Server{
 		cfg:        cfg,
 		store:      store,
@@ -65,7 +69,7 @@ func NewServer(
 		startedAt:  startedAt,
 		serverPK:   serverTunnelPublicKey,
 		mux:        http.NewServeMux(),
-		peerPolicy: vpnaccount.NewPeerPolicyApplier(store, kick),
+		peerPolicy: applier,
 	}
 	s.routes()
 	return s

@@ -3,6 +3,7 @@ package sessionmgr
 import (
 	"net"
 
+	"haovpn/internal/flowmon"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
 )
@@ -80,6 +81,9 @@ func (m *Manager) HandleInbound(userID int64, conn PacketConn, data []byte, writ
 	if sourceFromExitLAN(ps, src) && m.sessionIsActiveVia(userID) {
 		if peer := m.lookupOnlineByVPNIP(dstStr); peer != nil && peer.UserID != userID {
 			m.noteInboundRx(ps, userID, len(plain))
+			if m.Flows != nil {
+				m.Flows.ObservePacket(userID, plain, flowmon.DirIn)
+			}
 			_ = m.sendToAccount(peer, plain)
 			return nil
 		}
@@ -106,6 +110,9 @@ func (m *Manager) HandleInbound(userID int64, conn PacketConn, data []byte, writ
 		return nil
 	}
 	m.noteInboundRx(ps, userID, len(plain))
+	if m.Flows != nil {
+		m.Flows.ObservePacket(userID, plain, flowmon.DirIn)
+	}
 
 	// 横向互访：直转对端会话（hub-and-spoke，禁止 writeTUN 指望 hairpin）
 	if lateralPeer {

@@ -62,7 +62,8 @@ const (
 
 // VPNSection VPN 虚拟网段、网关、MTU 与推送给客户端的运行时策略。
 //
-// dns_servers 经握手下发；空则客户端回退 gateway_ip；require_tun 为 true 时 TUN 失败则拒绝启动。
+// dns_servers 启动 seed 到托管 DNS 表（source=config，默认全部账号）；握手按账号 ResolveDNSForUser；空库回退 gateway_ip。
+// require_tun 为 true 时 TUN 失败则拒绝启动。
 type VPNSection struct {
 	Subnet               string   `yaml:"subnet"`                 // CIDR；Validate 必填
 	GatewayIP            string   `yaml:"gateway_ip"`             // 子网内网关；Validate 必填且在子网内
@@ -70,7 +71,7 @@ type VPNSection struct {
 	HeartbeatIntervalSec int      `yaml:"heartbeat_interval_sec"` // 传输心跳间隔；默认 netutil 常量
 	HeartbeatTimeoutSec  int      `yaml:"heartbeat_timeout_sec"`  // 心跳超时；默认 netutil 常量
 	RequireTun           bool     `yaml:"require_tun"`            // true 时 TUN 创建失败则拒绝启动
-	DNSServers           []string `yaml:"dns_servers"`            // 握手推送给客户端；可空则回退 gateway
+	DNSServers           []string `yaml:"dns_servers"`            // YAML seed→托管 DNS（config/all）；运行时权威在 DB
 	SessionPolicy        string   `yaml:"session_policy"`         // reject_second（默认）| kick_previous
 	ReconnectGraceSec    int      `yaml:"reconnect_grace_sec"`    // 同公网 IP 短窗顶替旧会话并续算流量；默认 60；0=关闭
 	SendQueueSize        int      `yaml:"send_queue_size"`        // 传输待发帧队列深度；默认 256；范围 64～8192
@@ -347,4 +348,20 @@ func (c *ServerConfig) ResolveHistoryDBPath() string {
 		return p
 	}
 	return filepath.Join(filepath.Dir(c.Database.Path), "logs.db")
+}
+
+// ResolveRelativePaths 将服务端配置内相对文件路径按共用规则展开（内存改写）。
+//
+// 见 ResolveFilePath：绝对 > exe 旁（存在）> 配置目录。
+// 字段：tls.cert/key、database.path、encryption_key_file、log.file、log.history_db。
+func (c *ServerConfig) ResolveRelativePaths(cfgPath string) {
+	if c == nil {
+		return
+	}
+	c.Server.TLS.CertFile = resolvePathAgainstConfig(cfgPath, c.Server.TLS.CertFile)
+	c.Server.TLS.KeyFile = resolvePathAgainstConfig(cfgPath, c.Server.TLS.KeyFile)
+	c.Database.Path = resolvePathAgainstConfig(cfgPath, c.Database.Path)
+	c.Database.EncryptionKeyFile = resolvePathAgainstConfig(cfgPath, c.Database.EncryptionKeyFile)
+	c.Log.File = resolvePathAgainstConfig(cfgPath, c.Log.File)
+	c.Log.HistoryDB = resolvePathAgainstConfig(cfgPath, c.Log.HistoryDB)
 }

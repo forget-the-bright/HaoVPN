@@ -30,6 +30,17 @@ func ResolveClientConfigPath() string {
 	return "client.yaml"
 }
 
+// ResolveRelativePaths 将配置内相对文件路径按共用规则展开（内存改写，不改 YAML 盘面）。
+//
+// 见 ResolveFilePath：绝对 > exe 旁（存在）> 配置目录。字段：ca_file、log.file。
+func (c *ClientConfig) ResolveRelativePaths(cfgPath string) {
+	if c == nil {
+		return
+	}
+	c.Server.TLS.CAFile = resolvePathAgainstConfig(cfgPath, c.Server.TLS.CAFile)
+	c.Log.File = resolvePathAgainstConfig(cfgPath, c.Log.File)
+}
+
 // LoadClientOrDefaults GUI 用：加载失败时返回带默认值的内存配置（不写盘）。
 func LoadClientOrDefaults(path string) *ClientConfig {
 	cfg, _, err := LoadClient(path)

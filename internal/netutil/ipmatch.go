@@ -199,8 +199,8 @@ func AppendCIDRUnique(cidrs []string, nets []*net.IPNet, c string, skipIfCovered
 
 // MergeDNSIntoAllowedIPs 将策略 DNS 服务器以 /32 并入 AllowedIPs（已被覆盖则跳过）。
 //
-// 用途：TUN 接口 DNS 查询须进隧道；否则客户端滤 dst / 服务端 dstAllowed 会丢弃，
-// 出现「丢弃越权目的 IP」刷屏且 DNS 只能依赖其它网卡回落。
+// 历史/可选工具：握手已改**软 DNS**（`ResolveDNSForUser` 只下发 dns_servers，
+// **勿再**接入握手路径）。保留本函数供单测与若产品改回「硬 DNS」时复用。
 // 空 dns 或空 allowed 基线：仍可只追加 DNS /32（调用方须保证最终非空策略）。
 func MergeDNSIntoAllowedIPs(allowed []string, dnsServers []string) []string {
 	if len(dnsServers) == 0 {

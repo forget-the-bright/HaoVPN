@@ -1,5 +1,18 @@
-/* HaoVPN 管理控制台 — 现代深色主题（无外部 CDN） */
+/* HaoVPN 管理控制台 — 主题令牌（暗/亮/跟随系统；无外部 CDN） */
 :root {
+  /* 控件尺寸：工具栏 input / select / btn 共用 */
+  --control-py: 0.55rem;
+  --control-px: 0.85rem;
+  --control-fs: 0.9rem;
+  --control-h: 2.5rem;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --sidebar-w: 240px;
+  --font: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: "Cascadia Code", "Consolas", monospace;
+
+  /* 默认暗色（无 media / 强制 dark 的基线） */
   --bg: #0b0f14;
   --bg-elevated: #121820;
   --surface: #1a2230;
@@ -10,15 +23,110 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-link-hover: #60a5fa;
   --success: #22c55e;
   --warn: #f59e0b;
   --danger: #ef4444;
-  --radius: 12px;
-  --radius-sm: 8px;
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
-  --sidebar-w: 240px;
-  --font: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --mono: "Cascadia Code", "Consolas", monospace;
+  --row-hover: rgba(255, 255, 255, 0.02);
+  --stat-hover-border: #3d4f6a;
+  --overlay-bg: rgba(0, 0, 0, 0.45);
+  --badge-ok-bg: rgba(34, 197, 94, 0.15);
+  --badge-ok-fg: #86efac;
+  --badge-warn-bg: rgba(245, 158, 11, 0.15);
+  --badge-warn-fg: #fcd34d;
+  --badge-err-bg: rgba(239, 68, 68, 0.15);
+  --badge-err-fg: #fca5a5;
+  --danger-btn-bg: rgba(239, 68, 68, 0.15);
+  --danger-btn-fg: #fca5a5;
+  --danger-btn-border: rgba(239, 68, 68, 0.35);
+}
+
+/* 亮色令牌（强制白天，或跟随系统且 OS 为亮） */
+html[data-theme="light"] {
+  --bg: #f4f6fa;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-hover: #eef2f7;
+  --border: #d5dde8;
+  --text: #1a2332;
+  --text-muted: #5a6b82;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-glow: rgba(37, 99, 235, 0.2);
+  --accent-link-hover: #1d4ed8;
+  --shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
+  --row-hover: rgba(15, 23, 42, 0.04);
+  --stat-hover-border: #94a3b8;
+  --overlay-bg: rgba(15, 23, 42, 0.4);
+  --badge-ok-bg: rgba(22, 163, 74, 0.12);
+  --badge-ok-fg: #15803d;
+  --badge-warn-bg: rgba(217, 119, 6, 0.12);
+  --badge-warn-fg: #b45309;
+  --badge-err-bg: rgba(220, 38, 38, 0.1);
+  --badge-err-fg: #b91c1c;
+  --danger-btn-bg: rgba(220, 38, 38, 0.08);
+  --danger-btn-fg: #b91c1c;
+  --danger-btn-border: rgba(220, 38, 38, 0.3);
+}
+
+@media (prefers-color-scheme: light) {
+  /* 未设主题或 system：跟随 OS 亮色（JS 加载前也不闪死黑） */
+  html:not([data-theme]),
+  html[data-theme="system"] {
+    --bg: #f4f6fa;
+    --bg-elevated: #ffffff;
+    --surface: #ffffff;
+    --surface-hover: #eef2f7;
+    --border: #d5dde8;
+    --text: #1a2332;
+    --text-muted: #5a6b82;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-glow: rgba(37, 99, 235, 0.2);
+    --accent-link-hover: #1d4ed8;
+    --shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
+    --row-hover: rgba(15, 23, 42, 0.04);
+    --stat-hover-border: #94a3b8;
+    --overlay-bg: rgba(15, 23, 42, 0.4);
+    --badge-ok-bg: rgba(22, 163, 74, 0.12);
+    --badge-ok-fg: #15803d;
+    --badge-warn-bg: rgba(217, 119, 6, 0.12);
+    --badge-warn-fg: #b45309;
+    --badge-err-bg: rgba(220, 38, 38, 0.1);
+    --badge-err-fg: #b91c1c;
+    --danger-btn-bg: rgba(220, 38, 38, 0.08);
+    --danger-btn-fg: #b91c1c;
+    --danger-btn-border: rgba(220, 38, 38, 0.3);
+  }
+}
+
+/* 强制黑夜：覆盖可能残留的亮色 media（显式选 dark） */
+html[data-theme="dark"] {
+  --bg: #0b0f14;
+  --bg-elevated: #121820;
+  --surface: #1a2230;
+  --surface-hover: #222c3d;
+  --border: #2a3548;
+  --text: #e8edf5;
+  --text-muted: #8b9bb4;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-link-hover: #60a5fa;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  --row-hover: rgba(255, 255, 255, 0.02);
+  --stat-hover-border: #3d4f6a;
+  --overlay-bg: rgba(0, 0, 0, 0.45);
+  --badge-ok-bg: rgba(34, 197, 94, 0.15);
+  --badge-ok-fg: #86efac;
+  --badge-warn-bg: rgba(245, 158, 11, 0.15);
+  --badge-warn-fg: #fcd34d;
+  --badge-err-bg: rgba(239, 68, 68, 0.15);
+  --badge-err-fg: #fca5a5;
+  --danger-btn-bg: rgba(239, 68, 68, 0.15);
+  --danger-btn-fg: #fca5a5;
+  --danger-btn-border: rgba(239, 68, 68, 0.35);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -36,17 +144,18 @@ html, body {
 }
 
 a { color: var(--accent); text-decoration: none; }
-a:hover { color: #60a5fa; }
+a:hover { color: var(--accent-link-hover); }
 
 /* —— 登录页 —— */
 .login-page {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 2rem;
   background:
-    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(59, 130, 246, 0.18), transparent),
+    radial-gradient(ellipse 80% 60% at 50% -10%, var(--accent-glow), transparent),
     radial-gradient(ellipse 60% 40% at 100% 100%, rgba(34, 197, 94, 0.08), transparent),
     var(--bg);
 }
@@ -233,6 +342,18 @@ a:hover { color: #60a5fa; }
   letter-spacing: 0.04em;
 }
 
+/* 连接页流量区：标题与折叠按钮同一行 */
+.card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.card-title-row .card-title-inline {
+  margin: 0;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -248,7 +369,7 @@ a:hover { color: #60a5fa; }
   transition: border-color 0.15s;
 }
 
-.stat-card:hover { border-color: #3d4f6a; }
+.stat-card:hover { border-color: var(--stat-hover-border); }
 
 .stat-label {
   font-size: 0.78rem;
@@ -273,15 +394,37 @@ a:hover { color: #60a5fa; }
   margin-bottom: 0.4rem;
 }
 
+/* 工具栏「每页」等短下拉：避免 min-width:140px 撑出大块空白 */
+.form-group-limit {
+  min-width: 5.5rem !important;
+  width: 5.5rem;
+  flex: 0 0 auto;
+}
+
 input, select, textarea {
   width: 100%;
-  padding: 0.65rem 0.85rem;
+  min-height: var(--control-h);
+  padding: var(--control-py) var(--control-px);
   font: inherit;
+  font-size: var(--control-fs);
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* checkbox / radio 不得继承 width:100%，否则撑满整行 */
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+  min-width: 1.1rem;
+  min-height: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
 }
 
 input:focus, select:focus, textarea:focus {
@@ -299,14 +442,37 @@ input:focus, select:focus, textarea:focus {
 
 .form-row .form-group { flex: 1; min-width: 140px; margin-bottom: 0; }
 
+/* 勾选行：与文字并排，不占满宽 */
+.check-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  cursor: pointer;
+  width: auto;
+  max-width: 100%;
+  font-size: var(--control-fs);
+  color: var(--text);
+}
+
+/* 策略开关行：勾选 + 保存按钮 */
+.policy-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  margin-top: 0.75rem;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  padding: 0.6rem 1.15rem;
+  min-height: var(--control-h);
+  padding: var(--control-py) 1.15rem;
   font: inherit;
-  font-size: 0.9rem;
+  font-size: var(--control-fs);
   font-weight: 500;
   border: none;
   border-radius: var(--radius-sm);
@@ -335,12 +501,17 @@ input:focus, select:focus, textarea:focus {
 }
 
 .btn-danger {
-  background: rgba(239, 68, 68, 0.15);
-  color: #fca5a5;
-  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: var(--danger-btn-bg);
+  color: var(--danger-btn-fg);
+  border: 1px solid var(--danger-btn-border);
 }
 
-.btn-sm { padding: 0.35rem 0.7rem; font-size: 0.8rem; }
+/* 小按钮与工具栏控件同高，避免「刷新」矮一截 */
+.btn-sm {
+  min-height: var(--control-h);
+  padding: var(--control-py) 0.9rem;
+  font-size: 0.875rem;
+}
 
 .btn-block { width: 100%; }
 
@@ -487,6 +658,7 @@ input:focus, select:focus, textarea:focus {
 
 table.data-table {
   width: 100%;
+  min-width: 960px; /* 列多时横滑，避免表头被挤碎逐字换行 */
   border-collapse: collapse;
   font-size: 0.88rem;
 }
@@ -505,11 +677,47 @@ table.data-table th {
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap; /* 表头强制单行 */
 }
 
-table.data-table tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+/* 短列：ID / IP / 数字 / 远端 — 不换行 */
+table.data-table td.cell-nowrap,
+table.data-table .text-mono {
+  white-space: nowrap;
+}
+
+/* 长列（会话分流前缀等）：单行省略，title 看全文 */
+table.data-table td.cell-ellipsis {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+table.data-table tbody tr:hover { background: var(--row-hover); }
 
 table.data-table tbody tr:last-child td { border-bottom: none; }
+
+/* 可排序表头：三态图标 */
+th.th-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+th.th-sortable:hover { color: var(--text); }
+th.th-sortable .sort-ind {
+  display: inline-block;
+  margin-left: 0.25rem;
+  font-size: 0.7em;
+  opacity: 0.45;
+  font-style: normal;
+}
+th.th-sortable.sort-asc .sort-ind,
+th.th-sortable.sort-desc .sort-ind { opacity: 1; color: var(--accent, #60a5fa); }
+th.th-sortable .sort-pri {
+  font-size: 0.65em;
+  opacity: 0.7;
+  margin-left: 0.1rem;
+}
 
 .badge {
   display: inline-block;
@@ -519,9 +727,9 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
   font-weight: 500;
 }
 
-.badge-ok { background: rgba(34, 197, 94, 0.15); color: #86efac; }
-.badge-warn { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
-.badge-error { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+.badge-ok { background: var(--badge-ok-bg); color: var(--badge-ok-fg); }
+.badge-warn { background: var(--badge-warn-bg); color: var(--badge-warn-fg); }
+.badge-error { background: var(--badge-err-bg); color: var(--badge-err-fg); }
 
 .alert {
   padding: 0.75rem 1rem;
@@ -531,21 +739,21 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
 }
 
 .alert-warn {
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.35);
-  color: #fcd34d;
+  background: var(--badge-warn-bg);
+  border: 1px solid var(--badge-warn-fg);
+  color: var(--badge-warn-fg);
 }
 
 .alert-error {
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  color: #fca5a5;
+  background: var(--badge-err-bg);
+  border: 1px solid var(--badge-err-fg);
+  color: var(--badge-err-fg);
 }
 
 .alert-info {
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  color: #93c5fd;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  color: var(--accent);
 }
 
 .pre-box {
@@ -601,11 +809,42 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
-  align-items: center;
+  align-items: flex-end; /* 与带 label 的输入底边对齐，避免「刷新」悬空 */
   margin-bottom: 1rem;
 }
 
 .toolbar .form-group { margin: 0; min-width: 140px; }
+
+.toolbar .form-group label {
+  margin-bottom: 0.25rem; /* 收紧「每页」与下拉间距 */
+}
+
+.toolbar > .btn {
+  align-self: flex-end;
+  min-height: var(--control-h);
+}
+
+/* 侧栏主题切换 */
+.theme-switch {
+  margin-bottom: 0.65rem;
+}
+.theme-switch label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+.theme-switch select {
+  font-size: 0.8rem;
+  min-height: 2.15rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.login-theme-switch {
+  max-width: 420px;
+  width: 100%;
+  margin: 0 auto 1rem;
+}
 
 /* 探针页自定义封禁时长：数字 + 单位并排 */
 .inline-fields {
@@ -630,6 +869,10 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
   margin-top: 0.75rem;
   font-size: 0.88rem;
   color: var(--text-muted);
+}
+
+.pager .btn {
+  min-height: var(--control-h);
 }
 
 .pager button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -676,7 +919,7 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--overlay-bg);
   z-index: 50;
   align-items: center;
   justify-content: center;

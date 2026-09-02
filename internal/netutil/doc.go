@@ -16,7 +16,7 @@
 //   listen.go — 管理口监听地址合并与校验
 //   ipmatch.go — IPMatchesRules、ParseCIDROrHost、NormalizeCIDROrHost、NormalizeCIDRList、
 //                AppendCIDRUnique、ForbidDefaultRoute、CIDRListContainsIP、
-//                IPInAnyNet、VPNIPOrInNets、MergeDNSIntoAllowedIPs、ParseCIDRListToNets
+//                IPInAnyNet、VPNIPOrInNets、MergeDNSIntoAllowedIPs（历史工具，握手已软 DNS）、ParseCIDRListToNets
 //   constants.go — MTU/心跳/重连等传输默认值（保留天数在 config.DefaultRetentionDays）
 //   probe_cidr.go — ProbeIPForCIDR（ICS 出站 PS 探测 IP）
 //   ipv4_ics.go — IPv4IsICSPrivate、IPv4AddrsToRemove*、ICSPrivateIPv4Wildcard、PreferSkipAsSourceNeedsUpdate

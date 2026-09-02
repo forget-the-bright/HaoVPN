@@ -8,8 +8,8 @@
 |------|------|
 | `embed.go` | `//go:embed templates/*.html static/*` → `web.FS`，供 `internal/api` 挂载 |
 | `templates/*.html` | 登录、首页、用户列表、**托管路由**、连接详情、审计、探针、工具（**无内联业务 script**） |
-| `static/style.css` | 共用样式（无外部 CDN） |
-| `static/app.js` | 共用脚本：CSRF、fetch 封装、Toast、分页、`formatTime`（按 `api.display_timezone`） |
+| `static/style.css` | 共用样式（亮/暗/跟随系统主题令牌；无外部 CDN） |
+| `static/app.js` | 共用脚本：CSRF、fetch、Toast、分页、主题、`formatTime`（按 `api.display_timezone`） |
 | `static/login.js` | 登录页 |
 | `static/index.js` | 控制台首页 |
 | `static/user_list.js` | 账号列表 |
@@ -28,8 +28,8 @@
 | `/login` | `login.html` | `login.js` | 登录、须改密 |
 | `/` | `index.html` | `index.js` | 总览 / Dashboard |
 | `/users` | `user_list.html` | `user_list.js` | 账号 CRUD、策略、导出 |
-| `/peers` | `peer_routes.html` | `peer_routes.js` | 托管路由、互访、应用生效 |
-| `/connections` | `connection_detail.html` | `connection_detail.js` | 在线连接详情 |
+| `/peers` | `peer_routes.html` | `peer_routes.js` | 托管路由、托管 DNS、互访、应用生效 |
+| `/connections` | `connection_detail.html` | `connection_detail.js` | 会话 → 流量明细（IP 过滤 + 多列三态排序，折叠停轮询）→ 事件；三块分页 |
 | `/audit` | `audit_log.html` | `audit_log.js` | 管理审计日志 |
 | `/security` | `security_probe.html` | `security_probe.js` | 探针事件、封禁（时长预设/自定义）、**封禁豁免**、解封 |
 | `/tools` | `tools.html` | `tools.js` | 备份、日志等维护 |
@@ -53,9 +53,10 @@
 - **账号页**：`/users` — 新建、策略编辑、管理员改密、踢线、导出 ZIP/YAML（**POST+CSRF**，`downloadPost`；不含私钥）。
 - **审计页**：`/audit` — 动作 `码（中文）`、用户目标 `用户名 (#id)`；字典 `internal/audit/labels.go`；时间经 `HaoVPN.formatTime`。
 - **工具页**：备份数据库为 **POST** `/api/v1/backup`（须 CSRF）。
-- **托管路由页**：`/peers` — 全局互访开关、Managed Routes、互访白名单；改完后点「应用生效」（领域层 `vpnaccount.PeerPolicyApplier`，HTTP 仅薄封装）。
+- **托管路由页**：`/peers` — 全局互访（即时保存）与「应用生效」（topbar / pending banner，踢在线受影响账号）分离；Managed Routes、托管 DNS、互访白名单；领域层 `vpnaccount.PeerPolicyApplier`。
 - **探针页**：`/security` — `security_events` / `ip_blocks` / `exempts`；封禁 POST 含 `duration_sec`；豁免 CRUD；隧道口拒绝码 `HAOVPN:IP_BANNED` / `SOURCE_DENIED`（见 `transport/probe_banner.go`）。
-- **连接详情**：`/connections/...` — 事件时间经 `formatTime`。
+- **连接详情**：`/connections` — 会话 / **流量明细**（`GET /api/v1/monitor/flows`：`src_ip`/`dst_ip`/`sort`；RX/TX/入包/出包/最近活跃分列可点三态多列排序；折叠停轮询）/ 事件；时间经 `formatTime`；各块可调每页条数。总览等 `data-table` 表头不换行；工具栏控件与按钮同高。
+- **主题**：侧栏/登录「主题」下拉 — 跟随系统 / 白天 / 黑夜；默认跟随系统；偏好 `localStorage.haovpn_theme`（本机，不跟账号）；`html[data-theme]` + CSS 变量。
 - **展示时区**：`GET /api/v1/system/info` 的 `display_timezone`；存库与 API JSON 仍为 UTC。配置项 `api.display_timezone`。
 - **静态资源**：`/static/*` 由 embed FS 直接 Serve。
 

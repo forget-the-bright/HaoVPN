@@ -199,7 +199,7 @@ WebUI 探针页预设：1 小时～5 年、永久、自定义（月按 30 天、
 - **禁止与 VPN 地址池重叠**：`local_lans` 不得与 `vpn.subnet`（及同池前缀）相交。否则 via 可把 VPN 网段广告为 ExitLAN，再经 hub 旁路 `peer_access` 伪造他户 VPN 源。服务端握手用 `netutil.ValidateAdvertisedLANNotForbidden` 拒绝；过宽/重叠记 `lan_cidr_reject`，不入库。
 - **ExitLAN → 其他账号 VPN IP 的 hub 直转**仅当该会话是「已应用托管路由」中的 **via**（`sessionmgr.viaIndex`）。非 via 即使广告了 LAN，也不得绕过 `peer_access`。
 - **软重连 / replay**：顶替须 Conn 身份绑定入站 + Close 后排空 `Done`；Decrypt 仅 Open 成功后提交防重放；客户端 Connected 前不上送 TUN。见 [troubleshooting.md](troubleshooting.md) replay 行。
-- **应用生效语义**：托管路由/互访变更只写库并打 dirty；须点「应用生效」才 `IncrementPolicyVer`+踢线。成员收窄时 dirty=**旧∪新**（被移除访问方也须踢）。apply 仅清除**本次成功**的 dirty；失败或并发新增保留 pending，避免 UI 伪「已应用」。
+- **应用生效语义**：托管路由/互访/托管 DNS 变更只写库并打 dirty；须点「应用生效」才对**当前在线**受影响账号 `IncrementPolicyVer`+踢线（离线下次握手生效；大批量限速）。成员收窄时 dirty=**旧∪新**；DNS 仅改排除时 dirty=排除对称差。apply 仅清除**本次成功**的 dirty；失败或并发新增保留 pending，避免 UI 伪「已应用」。
 
 ### 4.4 管理审计动作 / 目标字典
 

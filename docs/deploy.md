@@ -251,7 +251,9 @@ launchd 配置历史见 `docs/dev-log.md`。
 | `log.history_db` | 同目录 `logs.db` | WebUI 分页检索用 |
 | 客户端 `local_lans` | 未配/空 | **手动**填写本机后面的 LAN（如 `192.168.31.0/24`）；须 **RFC1918** 且 **≥ /16**；**非法项连接前 Validate 失败**（不再静默丢弃）。非空则上报注册表并开 via；空=关闭。勿写 ICS `192.168.137.0/24`。**ICS 出站**：`windows.outbound_interface`（可选）→ 本机同网段/专用路由 → 默认网关；多网段异网卡见 `ics_multi_nic` + 握手上报 + `icsHint`/`skipped_lans`（新客户端**不**再 ICS 后 sync）。**WinNAT** 一条 VPN 子网覆盖多 LAN，不读 `outbound_interface` |
 
-管理控制台：维护页读 live 日志；**探针**页（`/security`）；**托管路由**页（`/peers`：注册表 + Managed Routes + 互访）；滚动大文件仅读尾部块。
+管理控制台：维护页读 live 日志；**探针**页（`/security`）；**托管路由 / 托管 DNS**页（`/peers`：注册表 + Managed Routes + DNS + 互访）；**连接**页含 L4 流量明细；滚动大文件仅读尾部块。列表统一支持每页条数与分页。
+
+`vpn.dns_servers`：启动时 seed 到 SQLite `dns_servers`（`source=config`，绑定全部账号，可配排除名单）；运行时权威在 DB，握手按账号合并下发（**软 DNS**，不自动追加 DNS `/32`）。勿与手工托管 DNS 配同一 IP。改托管 DNS/路由/互访后统一点「应用生效」（只踢在线受影响账号，大批量限速）。
 
 **四概念对照**：
 
@@ -330,6 +332,14 @@ Web 自改密：`POST /api/v1/password` 须带 `old_password` 与 `new_password`
 | 无窗口模式 | `gui.start_minimized`；仅托盘，可再唤起 | 关主窗=隐藏，不是退出 |
 | 开机自启（登录后起本程序） | 计划任务 `HaoVPNClientGUI`，ONLOGON + Highest | 须用户登录（建议自动登录桌面）；免每次 UAC |
 | 开机自启（服务，无托盘） | SCM 服务 `HaoVPNClient`（可用 GUI.exe 作入口） | 开机即连、无托盘；再开 GUI 可「接管」；与界面版互斥 |
+
+`client.yaml` / `server.yaml` 内 **相对路径**（证书、库、日志等）加载时按统一规则展开，**不依赖进程工作目录**：
+
+1. **绝对路径**（若已配置）— 最高优先  
+2. **应用/exe 同目录**下的相对路径 — 文件存在则用  
+3. 否则 **配置文件所在目录**下的相对路径（含尚未创建的 log/db）
+
+因此开机自启（CWD 常为 System32）与手动启动一致；证书可放在 exe 旁或 yaml 旁。
 
 ```powershell
 cd C:\haovpn-client

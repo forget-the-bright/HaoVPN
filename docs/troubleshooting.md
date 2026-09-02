@@ -43,14 +43,16 @@
 | 托管路由一直「失效」 | via 离线，或注册表无匹配 dest（未上报 / 已下线清空） | via 保持在线且 `local_lans` 含该 dest；换机后须重登上报 |
 | 未配 local_lans 却想共享 LAN | 能力默认关闭 | 在 `client.yaml` 或 GUI「本地网段」填写 CIDR |
 | 服务端狂刷 `丢弃伪造源 IP`（`192.168.137.1` / 家用 LAN） | via/ICS 把非 VPN 源灌进隧道；旧服务端只认 VPN IP | **升级服务端+客户端**：ExitLANs 放行已上报 `local_lans` 回程；客户端过滤非 VPN/非 local_lans 源；广播改 DEBUG。勿把 ICS `192.168.137.0/24` 写进 `local_lans` |
-| 重连后服务端狂刷 `丢弃越权目的 IP`（公网 DNS/CDN/`192.168.31.1`）；客户端仍正常 | 分流下 OS 经 TUN 注入噪声；旧客户端只验源不验目的；越权 WARN 无限流 | **升级双方**：客户端 `shouldUploadTUN` 滤 dst∈AllowedIPs；服务端越权 WARN 10s 限频+`drops=`；`vpn.dns_servers` 以 /32 并入 AllowedIPs。勿当鉴权失败 |
+| 重连后服务端狂刷 `丢弃越权目的 IP`（公网 DNS/CDN/`192.168.31.1`）；客户端仍正常 | 分流下 OS 经 TUN 注入噪声；旧客户端只验源不验目的；越权 WARN 无限流 | **升级双方**：客户端 `shouldUploadTUN` 滤 dst∈AllowedIPs；服务端越权 WARN 10s 限频+`drops=`。托管 DNS 为**软 DNS**（不下发 `/32`）；公司 DNS 须先有覆盖路由。勿当鉴权失败 |
 | ExitLAN 回程不能到对端 VPN IP / 被横向隔离挡住 | 本机不是任何托管路由的 via，或未点「应用生效」 | 仅 **via** 会话才允许 ExitLAN→对端 VPN 旁路；在 `/peers` 配托管路由并以本账号为 via，再「应用生效」；`local_lans` 须 RFC1918 且 ≥/16 |
 | `lan_cidr_reject` / 注册表无行 | local_lans 过宽（如 `/8`）或非私网 | 改为如 `192.168.x.0/24`；查服务端 Warn 日志 |
 | 家/本机能连 VPN，开了 local_lans/ICS 后不通服务端 NAT（如 `192.168.3.1`），服务端狂刷 `replay attack detected` | **已确认根因**：ICS 后客户端 post-auth `lan_registry_sync` → 服务端 Replace/Prune/Kick 与刚打开的数据面交织（`2cdc5e6` 本无此帧；去掉 sync 后现场恢复）。旁路误判曾堆 `defer_dns` / peer_silent / PreferVPN#2 等，**不是**本因 | **升级客户端**：不发 post-auth sync（仅握手 `lan_registry_reported`）。**纵深保留**（独立正确性）：Conn 绑定、Close+Done、Decrypt 成功后 commit、Connected 前 TUN 静默上送；服务端旧 sync 兼容勿 Kick via 自己。对照可清空 `local_lans` |
 | Windows 路由表「在链路上」且接口是本机 VPN IP | **预期**：进 haovpn0，不是把 via 配成自己 | 控制台 `via 10.88.x.x` 只在服务端选路；本机不必出现「下一跳=via」。原理见 [traffic-routing.md](traffic-routing.md) |
 | 托盘同分段既有 via `.1`（分流）又有 via `.2`（托管） | **预期**：两层 via；非冲突 | 分流=本机进 TUN；托管=服务端转 peer。见 [traffic-routing.md](traffic-routing.md) |
-| `/peers` 增删很卡 | 旧版保存时同步踢线抢 SQLite | 新版保存只写库；点「应用生效」再踢受影响账号 |
-| 点了「应用生效」仍显示待应用 / pending | 部分账号 `IncrementPolicyVer` 失败；或踢线过程中又改了策略 | 看服务端日志 `peers_apply kicked=… failed=…`；失败 ID 会保留 dirty（领域在 `vpnaccount.PeerPolicyApplier`）。修好库后重点应用生效；勿假设一次 POST 必清空全部 dirty |
+| `/peers` 增删很卡 | 旧版保存时同步踢线抢 SQLite | 新版保存只写库；点「应用生效」再踢**在线**受影响账号（离线下次握手自动生效；大批量限速） |
+| 点了「应用生效」仍显示待应用 / pending | 部分账号 `IncrementPolicyVer` 失败；或踢线过程中又改了策略 | 看服务端日志 `peers_apply kicked=… failed=… remaining_dirty=…`；失败 ID 会保留 dirty（领域在 `vpnaccount.PeerPolicyApplier`）。修好库后重点应用生效；勿假设一次 POST 必清空全部 dirty |
+| 「应用生效」踢很多人系统卡住 | 旧版 MarkAll 时对**全部 VPN 账号**（含离线）连环 Kick | **升级**：只踢脏集∩当前在线；每 20 个间隔 50ms；DNS 仅改排除时脏标为对称差（不 MarkAll） |
+| 想看谁访问了哪个 IP/端口 | 服务端 L4 流表 | 控制台 **连接**页 `/connections` →「流量明细」（折叠则停轮询）；实现 `internal/flowmon` + `GET /api/v1/monitor/flows` |
 | 服务刚重启，「待应用」没了但有人还像旧策略 | peer dirty **仅内存**，重启清空；启动 WARN 提示 | 库内已是新策略；对仍在线客户端再「应用生效」或踢线。属预期，不是丢库 |
 | 收窄托管路由访问方后，被踢出的客户端仍能走旧 via | 旧版只 dirty 新成员 | **升级服务端**：成员替换 dirty=旧∪新；对被移除账号也须应用生效踢线 |
 | via 上报 `local_lans` 含 VPN 网段后可伪造成员 VPN 源 | 旧版未禁与 `vpn.subnet` 重叠 | **升级服务端**：握手拒绝与 VPN 池重叠的广告；查 `lan_cidr_reject` |
@@ -98,6 +100,7 @@
 | 日志出现 `powershell 尽力操作失败 op=…` | ICS/NAT/转发清理类 PS 失败（尽力路径，不阻断主流程） | 查 `op=`（如 `DisableAllICS`、`Remove-NetNat-teardown`）；确认管理员权限与组策略是否拦 PowerShell；功能面通常仍可用 |
 | 点「退出」整窗假死很久 | 旧版退出同步等 ICS 清理 | **升级 GUI**：异步退出，先提示「正在退出（清理网络）…」，日志 `gui_quit` |
 | 要开机自动连且要托盘 | Windows：登录后自启 + 无窗口 + 自动连接 | 托盘「配置」三项；须自动登录桌面。Linux/macOS：托盘可写 XDG/LaunchAgent（见 deploy §5.3） |
+| 自启能读到 yaml，但 `读取 CA 失败 ./certs/...`（手动启动正常） | 计划任务/服务 **CWD≠配置目录**；旧版相对路径按 CWD 打开 | **升级**：相对路径按 **绝对 > exe 旁（存在）> yaml 目录** 解析；证书放 exe 旁或 yaml 旁 `certs/`；或写绝对路径 |
 | Linux/macOS 点托盘「服务自启」失败 | systemd/LaunchDaemon 须 root | 以 root 运行 GUI 或手工装 unit；看错误文案 |
 | 要开机即连、不要托盘 | Windows 服务；或 Linux systemd / macOS LaunchDaemon | Win：托盘「服务」或 `--service install`。Linux/macOS：托盘「服务」或手工 unit（deploy §5.3）；ExecStart 须带 `service` |
 | 服务在跑再开 GUI 提示已在运行 | 旧版不区分服务 | 新版弹出接管对话框：停止服务并接管 / 保持服务 |

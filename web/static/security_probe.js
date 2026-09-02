@@ -1,6 +1,8 @@
 // 页面脚本：security_probe — 探针封禁与安全事件；禁止模板 onclick=（CSP script-src 'self'）
     HaoVPN.setActiveNav('security');
     var offset = 0;
+    var blockOffset = 0;
+    var exemptOffset = 0;
 
     // 手动封禁时长上限（10 年，与后端 probedefense.MaxBanDurationSec 一致）
     var MAX_BAN_SEC = 315360000;
@@ -80,34 +82,39 @@
       document.getElementById('banIP').focus();
     }
 
-    async function loadBlocks() {
+    async function loadBlocks(off) {
+      if (off !== undefined) blockOffset = off;
       try {
         await HaoVPN.ensureDisplayTZ();
         await HaoVPN.refreshCSRF();
-        var data = await HaoVPN.api('/api/v1/security/blocks?limit=100');
+        var limit = parseInt(document.getElementById('blockLimit').value, 10) || 50;
+        var data = await HaoVPN.api('/api/v1/security/blocks' + HaoVPN.buildQuery({
+          limit: limit, offset: blockOffset
+        }));
         var rows = data.items || [];
         var tb = document.getElementById('blocks');
         tb.innerHTML = '';
         if (!rows.length) {
           tb.innerHTML = '<tr><td colspan="8" class="text-muted">无生效封禁</td></tr>';
-          return;
+        } else {
+          rows.forEach(function (b) {
+            var tr = document.createElement('tr');
+            var sig = b.signature_zh && b.signature
+              ? (b.signature_zh + ' (' + b.signature + ')')
+              : (b.signature_zh || b.signature || '');
+            tr.innerHTML =
+              '<td class="text-mono">' + (b.ip || '') + '</td>' +
+              '<td>' + (b.source || '') + '</td>' +
+              '<td>' + (b.reason || '') + '</td>' +
+              '<td>' + sig + '</td>' +
+              '<td>' + (b.hits || 0) + '</td>' +
+              '<td class="text-mono">' + (b.created_at ? HaoVPN.formatTime(b.created_at) : '—') + '</td>' +
+              '<td class="text-mono">' + (b.expires_at ? HaoVPN.formatTime(b.expires_at) : '永久') + '</td>' +
+              '<td><button type="button" class="btn btn-ghost btn-sm" data-action="unban-ip" data-ip="' + (b.ip || '') + '">解封</button></td>';
+            tb.appendChild(tr);
+          });
         }
-        rows.forEach(function (b) {
-          var tr = document.createElement('tr');
-          var sig = b.signature_zh && b.signature
-            ? (b.signature_zh + ' (' + b.signature + ')')
-            : (b.signature_zh || b.signature || '');
-          tr.innerHTML =
-            '<td class="text-mono">' + (b.ip || '') + '</td>' +
-            '<td>' + (b.source || '') + '</td>' +
-            '<td>' + (b.reason || '') + '</td>' +
-            '<td>' + sig + '</td>' +
-            '<td>' + (b.hits || 0) + '</td>' +
-            '<td class="text-mono">' + (b.created_at ? HaoVPN.formatTime(b.created_at) : '—') + '</td>' +
-            '<td class="text-mono">' + (b.expires_at ? HaoVPN.formatTime(b.expires_at) : '永久') + '</td>' +
-            '<td><button type="button" class="btn btn-ghost btn-sm" data-action="unban-ip" data-ip="' + (b.ip || '') + '">解封</button></td>';
-          tb.appendChild(tr);
-        });
+        HaoVPN.renderPager(document.getElementById('blockPager'), data.total, limit, blockOffset, loadBlocks);
       } catch (e) {
         HaoVPN.toast(e.message || String(e), 'error');
       }
@@ -155,28 +162,33 @@
       }
     }
 
-    async function loadExempts() {
+    async function loadExempts(off) {
+      if (off !== undefined) exemptOffset = off;
       try {
         await HaoVPN.ensureDisplayTZ();
         await HaoVPN.refreshCSRF();
-        var data = await HaoVPN.api('/api/v1/security/exempts?limit=100');
+        var limit = parseInt(document.getElementById('exemptLimit').value, 10) || 50;
+        var data = await HaoVPN.api('/api/v1/security/exempts' + HaoVPN.buildQuery({
+          limit: limit, offset: exemptOffset
+        }));
         var rows = data.items || [];
         var tb = document.getElementById('exempts');
         tb.innerHTML = '';
         if (!rows.length) {
           tb.innerHTML = '<tr><td colspan="5" class="text-muted">无豁免条目</td></tr>';
-          return;
+        } else {
+          rows.forEach(function (e) {
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td class="text-mono">' + (e.ip || '') + '</td>' +
+              '<td>' + (e.note || '') + '</td>' +
+              '<td>' + (e.source || '') + '</td>' +
+              '<td class="text-mono">' + (e.created_at ? HaoVPN.formatTime(e.created_at) : '—') + '</td>' +
+              '<td><button type="button" class="btn btn-ghost btn-sm" data-action="remove-exempt" data-ip="' + (e.ip || '') + '">移除</button></td>';
+            tb.appendChild(tr);
+          });
         }
-        rows.forEach(function (e) {
-          var tr = document.createElement('tr');
-          tr.innerHTML =
-            '<td class="text-mono">' + (e.ip || '') + '</td>' +
-            '<td>' + (e.note || '') + '</td>' +
-            '<td>' + (e.source || '') + '</td>' +
-            '<td class="text-mono">' + (e.created_at ? HaoVPN.formatTime(e.created_at) : '—') + '</td>' +
-            '<td><button type="button" class="btn btn-ghost btn-sm" data-action="remove-exempt" data-ip="' + (e.ip || '') + '">移除</button></td>';
-          tb.appendChild(tr);
-        });
+        HaoVPN.renderPager(document.getElementById('exemptPager'), data.total, limit, exemptOffset, loadExempts);
       } catch (e) {
         HaoVPN.toast(e.message || String(e), 'error');
       }
@@ -224,8 +236,9 @@
       try {
         await HaoVPN.ensureDisplayTZ();
         await HaoVPN.refreshCSRF();
+        var limit = parseInt(document.getElementById('eventLimit').value, 10) || 50;
         var q = HaoVPN.buildQuery({
-          limit: 50,
+          limit: limit,
           offset: offset,
           ip: document.getElementById('fIP').value.trim(),
           signature: document.getElementById('fSig').value.trim()
@@ -255,7 +268,7 @@
             '<td><button type="button" class="btn btn-ghost btn-sm" data-action="ban-event-ip" data-ip="' + clientIP + '">封禁</button></td>';
           tb.appendChild(tr);
         });
-        HaoVPN.renderPager(document.getElementById('pager'), data.total, 50, offset, loadEvents);
+        HaoVPN.renderPager(document.getElementById('pager'), data.total, limit, offset, loadEvents);
       } catch (e) {
         HaoVPN.toast(e.message || String(e), 'error');
       }
@@ -283,13 +296,16 @@
     });
 
     document.getElementById('btnBanIP').addEventListener('click', function () { banIP(); });
-    document.getElementById('btnRefreshBlocks').addEventListener('click', function () { loadBlocks(); });
+    document.getElementById('btnRefreshBlocks').addEventListener('click', function () { loadBlocks(blockOffset); });
     document.getElementById('btnAddExempt').addEventListener('click', function () { addExempt(); });
-    document.getElementById('btnRefreshExempts').addEventListener('click', function () { loadExempts(); });
+    document.getElementById('btnRefreshExempts').addEventListener('click', function () { loadExempts(exemptOffset); });
     document.getElementById('btnQueryEvents').addEventListener('click', function () { loadEvents(0); });
     document.getElementById('banDurationPreset').addEventListener('change', toggleBanCustomFields);
+    document.getElementById('blockLimit').onchange = function () { loadBlocks(0); };
+    document.getElementById('exemptLimit').onchange = function () { loadExempts(0); };
+    document.getElementById('eventLimit').onchange = function () { loadEvents(0); };
 
     toggleBanCustomFields();
-    loadBlocks();
-    loadExempts();
+    loadBlocks(0);
+    loadExempts(0);
     loadEvents(0);

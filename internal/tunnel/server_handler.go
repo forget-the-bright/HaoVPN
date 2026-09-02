@@ -28,8 +28,7 @@ import (
 //   Probe — 可选探针防御；握手拒绝时记 security_events（不含密码失败细节刷爆时可关）。
 //   VPN — 账号 IP 分配与 allowed_ips 解析服务。
 //   MTU — 下发给客户端的 MTU；≤0 时 ResolveMTU 取平台默认。
-//   GatewayIP — TUN 网关 IP；写入 HandshakePolicy 与 DNS 回落。
-//   DNSServers — 推送给客户端的 DNS 列表；空时回落 GatewayIP。
+//   GatewayIP — TUN 网关 IP；写入 HandshakePolicy；托管 DNS 无命中时作 dns 回落。
 //   VPNSubnet — VPN 地址池 CIDR；下发给客户端作 via 出口 SNAT 源。
 //   Auth — 隧道账号密码鉴权；nil 时拒绝密码握手。
 //   KeyEnc — 账号私钥解密；密码登录成功时解密并下发 client_private_key。
@@ -50,7 +49,6 @@ type ServerHandler struct {
 	VPN                       *vpnaccount.Service
 	MTU                       int
 	GatewayIP                 string
-	DNSServers                []string
 	VPNSubnet                 string
 	Auth                      *auth.Service
 	KeyEnc                    *security.KeyEnc
@@ -126,14 +124,4 @@ func (h *ServerHandler) applyLANRegistry(userID int64, vpnIP string, req Handsha
 		return
 	}
 	logger.Info("lan_registry_reported user_id=%d vpn_ip=%s count=%d", userID, vpnIP, len(lans))
-}
-
-func (h *ServerHandler) resolveDNSServers() []string {
-	if len(h.DNSServers) > 0 {
-		return append([]string{}, h.DNSServers...)
-	}
-	if h.GatewayIP != "" {
-		return []string{h.GatewayIP}
-	}
-	return nil
 }

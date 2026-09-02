@@ -13,6 +13,7 @@ import (
 	"haovpn/internal/auth"
 	"haovpn/internal/logger"
 	"haovpn/internal/netutil"
+	"haovpn/internal/paginate"
 	"haovpn/internal/persist"
 	"haovpn/internal/probedefense"
 	"haovpn/internal/timeutil"
@@ -164,6 +165,28 @@ func writePage(w http.ResponseWriter, code int, items any, total, limit, offset 
 	writeJSON(w, code, map[string]any{
 		"items": items, "total": total, "limit": limit, "offset": offset,
 	})
+}
+
+// pageSliceBounds 计算内存列表分页的起止下标（offset 已夹到 ≥0）。
+func pageSliceBounds(total, limit, offset int) (start, end int) {
+	offset = paginate.ClampOffset(offset)
+	if offset >= total {
+		return 0, 0
+	}
+	end = offset + limit
+	if end > total {
+		end = total
+	}
+	return offset, end
+}
+
+// slicePage 对任意切片做 limit/offset 分页（空结果返回非 nil 空切片）。
+func slicePage[T any](items []T, limit, offset int) []T {
+	start, end := pageSliceBounds(len(items), limit, offset)
+	if start >= end {
+		return []T{}
+	}
+	return items[start:end]
 }
 
 // writeItems 返回仅含 items 的列表信封（无分页元数据）。

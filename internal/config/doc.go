@@ -6,7 +6,8 @@
 //   client_yaml_patch.go — SaveClient
 //   yaml_node.go — yaml.Node 局部 patch 原语
 //   paths.go — DefaultServerCertPath、ResolveServerCertPath
-//   client_paths.go — ResolveClientConfigPath 等客户端配置路径
+//   client_paths.go — ResolveClientConfigPath、ClientConfig.ResolveRelativePaths
+//   resolve_paths.go — ResolveFilePath（绝对 > exe 旁存在 > 配置目录；客/服共用）
 //   retention.go — DefaultRetentionDays
 //
 // 上游：cmd/*、serverapp、clientapp、clientgui、api 导出。

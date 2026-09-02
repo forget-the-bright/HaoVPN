@@ -3,7 +3,9 @@
 // 关键文件（第十六轮同包拆分）：
 //   store.go / constants.go / users.go — Store、租约常量、账号 CRUD
 //   peer_types.go / peer_access.go / peer_routes.go / peer_route_normalize.go —
-//     互访与托管路由；成员校验（须存在且 HasVPN）；UnionMemberUserIDs
+//     互访与托管路由；成员校验（须存在且 HasVPN）；UnionMemberUserIDs；SymmetricDiffUserIDs
+//   dns_types.go / dns_servers.go / dns_normalize.go / dns_seed.go —
+//     托管 DNS（members−excludes）；YAML seed；DeleteUser 级联清绑定；空成员删 manual 行
 //   lan_registry.go — 客户端 LAN 广告；host_id 截断；HasLanRegistryMatch
 //   migrate_peer_routes.go / query_*.go / security_store.go / settings.go — 迁移、列表、封禁、运行时设置
 //

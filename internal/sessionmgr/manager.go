@@ -8,6 +8,7 @@ import (
 
 	"haovpn/internal/config"
 	"haovpn/internal/crypto"
+	"haovpn/internal/flowmon"
 	"haovpn/internal/persist"
 )
 
@@ -25,6 +26,7 @@ import (
 //   reconnectGrace — 同公网 IP 短窗内顶替旧会话并续算流量；0=关闭。
 //   onKick — 强制踢线后的回调（如禁用/改策略后通知上层）；无论是否在线都会触发。
 //   onDisconnect — 断线或踢线后按 ip_mode 回收 IP 的回调。
+//   Flows — 可选 L4 流表；nil 时跳过 Observe。
 //
 // 账号已在线哨兵：auth.ErrAccountAlreadyOnline（本包不再 re-export 别名）。
 //
@@ -41,6 +43,7 @@ type Manager struct {
 	reconnectGrace time.Duration
 	onKick         func(userID int64)
 	onDisconnect   func(userID int64, vpnIP, ipMode string) // IP 回收回调
+	Flows          *flowmon.Tracker                         // L4 流表；可为 nil
 }
 
 // viaRouteEntry 托管路由出站一项：命中 dest 网段则转发到 viaUserID 会话。
@@ -124,6 +127,7 @@ func New(store *persist.Store) *Manager {
 		byIP:          map[string]*AccountSession{},
 		vpnIndex:      map[string]int64{},
 		sessionPolicy: config.SessionPolicyRejectSecond,
+		Flows:         flowmon.New(flowmon.Options{}),
 	}
 }
 

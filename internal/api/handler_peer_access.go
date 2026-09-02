@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"haovpn/internal/paginate"
 	"haovpn/internal/readmodel"
 )
 
@@ -49,7 +50,9 @@ func (s *Server) listPeerAccess(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, pv)
 	}
-	writeItems(w, items)
+	limit, offset := paginate.ParseLimitOffset(r.URL.Query(), 50, 200)
+	total := len(items)
+	writePage(w, http.StatusOK, slicePage(items, limit, offset), total, limit, offset)
 }
 
 func (s *Server) addPeerAccess(w http.ResponseWriter, r *http.Request) {

@@ -89,6 +89,13 @@ func (e *Engine) bootPersist() (*bootContext, error) {
 		audit.LogPublicBindEnabled(auditLog)
 	}
 
+	// 托管 DNS：YAML vpn.dns_servers → source=config + members=all（保留 excludes）
+	if added, kept, removed, err := store.SyncConfigDNSServers(cfg.VPN.DNSServers); err != nil {
+		logger.Warn("托管 DNS YAML seed 失败: %v", err)
+	} else {
+		logger.Info("dns_seed yaml_count=%d added=%d kept=%d removed=%d", len(cfg.VPN.DNSServers), added, kept, removed)
+	}
+
 	return &bootContext{
 		cfg:        cfg,
 		configPath: e.configPath,
